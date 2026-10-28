@@ -1085,3 +1085,160 @@ make: *** [golden] Error 2
   fixture docstring so the next person does not rediscover it.
 * Nothing writes into `evals/golden/` except Bert's future photos and manifest; the generated
   fixtures live only in temp dirs.
+
+---
+
+## 17. Addendum — E1-T2 `segment()` on the U²-Net path (Pip, 2026-10-28, third session)
+
+Scope claimed: **E1-T2, U²-Net path only**. SAM 2.1 and BiRefNet still raise
+`SegmentBackendUnavailable` — they are not quietly faked. `apps/api/`, `infra/`, `evals/` and
+`docs/CONTRACTS.md` are untouched.
+
+### First, a correction to §9/§12/§16
+
+Those sections say E1-T2 needs hosted SAM 2.1 credentials *or* local weights, and that "this
+machine's venv has no torch, so the local path does not work". The second half is wrong:
+**torch only gates BiRefNet.** U²-Net runs through **onnxruntime**, which has nothing to do
+with torch — and `probe()` already selects `u2net` on a CPU-only machine without hosted
+credentials, which is exactly this machine. So the ticket that "waited on credentials" was
+waiting on a 176 MB file:
+
+| backend | what it actually needs | status |
+|---|---|---|
+| `u2net` | `u2net.onnx` (a file) + onnxruntime | **implemented this session** |
+| `birefnet` | torch + MPS/CUDA | unavailable, says so |
+| `sam2_hosted` | Modal token pair + deployed endpoint | unavailable, says so |
+
+The distinction is worth keeping: a *weight file* is a one-time download that can be pinned
+and verified; a *credential* is an account. Conflating them cost this project two sessions.
+
+### What shipped
+
+* `packages/vision/segment.py` — the stage, the backend dispatch, and a stage CLI
+  (`python -m packages.vision.segment --in photo.jpg --out /tmp/sn1`). Deliberately *not* the
+  pipeline CLI, which promises `prettified.png`/`cutout.png`/`attributes.json` and cannot
+  finish until E2/E3 exist.
+  * **Backend dispatch**: `u2net` runs; `birefnet`, `sam2_hosted` and `UNMEASURED` raise
+    `SegmentBackendUnavailable(StageNotImplemented)`. Subclassing `StageNotImplemented` is the
+    point — the worker already maps that to a terminal failure without burning the retry
+    budget, because "torch is not installed" will not resolve itself between attempt 1 and 2.
+  * **Policy is not repeated here.** `segment()` runs the label it is given; it never calls
+    `probe()` itself. One resolver, one place to change a model.
+  * **Weights are never downloaded by the stage.** Path is `SNAPLIST_MODEL_DIR` or
+    `~/.cache/snaplist/models`; absent ⇒ `SegmentBackendUnavailable` with the fix in the
+    message (`make fetch-models`). A stage that fetches 176 MB on first call is a network call
+    inside a zero-network contract, and a four-minute stall inside a job.
+  * **sha256 pin** (`8d10d2f3…b491`, verified at session load, cached): a truncated download
+    fails at load instead of producing quietly worse masks for a week.
+  * **Preprocessing**: 320×320, ImageNet mean/std, CHW float32 — the U²-Net contract.
+  * **Postprocessing**, min-max normalised then resized to the source size, plus one thing that
+    is easy to get wrong: bilinear upscaling **erodes the peak**, so the resized field is
+    divided by its own maximum before quantising. Without it the mask tops out at 241 on a
+    sharp field — and `matte()` (E1-T3) finds its opaque interior by looking for `== 255`, so
+    the garment body would come out at alpha 254, i.e. slightly see-through. `peak_restored`
+    in `notes` records whether the correction fired.
+  * `notes` carries: `model_file`, `model_sha256`, `input_size`, `providers`,
+    `inference_seconds`, `mask_px`, `mask_coverage`, `raw_peak`, `peak_restored`,
+    `degenerate`, `network_calls: 0`, and a `quality_note` stating the downgrade in words.
+* `Makefile` — `make fetch-models`. Not part of `install`: 176 MB and a network call must be an
+  explicit act, not a side effect of a clone. Idempotent, sha256-verified, and a mismatch
+  discards the `.part` file rather than leaving a half-model on disk.
+* `docs/DEPS.md` — `onnxruntime 1.31.1` (MIT; transitives `flatbuffers` 25.12.19 Apache-2.0,
+  `protobuf` 7.36.2 BSD-3-Clause) and a new **Model weights** section for `u2net.onnx`
+  (Apache-2.0, U-2-Net by Xuebin Qin, redistributed by rembg/MIT), with
+  `$/item = 0.00 provider spend` stated as such — local CPU, 0.73 s measured — and
+  machine-attributed cost explicitly **not claimed**.
+* `packages/vision/tests/test_segment.py` — 26 tests. None of them open the weights: a
+  `FakeSession` returns a known `d0`, so a red test always means a bug in this repo, never a
+  slow download. `packages/vision/tests/test_imports.py` updated: `segment` is no longer in the
+  stub list, and the comment says why.
+
+### Real output (this machine, real weights)
+
+```
+$ python -m packages.vision.segment --in /tmp/snapsmoke/tee.jpg --out /tmp/snapsmoke/out
+probe: backend=u2net device=cpu (cpu-only machine without hosted credentials: cheap backend by policy)
+wrote /tmp/snapsmoke/out/mask.png (16839 bytes)
+{ "backend": "u2net", "device": "cpu", "stage": "segment",
+  "seconds": 0.868, "cost_usd": null,
+  "notes": { "inference_seconds": 0.7297, "input_size": 320,
+             "mask_px": 233209, "mask_coverage": 0.1794,
+             "model_file": "/Users/bujin/.cache/snaplist/models/u2net.onnx",
+             "model_sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+             "network_calls": 0, "peak_restored": false, "raw_peak": 1.0,
+             "providers": ["CPUExecutionProvider"],
+             "quality_note": "u2net is the cheap backend selected by policy on a CPU-only machine: …" } }
+```
+
+The photo is **synthetic** — a drawn tee on a noisy plaster background, because the repo has no
+real garment photo (E0-T1). That makes the following a smoke test, not evidence:
+
+* IoU against the drawn silhouette: **0.9956** at `mask >= 128` (0.9844 at 64, 0.9871 at 192).
+  The ground truth is a polygon I wrote, so this number proves the plumbing follows a shape; it
+  says nothing about a real knit, a real strap or a real shadow. **The DoD's mean IoU ≥ 0.92
+  remains UNMEASURED.**
+* 200,301 pixels at exactly 255 — the mask has a genuine opaque interior for `matte()`, which
+  the `peak_restored: false` line explains: a real U²-Net field saturates, so the resize did
+  not erode anything on this input.
+* `segment → matte` wired by hand (§"not wired" below), alpha histogram over the 1000×1300
+  frame: `[1065946, 12304, 3474, 3594, 14381, 200301]` for bins
+  `[0,1,64,128,192,255,256)` — 200,301 fully opaque, 33,753 soft, 0 halo outside the 2px band.
+
+### Mutation check (green is not evidence)
+
+Five deliberate breakages, each run against one named test:
+
+| mutation | result |
+|---|---|
+| remove the peak-restore division | **survived at first** → fixed the fixture, now killed (max 241 ≠ 255) |
+| soft mask → hard threshold at 0.5 | killed, 3 failure lines |
+| remove the degenerate-field guard | killed, 2 |
+| remove the weights-existence check | killed, 2 |
+| disable the sha256 comparison | killed, 2 |
+
+The survivor was worth the detour: with a *smooth* synthetic field the erosion is ~0.0001, which
+rounding to uint8 hides completely, so the test could not see the line it was supposed to guard.
+The fixture is now a sharp spike with a comment explaining that it exaggerates the effect on
+purpose — and noting why the mechanism still matters for real photos below 320 px, where the
+field is downscaled and the erosion is not a rounding detail.
+
+### Suite after this addendum
+
+`make test` → **72 node + 258 pytest** (was 72 + 232), 0 failed, 0 skipped. `make lint` → all
+green (ruff + `tsc --noEmit`). `make golden` → still exit 2, unchanged and correct.
+`make evals` → every metric still `UNMEASURED`, `GATE NOT EVALUATED`.
+
+### Honest caveats
+
+* **Nothing is wired into the worker.** `segment → matte → rectify` is still a hand-run chain,
+  and wiring it would not make a job complete anyway: photo bytes are still not persisted (E5-T4
+  signed upload is 501). Last session's summary said segment would let a job "run to the end" —
+  that was wrong, and this is the correction. What segment unlocks is E1-T4 (the IoU report) and
+  E1-T3's acceptance command, both of which need the golden set first.
+* **The DoD metric is UNMEASURED.** 20 hand masks are Bert's; `evals/run.py` cannot report a
+  segmentation IoU until they exist, and the 0.9956 above is against a polygon, not a hand mask.
+* **No `no_garment` decision.** CONTRACTS §4 has the reason code; the threshold that would fire
+  it is unmeasured, so `mask_coverage` is reported and the decision waits. A guessed threshold
+  would reject real photos and nobody would know why.
+* **CPU only.** `CoreMLExecutionProvider` is available on this machine and unused on purpose:
+  switching to it without a measured IoU/latency comparison is a silent model swap in hardware
+  clothing. `notes["providers"]` always says what actually ran.
+* **`evals/run.py` now has one stale sentence**: "the golden set and the pipeline stages do not
+  exist yet". Segment exists. It is `evals/`'s file, so this is flagged rather than edited; the
+  right time to fix the wording is E1-T4, when a number replaces the `UNMEASURED`.
+* `SNAPLIST_MODEL_DIR` and `SNAPLIST_SEGMENT_BACKEND` are still not in `.env.example`
+  (lead-owned file). Both are documented in the module docstrings and the Makefile.
+* §16 warns that `pytest`'s `tmp_path` trips this machine's filesystem shim. These 26 tests use
+  `tmp_path` and passed 4 consecutive full runs; if it ever flakes, the fix is §16's
+  `tempfile.mkdtemp` pattern, not a change to the stage.
+
+### Next commands
+
+```bash
+make fetch-models                     # once per machine; verified against the pinned sha256
+python -m packages.vision.segment --in <a real garment photo> --out /tmp/sn1
+```
+
+With 20 hand masks in `evals/golden/masks/`, E1-T4 is a report away: the mask format is already
+`mask_px`-enumerable and `meta` already carries everything the report needs.
+

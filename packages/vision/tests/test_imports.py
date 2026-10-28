@@ -41,10 +41,10 @@ def test_stubs_raise_stage_not_implemented() -> None:
     from packages.vision import StageNotImplemented
     from packages.vision.cli import main
     from packages.vision.dedupe import find_duplicate
-    from packages.vision.segment import segment
 
-    with pytest.raises(StageNotImplemented):
-        segment(b"")
+    # `segment` left this list when E1-T2 landed: an empty-bytes call is now a ValueError
+    # (input validation) and an unavailable backend raises SegmentBackendUnavailable, which
+    # is still a StageNotImplemented. Both are covered in test_segment.py.
     with pytest.raises(StageNotImplemented):
         find_duplicate("user", b"")
     assert main(["--in", "x.jpg", "--out", "/tmp/snaplist-cli"]) == 2

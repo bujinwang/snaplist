@@ -12,7 +12,11 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install test lint fmt evals evals-strict golden dev dev-web dev-mobile contract clean
+.PHONY: help install test lint fmt evals evals-strict golden fetch-models dev dev-web dev-mobile contract clean
+
+MODEL_DIR ?= $(if $(SNAPLIST_MODEL_DIR),$(SNAPLIST_MODEL_DIR),$(HOME)/.cache/snaplist/models)
+U2NET_SHA256 := 8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491
+U2NET_URL := https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx
 
 help:
 	@echo "SnapList targets:"
@@ -22,6 +26,7 @@ help:
 	@echo "  make evals      report only; prints UNMEASURED until E1..E4, always exit 0"
 	@echo "  make evals-strict  release gate; deliberately fails until E0-T5 exists"
 	@echo "  make golden     validate the E0-T1 golden set; exit 0 only when it is complete"
+	@echo "  make fetch-models  download the u2net weights (176 MB) into $(MODEL_DIR)"
 	@echo "  make dev        FastAPI on :8000 (uvicorn --reload)"
 	@echo "  make dev-web    static marketing placeholder on :3000"
 	@echo "  make dev-mobile expo dev server"
@@ -51,6 +56,26 @@ evals:
 # is empty until real photos are added, and an empty set must not look like a passing one.
 golden:
 	$(PY) -m evals.tools.validate_golden
+
+# Model weights (docs/PLAN.md E1-T2). Deliberately NOT part of `install`: 176 MB and a
+# network call must be an explicit act, not a side effect of a clone — and segment() refuses
+# to download them itself, because a pipeline stage that fetches weights on first call is a
+# network call inside a zero-network contract. Idempotent: a verified file is left alone.
+fetch-models:
+	@mkdir -p "$(MODEL_DIR)"
+	@if [ -f "$(MODEL_DIR)/u2net.onnx" ] && [ "$$(shasum -a 256 "$(MODEL_DIR)/u2net.onnx" | cut -d' ' -f1)" = "$(U2NET_SHA256)" ]; then \
+		echo "u2net.onnx already present and verified: $(MODEL_DIR)/u2net.onnx"; \
+	else \
+		echo "downloading u2net.onnx -> $(MODEL_DIR) (176 MB, once)"; \
+		curl -fL --progress-bar -o "$(MODEL_DIR)/u2net.onnx.part" "$(U2NET_URL)" || { rm -f "$(MODEL_DIR)/u2net.onnx.part"; exit 1; }; \
+		got=$$(shasum -a 256 "$(MODEL_DIR)/u2net.onnx.part" | cut -d' ' -f1); \
+		if [ "$$got" != "$(U2NET_SHA256)" ]; then \
+			echo "sha256 mismatch: got $$got, want $(U2NET_SHA256) — discarding the download"; \
+			rm -f "$(MODEL_DIR)/u2net.onnx.part"; exit 1; \
+		fi; \
+		mv "$(MODEL_DIR)/u2net.onnx.part" "$(MODEL_DIR)/u2net.onnx"; \
+		echo "verified sha256 $$got"; \
+	fi
 
 # Release gate (docs/PLAN.md E0-T5). Deliberately fails until E0-T5 is implemented: a release
 # must not be cut on a pipeline nobody has measured. `make evals` exits 0 but prints

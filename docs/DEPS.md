@@ -21,6 +21,13 @@ Python resolves through `uv` (`pyproject.toml` + `uv.lock`). JS resolves through
 | ruff | 0.6.9 | MIT | `make lint` for python. One binary for lint+format, no black/isort/flake8 stack |
 | pillow | 11.3.0 | MIT-CMU | image decode/encode for `matte()` (E1-T3): photo bytes and mask PNG in, alpha PNG out. Also the format boundary every later vision stage shares |
 | numpy | 2.4.6 | BSD-3-Clause | mask/alpha array math in `matte()` (E1-T3): interior-opaque clamp, Chebyshev band guard. The pixel format `rectify`/`prettify` (E2) will consume |
+| onnxruntime | 1.31.1 | MIT | runs `u2net.onnx` for `segment()` (E1-T2) on the CPU execution provider — the reason torch is *not* required for the cheap backend. Transitives: `flatbuffers` 25.12.19 (Apache-2.0), `protobuf` 7.36.2 (BSD-3-Clause) |
+
+## Model weights (not packages)
+
+| name | size / pin | licence | reason |
+|---|---|---|---|
+| U²-Net `u2net.onnx` | 176 MB, sha256 `8d10d2f3…b491` (full pin in `packages/vision/segment.py`) | Apache-2.0 (Xuebin Qin, U-2-Net) redistributed by rembg (MIT) | garment segmentation for `segment()` (E1-T2). Not a package: `make fetch-models` puts it in `~/.cache/snaplist/models/`, it is never committed, and the stage refuses to run (rather than downloading) when it is absent. **`$/item` = 0.00 provider spend** — local CPU, 0.73 s inference measured 2026-10-28 on this machine. Machine-attributed cost (electricity, laptop wear) is *not* measured and is not claimed. |
 
 ## JavaScript / TypeScript
 
@@ -44,7 +51,7 @@ Python resolves through `uv` (`pyproject.toml` + `uv.lock`). JS resolves through
 | jest / vitest | `node --test` is in the runtime and needs no config or transform for our compiled output |
 | celery / redis | explicitly excluded by BRIEF.md; the `jobs` table does this |
 | modal | installed in the Modal image, not in the API image. `infra/modal_app.py` is never imported by the test suite |
-| torch / diffusers / SAM weights | belong to E1–E4. When they land they must be added here **with** their measured `$/item` impact |
+| torch / diffusers / SAM weights | belong to E1–E4. When they land they must be added here **with** their measured `$/item` impact. Still absent, with one exception now listed above: the U²-Net weights, which run through onnxruntime and need no torch. BiRefNet and SAM 2.1 remain blocked, and `segment()` says so instead of downgrading silently. |
 
 ## How to add a row
 
