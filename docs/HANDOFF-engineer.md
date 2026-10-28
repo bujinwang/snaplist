@@ -152,6 +152,7 @@ Test counts: **163 pytest** (128 API + 27 vision + 8 evals — QA's three new fi
 | P1 | E2-T1 rectify **pixel pipeline** | **still stub** (`StageNotImplemented`) | — |
 | P2 | E7-T4 comps pricing (offline) | **done**, `insufficient_data` under 5 comps | §5 |
 | P1 | E1-T1 runtime probe (`packages/vision/runtime.py`) | **done — Pip, 2026-10-28, second session** | §12 — acceptance command output pasted, 10 unit tests, `make test`/`make lint` re-run green |
+| P1 | E1-T3 matte (`packages/vision/matte.py`) | **done — Pip, 2026-10-28, second session (§14)**; golden-fixture histogram acceptance still owed to E0-T1 | §14 |
 | — | E1/E3/E4 vision + VTON stages | **untouched stubs**, as instructed | — |
 | — | E5-T3 job worker | **built — Pip, 2026-10-28, second session (§13)**: claim/run/retry/recover all real; every built-in handler still terminates `failed(INTERNAL)` until the vision stages land | §13 |
 | — | E8-T1/T2 Stripe | **501**, names the missing secret | §3 P |
@@ -919,3 +920,58 @@ recovered 0 interrupted job(s); processed 1 job(s)
   faked locally; `recover_interrupted()` at process start is the local equivalent.
 * The kill-mid-job acceptance (paste two log tails) was exercised as the recover test
   (claim → "die" → restart → complete), not by killing a real OS process.
+
+---
+
+## 14. Addendum — E1-T3 matte (Pip, 2026-10-28, same session as §12–13)
+
+Scope claimed: **E1-T3**. `matte()` went from stub to real, deterministic, offline code.
+
+### What shipped
+
+* **Dependencies** (recorded in `docs/DEPS.md` per the honesty rule): `pillow 11.3.0`
+  (MIT-CMU) and `numpy 2.4.6` (BSD-3-Clause), added via `uv add` — both landed in the same
+  commit as this note.
+* `packages/vision/matte.py` — classical feather, v1:
+  1. mask normalized to 8-bit single-channel (RGBA/LA masks contribute their alpha channel);
+  2. 1.0σ Gaussian feather — about one pixel of soft edge;
+  3. interior stays **exactly** 255 (`max(soft, hard)` — a bare blur would make a 1px strap
+     see-through, and `test_thin_strap_survives` pins a 3px strap's centre column);
+  4. band guard = **exact Chebyshev dilation** of the mask by 2px (PIL `MaxFilter(5)`).
+* The interesting bug, caught by the test written before it was fixed: PIL's GaussianBlur is a
+  box approximation, and its tail leaves `alpha=1` residue **3px** outside the mask — which is
+  precisely the halo the DoD forbids. The first implementation used a blurred band guard and
+  the pixel-level test failed on the residue. The fix replaces the numeric guard with a
+  geometric one (dilation cannot leak), and the test now asserts the DoD directly: any pixel
+  with alpha > 0 must lie within 2px of a mask pixel, measured by numpy dilation, independent
+  of the blur implementation.
+* `image` bytes are decoded (garbage fails loudly with `ValueError` naming the culprit) but
+  their pixels are **not read** yet — v1 refinement is geometry-only. Colour decontamination
+  is a future pass in this same file, and `meta.notes["color_decontamination"] = False` says so.
+* `packages/vision/tests/test_matte.py` — 14 tests: halo bound, interior opacity, soft band,
+  3px strap survival, RGBA masks, garbage-bytes validation for both inputs, output format,
+  honest meta (seconds is a measured float, never a 0.0 placeholder), determinism, and a
+  socket-trap fixture asserting **zero network calls on every single test**.
+
+### Real output (40×40 fixture: garment slab + 3px strap)
+
+```
+alpha histogram bins [0, 1, 64, 128, 192, 255, 256): [997, 108, 74, 1, 0, 420]
+# 997 fully transparent, 183 soft-edge pixels inside the 2px band, 420 opaque (= mask_px)
+meta: local_feather_v1 seconds=0.00077 notes: {'feather_sigma_px': 1.0, 'halo_band_px': 2,
+      'color_decontamination': False, 'network_calls': 0, 'mask_px': 420}
+```
+
+### Suite after this addendum
+
+`make test` → **72 node + 200 pytest** (was 72 + 186), 0 failed, lint all green.
+
+### Honest caveats
+
+* The PLAN acceptance (`python -m packages.vision.cli` on a knit and a strap garment from the
+  golden set, alpha histogram pasted) **remains open** — it needs E0-T1's real fixtures, which
+  forbid synthetic entries. The histogram above is from a synthetic unit-test fixture and is
+  NOT golden-set evidence.
+* `matte()` is not yet wired into any job handler: the worker's `full` handler still fails
+  terminal until E1-T2 (`segment`) lands ahead of it in the pipeline. Wiring order when it
+  does: segment → matte, sharing one decode of the image bytes.

@@ -19,6 +19,8 @@ Python resolves through `uv` (`pyproject.toml` + `uv.lock`). JS resolves through
 | pytest | 8.4.2 | MIT | test runner for `make test`; fixture-based, no plugin sprawl |
 | httpx | 0.27.2 | BSD-3-Clause | required by `fastapi.testclient`; also the client the eval harness will use for real provider calls |
 | ruff | 0.6.9 | MIT | `make lint` for python. One binary for lint+format, no black/isort/flake8 stack |
+| pillow | 11.3.0 | MIT-CMU | image decode/encode for `matte()` (E1-T3): photo bytes and mask PNG in, alpha PNG out. Also the format boundary every later vision stage shares |
+| numpy | 2.4.6 | BSD-3-Clause | mask/alpha array math in `matte()` (E1-T3): interior-opaque clamp, Chebyshev band guard. The pixel format `rectify`/`prettify` (E2) will consume |
 
 ## JavaScript / TypeScript
 
