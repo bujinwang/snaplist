@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "SnapList",
+    "slug": "snaplist",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "snaplist",
+    "newArchEnabled": false,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.snaplist.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SnapList uses the camera to photograph the garment you are selling.",
+        "NSPhotoLibraryUsageDescription": "SnapList needs your photo library to import garment photos you already shot."
+      }
+    },
+    "android": {
+      "package": "com.snaplist.app"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# node
+node_modules/
+.pnpm-store/
+.expo/
+dist/
+apps/mobile/dist/
+apps/mobile/.expo/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# research data — personal data, never committed.
+# Recordings, ASR transcripts and quotes attributable to a real person live ONLY here
+# (docs/METRICS.md §4 rule 7). Deliberately no .gitkeep: the directory itself must not be
+# tracked, so a fresh clone has no path to accidentally commit into.
+docs/research/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# generated eval artifacts (reports are regenerated; golden fixtures are committed)
+evals/reports/*
+!evals/reports/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# NOTE: uv.lock and pnpm-lock.yaml are always committed — reproducible installs.

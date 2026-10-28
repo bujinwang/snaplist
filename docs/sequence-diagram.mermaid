@@ -1,0 +1,68 @@
+%% SnapList — POST /v1/items end to end, plus the one non-obvious failure path.
+%% Actors are the components as they are named in docs/PLAN.md. Nothing in the "later"
+%% column is implemented yet: only /health, /readyz and the 501 stubs exist today.
+sequenceDiagram
+    autonumber
+    actor Seller
+    participant M as Mobile (apps/mobile)
+    participant A as API (apps/api)
+    participant DB as Supabase Postgres
+    participant S as Supabase Storage
+    participant W as Worker (Modal)
+    participant V as packages/vision
+
+    Note over Seller,V: 1. capture -> upload -> job
+    Seller->>M: photograph the garment (quad guide, auto-capture)
+    M->>M: queue locally (offline-safe, expo-file-system + SQLite)
+    M->>A: POST /v1/items (Idempotency-Key, bearer JWT)
+    A->>DB: verify JWT -> user; check plan quota
+    alt quota exhausted
+        A-->>M: 402 {"error":{"code":"quota_exceeded"}}
+        M-->>Seller: upsell sheet (states plan + limit)
+    else quota available
+        A->>DB: INSERT items(state=pending) + jobs(state=queued); usage_events(-1 unit)
+        A->>S: create signed upload URL
+        A-->>M: 202 {item_id, job_id, upload_url}
+        M->>S: PUT photo
+        M->>A: POST /v1/items/{id}/complete-upload  (or the worker detects the object)
+    end
+
+    Note over W,V: 2. GPU work, one job row, no Redis
+    W->>DB: UPDATE jobs SET state='running' WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)
+    DB-->>W: one row (exactly one worker wins)
+    W->>V: segment(photo) -> mask, matte(mask) -> alpha
+    W->>V: rectify(alpha, category) -> flat-lay; prettify(flat) -> catalog image
+    W->>V: attrs.extract(prettified) -> ItemAttributes  (JSON-schema enforced)
+    alt all stages ok
+        V-->>W: prettified.png, cutout.png, attributes.json
+        W->>S: upload 3 artefacts
+        W->>DB: INSERT assets; UPDATE jobs SET state='done'
+    else terminal failure
+        W->>DB: UPDATE jobs SET state='failed', reason_code=<one of five>
+        W->>DB: usage_events(+1 refund, keyed by job_id)
+    else retryable and attempts < 3
+        W->>DB: UPDATE jobs SET state='queued', attempts=attempts+1 (backoff)
+    end
+
+    Note over M,DB: 3. poll -> render -> edit -> export
+    loop every 2s while state != done|failed
+        M->>A: GET /v1/jobs/{job_id}
+        A->>DB: SELECT job (RLS: own rows only)
+        A-->>M: Job {state, progress, reason_code}
+    end
+    M->>A: GET /v1/items/{item_id}
+    A-->>M: AssetPack {prettified_url, cutout_url, on_model_urls, attributes}
+    Seller->>M: correct an attribute chip
+    M->>A: PATCH /v1/items/{id}/attributes (optimistic UI, rollback on error)
+    A->>DB: UPDATE items.attributes (validated against ItemAttributes)
+    M->>A: POST /v1/exports {marketplace:"ebay", item_ids:[...]}
+    A-->>M: CSV rows (packages/shared/src/marketplaces/ebay.ts)
+    M-->>Seller: preview the exact rows, then share or copy
+
+    Note over Seller,A: 4. on-model is a separate, gated job (Pro only)
+    Seller->>M: pick a model card, tap render
+    M->>A: POST /v1/items/{id}/rerender {kind:"vton"}
+    A->>DB: check plan allows on-model; enqueue new job (new quota unit)
+    A-->>M: 202 {job_id}
+    M->>A: GET /v1/jobs/{job_id}
+    A-->>M: failed(reason_code="vton_rejected")  <-- quota refunded, no retry loop

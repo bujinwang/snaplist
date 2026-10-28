@@ -1,0 +1,21 @@
+{
+  "name": "@snaplist/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Canonical zod schemas + marketplace CSV mappers (mirror of apps/api/schemas.py)",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "files": ["dist/src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm build && node --test dist/test/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

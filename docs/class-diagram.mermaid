@@ -1,0 +1,159 @@
+%% SnapList wire contract — v1.0.0. Mirror of apps/api/schemas.py == packages/shared/src/schemas.ts.
+%% Rendered by tools/class-diagram.mermaid only if this file is #included; keep it valid on its own.
+classDiagram
+    direction LR
+
+    class ItemAttributes {
+        +GarmentCategory category
+        +str? subcategory
+        +list~str~ colors  «1..3, primary first»
+        +Pattern pattern
+        +list~str~ material
+        +Fit fit
+        +str? era
+        +str? brand  «only if legible»
+        +str? size_label
+        +Condition condition
+        +list~Defect~ defects
+        +Measurements? measurements
+        +list~str~ keywords  «max 10»
+        +dict~str,float~ confidence
+        +list~str~ needs_review
+        +str model_version
+    }
+
+    class Measurements {
+        +float? chest_cm
+        +float? length_cm
+        +float? waist_cm
+        +float? rise_cm
+        +float? inseam_cm
+        +float? sleeve_cm
+        +MeasurementSource source
+    }
+
+    class AssetPack {
+        +UUID item_id
+        +str? prettified_url
+        +str? cutout_url
+        +list~str~ on_model_urls
+        +ItemAttributes? attributes
+    }
+
+    class Job {
+        +UUID id
+        +UUID item_id
+        +JobKind kind
+        +JobState state
+        +ReasonCode? reason_code
+        +int attempts  «max 3»
+        +float progress
+        +str? error_detail
+        +datetime created_at
+        +datetime updated_at
+        +datetime? started_at
+        +datetime? finished_at
+    }
+
+    class CreateItemResponse {
+        +UUID item_id
+        +UUID job_id
+        +str? upload_url
+    }
+
+    class ErrorResponse {
+        +ErrorBody error
+    }
+    class ErrorBody {
+        +ErrorCode code
+        +str message
+        +int? retry_after_seconds
+        +dict~str,str~? details
+    }
+
+    class Usage {
+        +PlanTier plan
+        +datetime period_start
+        +datetime period_end
+        +int items_included
+        +int items_used
+        +int items_remaining
+        +int on_model_included
+        +int on_model_used
+    }
+
+    class ExportRequest {
+        +Marketplace marketplace
+        +list~UUID~ item_ids
+    }
+
+    class GarmentCategory {
+        <<enumeration>>
+        top bottom dress outerwear shoe accessory other
+    }
+    class Pattern {
+        <<enumeration>>
+        solid striped plaid floral graphic animal
+        geometric tie_dye knit other unknown
+    }
+    class Fit {
+        <<enumeration>>
+        slim regular relaxed oversized cropped high_waisted unknown
+    }
+    class Condition {
+        <<enumeration>>
+        new_with_tags new_without_tags excellent good fair poor
+    }
+    class Defect {
+        <<enumeration>>
+        stain hole tear pilling fading missing_button
+        broken_zipper loose_seam alteration other
+    }
+    class MeasurementSource {
+        <<enumeration>>
+        estimated seller_provided
+    }
+    class JobKind {
+        <<enumeration>>
+        full prettify attributes vton export
+    }
+    class JobState {
+        <<enumeration>>
+        queued running done failed
+    }
+    class ReasonCode {
+        <<enumeration>>
+        bad_photo no_garment low_confidence vton_rejected internal
+    }
+    class ErrorCode {
+        <<enumeration>>
+        unauthorized forbidden not_found invalid_request
+        quota_exceeded not_implemented internal
+    }
+    class PlanTier {
+        <<enumeration>>
+        free starter pro
+    }
+    class Marketplace {
+        <<enumeration>>
+        ebay poshmark vinted
+    }
+
+    ItemAttributes *-- Measurements : measurements
+    ItemAttributes --> GarmentCategory
+    ItemAttributes --> Pattern
+    ItemAttributes --> Fit
+    ItemAttributes --> Condition
+    ItemAttributes --> Defect
+    Measurements --> MeasurementSource
+
+    AssetPack *-- ItemAttributes : attributes
+    Job --> JobState
+    Job --> JobKind
+    Job --> ReasonCode
+    CreateItemResponse ..> Job : creates
+    CreateItemResponse ..> AssetPack : later serves
+    ErrorResponse *-- ErrorBody
+    ErrorBody --> ErrorCode
+    Usage --> PlanTier
+    ExportRequest --> Marketplace

@@ -1,0 +1,9 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Marketing site + Stripe portal redirects (E7, growth role)",
+  "scripts": {
+    "dev": "python3 -m http.server 3000 --directory ."
+  }
+}

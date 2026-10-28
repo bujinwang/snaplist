@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "noEmit": false,
+    // A failed typecheck must not leave `dist` looking like a good build.
+    //
+    // `tsc` defaults this to false, which means a type error still writes `.d.ts` files. The
+    // symptom is nasty and we hit it during a mutation-testing window: the source was restored,
+    // but `dist` still held the broken declarations, so every downstream package kept erroring
+    // against them and it looked like the restore had failed. Deleting `dist` by hand "fixed" it,
+    // which is exactly the kind of repair that hides a missing constraint.
+    //
+    // Side effect to know about: with this on, `pnpm test` (= `pnpm build && node --test ...`)
+    // stops at the build step, so the test log contains NO test names at all. That absence is
+    // the failure signal — not "there were no tests to run". Exit code, log text and a human's
+    // default reading of the log are three different things; this line keeps the first honest.
+    "noEmitOnError": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}
