@@ -153,7 +153,7 @@ Test counts: **163 pytest** (128 API + 27 vision + 8 evals — QA's three new fi
 | P2 | E7-T4 comps pricing (offline) | **done**, `insufficient_data` under 5 comps | §5 |
 | P1 | E1-T1 runtime probe (`packages/vision/runtime.py`) | **done — Pip, 2026-10-28, second session** | §12 — acceptance command output pasted, 10 unit tests, `make test`/`make lint` re-run green |
 | — | E1/E3/E4 vision + VTON stages | **untouched stubs**, as instructed | — |
-| — | E5-T3 job worker | **not built**; state machine implemented and tested, no process claims jobs | §2 "jobs stay queued" |
+| — | E5-T3 job worker | **built — Pip, 2026-10-28, second session (§13)**: claim/run/retry/recover all real; every built-in handler still terminates `failed(INTERNAL)` until the vision stages land | §13 |
 | — | E8-T1/T2 Stripe | **501**, names the missing secret | §3 P |
 
 ---
@@ -860,3 +860,62 @@ green (one E501 in the MODULES line during the round, fixed before landing).
 
 Next command (unchanged from §9): the three unblockers stand; E1-T3 (`matte`, local, no network)
 is the next vision ticket that does not need credentials.
+
+---
+
+## 13. Addendum — E5-T3 job worker (Pip, 2026-10-28, same session as §12)
+
+Scope claimed: **E5-T3 (local seam)**. The state machine and the ledger were already real;
+what was missing is the process that moves a job, so every job sat in `queued` forever.
+
+### What shipped
+
+* `apps/api/jobs/worker.py` — `JobWorker` with:
+  * `claim_next()` — peek the oldest queued job **inside one `begin immediate` transaction**
+    and move it `queued -> running` through the state machine. Two workers cannot claim the
+    same row (test proves it). The production claim stays `for update skip locked`, already
+    documented in `infra/migrations/0001_init.sql`; nothing here pretends to be a distributed lock.
+  * `run_once()` / `run_pending(limit)` — exception mapping is the whole policy:
+    `PipelineUnavailable` / `StageNotImplemented` → **terminal `failed(INTERNAL)` immediately**
+    with error_detail naming the PLAN ticket (retrying a deterministic stub is theatre);
+    anything else → retryable, the 3-claim budget decides, then the refund fires.
+  * `recover_interrupted()` — startup sweep: jobs found in `running` are re-queued with
+    `attempts += 1` (CONTRACTS §3 treats a lost heartbeat as retryable) or failed terminally
+    when the budget is spent. A recovered job can never surface `done` without its assets,
+    because `done` is only written by the transition that observed the handler return.
+  * CLI: `python -m apps.api.jobs.worker [--database PATH] [--limit N]`, always
+    recover-then-drain.
+* `apps/api/repository.py` — two read-only protocol methods: `peek_next_queued_job()` and
+  `list_jobs_by_state()`. The claim transition itself stays in the state machine, so no
+  backend can invent a sixth state. Postgres implementations are still owed by E5-T2's
+  `PostgresRepository`.
+* `apps/api/tests/test_worker.py` — 13 tests: single-claim, stub-terminal-no-budget-burn,
+  transient→retry→done, permanent-transient→3 claims→failed→refunded-once, per-user refund
+  isolation, success-with-assets, both crash-recovery paths, limit.
+
+### Real output (CLI, this machine)
+
+```
+$ python -m apps.api.jobs.worker --database /tmp/snaplist-worker-demo.db
+recovered 0 interrupted job(s); processed 1 job(s)
+# job row afterwards:
+{'state': 'failed', 'reason_code': 'internal', 'attempts': 0,
+ 'error_detail': 'kind=full cannot run: segment (first stage of the full pipeline) is not
+ implemented (docs/PLAN.md ticket E1-T2); photo bytes are not persisted yet either
+ (signed upload is still 501, E5-T4)', 'provider': 'stub'}
+# quota ledger: -1 spent + 1 refunded = 0 units
+```
+
+### Suite after this addendum
+
+`make test` → **72 node + 186 pytest** (was 72 + 173), 0 failed, 0 skipped. `make lint` → all green.
+
+### Honest caveats
+
+* Every job still **ends in `failed(INTERNAL)`** — that is the truth about this build (no vision
+  stages, no persisted photo bytes). The worker makes the machinery real; it does not make the
+  pipeline exist. Handlers are the seam the E1/E2 stages plug into.
+* Heartbeat *detection* (`heartbeat_at` + Modal sweeper) is production mechanics and is not
+  faked locally; `recover_interrupted()` at process start is the local equivalent.
+* The kill-mid-job acceptance (paste two log tails) was exercised as the recover test
+  (claim → "die" → restart → complete), not by killing a real OS process.

@@ -204,6 +204,10 @@ class Repository(Protocol):
 
     def update_job(self, job: JobRecord) -> JobRecord: ...
 
+    def peek_next_queued_job(self) -> JobRecord | None: ...
+
+    def list_jobs_by_state(self, state: JobState) -> list[JobRecord]: ...
+
     def append_usage_event(self, event: UsageEventRecord) -> None: ...
 
     def quota_units_used(self, user_id: UUID, *, start: datetime, end: datetime) -> int: ...
@@ -584,6 +588,26 @@ class SqliteRepository:
             started_at=from_wire(row["started_at"]),
             finished_at=from_wire(row["finished_at"]),
         )
+
+    def peek_next_queued_job(self) -> JobRecord | None:
+        """Oldest queued job, without claiming it. Claiming is the caller's transaction
+        plus the state machine's queued->running transition — deliberately NOT done here,
+        so no repository backend can invent a sixth state.
+
+        Postgres selects with `for update skip locked` (the claim query is documented in
+        infra/migrations/0001_init.sql); SQLite relies on the single-writer `begin immediate`
+        transaction, which is honest for this build: one process, one connection.
+        """
+        rows = self._query(
+            "select * from jobs where state = 'queued' order by created_at, id limit 1"
+        )
+        return self._job_from_row(rows[0]) if rows else None
+
+    def list_jobs_by_state(self, state: JobState) -> list[JobRecord]:
+        rows = self._query(
+            "select * from jobs where state = ? order by created_at, id", (state.value,)
+        )
+        return [self._job_from_row(row) for row in rows]
 
     # -- usage ledger ------------------------------------------------------------------
     def append_usage_event(self, event: UsageEventRecord) -> None:
