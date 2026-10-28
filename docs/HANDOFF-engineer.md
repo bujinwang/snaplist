@@ -26,11 +26,13 @@ lint clean, run twice — once warm and once after deleting `__pycache__` and `p
    `reason` is deliberately **not** `reason_code`: that name belongs to the frozen five-value
    `Job` enum, and an export refusal is a different domain
    (`test_export_refusal_reasons_are_not_job_reason_codes` fails if anyone folds them together).
-   The three shapes are defined **once**: `apps/api/responses.py` on the Python side and
+   The three shapes are defined **once per language**: `apps/api/responses.py` on the Python side,
    `ExportedRowModel` / `RefusedRowModel` / `ExportBatchResponse` in `packages/shared/src/schemas.ts`
-   on the TS side, with the parity test mapping TS name → python model. They are *not* in the frozen
-   v1.0.0 model set — adding them there needs an ADR and a minor bump, which is the lead's call, so
-   they live beside `schemas.py` rather than inside it.
+   on the TS side, with `test_contract_parity.py` mapping TS name → python model. Note the
+   asymmetry, which is another role's deliberate call: on the TS side they are *inside* the contract
+   module (and `CONTRACT_VERSION` went 1.0.0 → **1.1.0** for it), while on the Python side they sit
+   next to `schemas.py` rather than in it. The parity test is what keeps the two honest; the file
+   layout does not.
 2. **`requires_manual_columns` is derived by a rule, not maintained as a list.**
    `ColumnSource` gained `manual_when_empty: string | null`; provenance is already mandatory per
    header, so adding a column forces the answer to "is an empty cell here the seller's job?".
@@ -93,8 +95,9 @@ Those are not my code failing and not a false positive: they are `test_contract_
 and stale `__pycache__`/`dist` were cleared, **three consecutive `make test && make lint` runs were
 green** — that is the state I am handing over. If the tree goes red again on a camelCase field or a
 newly-optional `category`, look at whoever is editing `apps/api/schemas.py` /
-`packages/shared/src/schemas.ts`, not at the API code. `CONTRACT_VERSION` is `1.0.0` on both sides
-and all 16 fields are `snake_case` as of this handoff.
+`packages/shared/src/schemas.ts`, not at the API code. `CONTRACT_VERSION` is **`1.1.0`** on both
+sides as of this handoff (bumped during this batch by another role, for the export envelope models —
+`ItemAttributes` is still exactly 16 `snake_case` fields, unchanged from v1.0.0).
 
 (The 11:07–11:10 edits turned out to be QA's mutation-testing window, not a real drift — the lead
 confirmed it afterwards. Leaving the note here because the *diagnosis technique* is the useful part:
@@ -104,27 +107,24 @@ was right both times.)
 ### Verified twice, warm and cold (this batch)
 
 ```
-$ make test && make lint                       # warm: dist and __pycache__ present
+$ date; make test && make lint                 # warm: dist and __pycache__ present
+11:36:20
 packages/shared test: # tests 72
 packages/shared test: # pass 72
 packages/shared test: # fail 0
 packages/shared test: # skipped 0
-163 passed, 1 warning in 0.95s
+163 passed, 1 warning in 0.99s
 All checks passed!
 
-$ rm -rf .pytest_cache packages/shared/dist && find . -name __pycache__ -prune -exec rm -rf {} +
-$ make test && make lint                       # cold: rebuild from source
-packages/shared test: # tests 72
-packages/shared test: # pass 72
+$ find . -name __pycache__ -prune -exec rm -rf {} + ; rm -rf .pytest_cache packages/shared/dist
+$ date; make test && make lint                 # cold: rebuild from source
+11:36:25
 packages/shared test: # fail 0
-packages/shared test: # skipped 0
-163 passed, 1 warning in 1.00s
+163 passed, 1 warning in 1.01s
 All checks passed!
 
-$ ls -l packages/shared/dist/src/*.d.ts | head -3     # proves the cold run really rebuilt
--rw-r--r--  25288 Oct 28 11:25 packages/shared/dist/src/analytics.d.ts
--rw-r--r--  3513  Oct 28 11:25 packages/shared/dist/src/csv.d.ts
--rw-r--r--  394   Oct 28 11:25 packages/shared/dist/src/index.d.ts
+$ ls -l packages/shared/dist/src/schemas.d.ts    # proves the cold run really rebuilt
+-rw-r--r-- 1 bujin staff  ...  Oct 28 11:36 packages/shared/dist/src/schemas.d.ts
 ```
 
 `git status` cannot show that deletion: `packages/shared/dist/` is `.gitignore`d, so its output is
@@ -798,7 +798,7 @@ dropdb --if-exists snaplist_migcheck && createdb snaplist_migcheck
 psql -v ON_ERROR_STOP=1 -q -d snaplist_migcheck -f infra/migrations/verify/local_supabase_shim.sql
 psql -v ON_ERROR_STOP=1 -q -d snaplist_migcheck -f infra/migrations/0001_init.sql
 psql -d snaplist_migcheck -f infra/migrations/verify/rls_isolation_check.sql      # 4/4
-psql -d snaplist_migcheck -f infra/migrations/verify/constraints_check.sql        # 11/11
+psql -d snaplist_migcheck -f infra/migrations/verify/constraints_check.sql        # 14/14
 
 # The three things that unblock the most:
 #   1. E5-T3 worker            → jobs stop being permanently queued

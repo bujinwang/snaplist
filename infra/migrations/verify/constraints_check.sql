@@ -4,7 +4,7 @@
 -- A CHECK constraint nobody has seen reject anything is a comment with worse syntax.
 -- Each block below asserts that the database *refuses* a row the contract forbids.
 -- Any uncaught insert aborts the script under `psql -v ON_ERROR_STOP=1`.
--- Pass prints "CONSTRAINT PROOF: PASS (11/11)".
+-- Pass prints "CONSTRAINT PROOF: PASS (14/14)".
 -- =====================================================================================
 
 \set ON_ERROR_STOP on
