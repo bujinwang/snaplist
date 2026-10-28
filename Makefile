@@ -12,7 +12,7 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install test lint fmt evals evals-strict dev dev-web dev-mobile contract clean
+.PHONY: help install test lint fmt evals evals-strict golden dev dev-web dev-mobile contract clean
 
 help:
 	@echo "SnapList targets:"
@@ -21,6 +21,7 @@ help:
 	@echo "  make lint       ruff check + tsc --noEmit in every TS package"
 	@echo "  make evals      report only; prints UNMEASURED until E1..E4, always exit 0"
 	@echo "  make evals-strict  release gate; deliberately fails until E0-T5 exists"
+	@echo "  make golden     validate the E0-T1 golden set; exit 0 only when it is complete"
 	@echo "  make dev        FastAPI on :8000 (uvicorn --reload)"
 	@echo "  make dev-web    static marketing placeholder on :3000"
 	@echo "  make dev-mobile expo dev server"
@@ -45,6 +46,11 @@ fmt:
 
 evals:
 	$(PY) -m evals.run --suite vision --allow-inconclusive
+
+# Golden-set check (docs/PLAN.md E0-T1). Exits 2 while the manifest does not exist — the set
+# is empty until real photos are added, and an empty set must not look like a passing one.
+golden:
+	$(PY) -m evals.tools.validate_golden
 
 # Release gate (docs/PLAN.md E0-T5). Deliberately fails until E0-T5 is implemented: a release
 # must not be cut on a pipeline nobody has measured. `make evals` exits 0 but prints

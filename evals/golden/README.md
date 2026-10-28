@@ -1,0 +1,99 @@
+# evals/golden — the golden set (E0-T1)
+
+**Current state: EMPTY. That is deliberate and it is not a failure of this tooling.** The
+golden set must be 40 *real* garment photos with 20 *hand-drawn* masks; synthetic stand-ins
+are forbidden by `docs/PLAN.md` E0-T1 ("a fake golden set makes every downstream number a
+lie"). Until the photos exist, every eval metric stays `UNMEASURED` — which is the honest
+value, not a bug.
+
+This README plus `evals/tools/validate_golden.py` is the contract *around* the photos: drop
+the files in, fill the manifest, run `make golden`, and the tool tells you exactly what is
+still missing. No guessing, no half-valid set sneaking into a report.
+
+## Layout
+
+```
+evals/golden/
+  manifest.json        # a JSON ARRAY of 40 entries (not an object — `jq 'length'` must print 40)
+  photos/<id>.jpg      # the real photo, JPEG or PNG, sRGB
+  masks/<id>.png       # 8-bit single-channel mask, same pixel size as the photo, 255 = garment
+```
+
+`manifest.json` is a bare array because two consumers already assume it:
+`jq 'length' evals/golden/manifest.json` in the E0-T1 acceptance, and `evals/run.py`'s
+`golden_state()` which reads a list as the entry count. Do not wrap it in `{"items": ...}`.
+
+## Entry shape
+
+```json
+{
+  "id": "top-01",
+  "path": "photos/top-01.jpg",
+  "mask_path": "masks/top-01.png",
+  "category": "top",
+  "colors": ["charcoal"],
+  "pattern": "solid",
+  "material": ["cotton"],
+  "hard_attributes": ["ribbed hem", "slight pilling at cuffs", "faded print"],
+  "hard_case": false,
+  "notes": "hanger shot, north window light"
+}
+```
+
+| field | rule |
+|---|---|
+| `id` | unique, lowercase slug; the file names should match it |
+| `path` | relative to `evals/golden/`; must exist and decode as an image |
+| `mask_path` | `null` for the 20 entries without a hand mask, a path for the 20 with one |
+| `category` | exactly one of `top`, `bottom`, `dress`, `outerwear`, `shoe`, `accessory`, `other` (the `GarmentCategory` contract values) |
+| `colors` | 1–3 lowercase strings, primary first (`ItemAttributes.colors` contract) |
+| `pattern` | one of the `Pattern` contract values (`solid`, `striped`, `plaid`, `floral`, `graphic`, `animal`, `geometric`, `tie_dye`, `knit`, `other`, `unknown`) |
+| `material` | 1+ lowercase fibre names, no percentages (contract: evidence-only) |
+| `hard_attributes` | **exactly 3** non-empty strings — the things a VLM usually gets wrong |
+| `hard_case` | boolean; exactly 5 entries are `true` |
+
+## Composition — 40 entries, and how the quotas add up
+
+PLAN E0-T1 says "10 tops / 10 bottoms / 5 dresses / 5 shoes / 5 accessories / 5 hard cases".
+That sums to 40 only if **the 5 hard cases are an extra bucket on top of the 35 category
+entries**, so that is the interpretation `validate_golden.py` enforces:
+
+- among the 35 entries with `hard_case: false`: exactly **10 top, 10 bottom, 5 dress,
+  5 shoe, 5 accessory**;
+- exactly **5 entries with `hard_case: true`** — any category, but still a real photo of a
+  real garment;
+- **20 of the 40 entries carry a hand mask** (`mask_path`), the rest are `null`.
+
+Hard cases are the photos that break naive pipelines: black garment on a black chair, busy
+patterned bedspread, garment on a wire hanger, strong window backlight, a strap or sleeve
+crossing the garment. Pick five that each break something different.
+
+If the lead ever wants a different split, the numbers live in `BASE_QUOTAS`, `HARD_CASES` and
+`TOTAL_ENTRIES` at the top of `evals/tools/validate_golden.py` — one edit, and the tool
+enforces the new rule instead of a stale one.
+
+## Shooting rules (they are eval rules, not taste)
+
+- One garment per photo, laid flat or on a hanger, filling most of the frame.
+- Diffuse daylight or a softbox; no hard flash, no colour cast you would not want scored.
+- Background: anything real and cluttered is allowed *in the hard cases*; keep the 35 normal
+  entries on a plain light surface.
+- Do not crop the garment out of frame — `bad_photo` is a producer of failures, not a fixture.
+- Keep the originals; the JPEG you shot is the fixture, not a re-export.
+
+## Masks
+
+Drawn by hand (any tool that writes an 8-bit PNG: Photoshop, GIMP, labelme export, macOS
+Preview is not enough). 255 = garment, 0 = background, soft edges welcome but not required.
+Masks are what turn "the cutout looks fine" into an IoU number (E1-T4).
+
+## Running the check
+
+```bash
+make golden                                   # the checklist, exit 0 only when complete
+.venv/bin/python -m evals.tools.validate_golden --golden-dir evals/golden
+```
+
+Exit codes: `0` complete, `1` incomplete (something is missing), `2` the manifest itself is
+unusable (absent, not JSON, not an array). A missing photo fails the run even if the count is
+right — the manifest is a promise about files that exist.

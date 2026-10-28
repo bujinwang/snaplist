@@ -1029,3 +1029,59 @@ garment_px 39600, output texture std 38.3 (the gradient survives the warp — no
   open on E0-T1's real fixtures — synthetic unit fixtures are not golden evidence.
 * `rectify()` is not wired into a worker handler yet; the pipeline order when it is: segment →
   matte → rectify, sharing decodes.
+
+---
+
+## 16. Addendum — E0-T1 golden-set tooling (Pip, 2026-10-28, same session)
+
+Scope claimed: **E0-T1 tooling only**. The golden set itself cannot be produced here — 40 real
+garment photos and 20 hand masks are Bert's to provide, and PLAN E0-T1 forbids synthetic
+stand-ins. What shipped is the contract around them, so the moment photos exist the set becomes
+mechanical to complete and impossible to half-fake.
+
+### What shipped
+
+* `evals/golden/README.md` — layout (`manifest.json` + `photos/` + `masks/`), the exact entry
+  shape, the shooting rules, and the **composition interpretation**: PLAN's "10 tops / 10
+  bottoms / 5 dresses / 5 shoes / 5 accessories / 5 hard cases" only sums to 40 if the 5 hard
+  cases are an *extra* bucket over 35 category entries. That interpretation is stated once, in
+  the README, and encoded once, in the validator's constants.
+* `evals/tools/validate_golden.py` — `make golden` / `python -m evals.tools.validate_golden`.
+  Checks, each PASS/FAIL with counts: manifest present and a bare JSON array (so `jq 'length'`
+  prints 40 and `evals/run.py` counts entries); 40 entries; required fields; unique slug ids;
+  no placeholder/synthetic tokens; categories and patterns from the contract enums; `colors`
+  1–3 lowercase; `material` non-empty lowercase; exactly 3 hard attributes each; exactly 5
+  `hard_case: true`; the 35-entry category quotas; every photo exists **and decodes**; exactly
+  20 masks, single-channel and sized like their photo.
+  Exit codes: 0 complete, 1 incomplete, 2 manifest unusable (absent/bad JSON/not an array) —
+  "missing" and "broken" are different fixes, same reasoning as the eval gates.
+* `make golden` target. It exits 2 today, on purpose: the manifest does not exist, and an
+  empty golden set must not look like a passing one.
+* `evals/tests/test_golden_validation.py` — 19 tests: the complete-set happy path, all three
+  fatal cases, count/quota/mask-count failures, missing and undecodable photos, RGB mask, mask
+  size mismatch, duplicate ids, four vocabulary/shape violations, and the placeholder-token
+  guard.
+
+Real output today:
+
+```
+$ make golden
+golden set check — /Users/bujin/Documents/Projects/SnapList/evals/golden
+  [FAIL] manifest present  .../manifest.json does not exist — the golden set is empty by design
+summary: INCOMPLETE — 1 blocking problem(s).
+make: *** [golden] Error 2
+```
+
+### Suite after this addendum
+
+`make test` → **72 node + 232 pytest** (was 72 + 213), 0 failed. `make lint` → all green.
+
+### Honest caveats
+
+* The tool cannot prove a photo is real; it rejects the obvious placeholder tokens and
+  everything structural. Realness is Bert's call when he shoots them.
+* `pytest`'s `tmp_path` factory trips this machine's filesystem shim (EEXIST on its own cache
+  dir), so these tests own their temp directories via `tempfile.mkdtemp`. Documented in the
+  fixture docstring so the next person does not rediscover it.
+* Nothing writes into `evals/golden/` except Bert's future photos and manifest; the generated
+  fixtures live only in temp dirs.
