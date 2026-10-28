@@ -1,8 +1,8 @@
 """STAGE 2 — rectify + flatten. Owner: CV role (E2, ticket E2-T1).
 
-## What is implemented here, and what is not
+## What is implemented here
 
-**Implemented (pure arithmetic, no model, no network, no image):**
+**Pure arithmetic (no model, no network):**
 
 * `solve_homography(src, dst)` — the 4-point planar homography from `docs/PLAN.md` E2-T1, solved as
   an 8×8 linear system (DLT with `h33 = 1`) by Gaussian elimination with partial pivoting.
@@ -13,21 +13,31 @@
 * `clamp_to_frame` — keeps a mapped point inside the output image, so a quad that overhangs the
   source cannot produce out-of-range pixel coordinates for the warp.
 
-**Not implemented:** decoding the JPEG, reading the alpha PNG, resampling pixels, compositing onto
-`#F2F1EE` and the contact shadow. `rectify()` still raises `StageNotImplemented`, because those
-steps need a codec (Pillow/OpenCV) and real fixtures, and nothing in this environment can verify
-them. The maths above is what the eventual wrapper calls; it is deliberately dependency-free so it
-can be verified today.
+**The pixel pipeline (`rectify()`), also implemented:**
 
-## Why no numpy
+1. decode the photo (RGB) and the alpha PNG (L) — mismatched sizes and garbage bytes raise
+   `ValueError` naming the culprit;
+2. derive the garment quad from the alpha's bounding box (v1, `meta.notes["quad_source"] =
+   "alpha_bbox"` — honest about being coarse; a real corner detector replaces this in place);
+3. solve the homography quad → canonical canvas for `category`;
+4. inverse-map every canvas pixel into the photo and **bilinear-resample** garment and alpha —
+   inverse mapping is what avoids holes, forward mapping is what causes them;
+5. composite onto the `#F2F1EE` backdrop, sRGB PNG, long edge pinned by `canonical_size`
+   (≤ 1600px per BRIEF.md).
 
-`numpy` is not installed in this repo's virtualenv, and adding it would change `pyproject.toml` and
-`docs/DEPS.md`, neither of which this role owns. An 8×8 solve in pure Python is ~40 lines, has no
-licence, no wheel, no ABI and no import cost, and is unit-tested to 1e-9 against analytically known
-matrices. If a later ticket brings numpy in for the pixel work, `_solve_linear` can be swapped for
-`numpy.linalg.solve` without touching a caller — the function boundaries are already the right ones.
+The contact shadow is deliberately not done: `meta.notes["contact_shadow"] = False` says so, and
+prompts/02-vision.md's SSIM ≥ 0.85 check (E2-T3) is what will judge the gap. Returning a passable
+image and staying silent about it would be the exact dishonesty the brief forbids.
 
-## Constraints that stay true when the pixel stages land
+## On numpy
+
+numpy arrived with E1-T3 (matte) and is now used for the resample and composite. The 8×8 solve
+stays pure Python on purpose: it is unit-tested to 1e-9 against analytically known matrices, has
+called sites that do not need an array dependency, and `numpy.linalg.solve` can replace
+`_solve_linear` without touching a caller if ever needed — the function boundaries are already
+the right ones.
+
+## Constraints that stay true
 
 * **no generative repainting in this module** — garment pixels must survive the warp, SSIM ≥ 0.85
   inside the mask versus the source (prompts/02-vision.md)
@@ -38,11 +48,15 @@ matrices. If a later ticket brings numpy in for the pixel work, `_solve_linear` 
 
 from __future__ import annotations
 
+import io
 import math
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from packages.vision import StageNotImplemented
+import numpy as np
+from PIL import Image
+
 from packages.vision.types import StageMeta
 
 # A quad smaller than this (in pixels²) is a mis-tap, not a garment.
@@ -73,6 +87,11 @@ CANONICAL_ASPECT: dict[str, float] = {
     "accessory": 1.0,
     "other": 4 / 5,
 }
+
+
+# Flat-lay backdrop, BRIEF.md / prompts/02-vision.md: neutral #F2F1EE, sRGB.
+BACKDROP_RGB: tuple[int, int, int] = (242, 241, 238)
+_RECTIFY_BACKEND = "local_bbox_warp_v1"
 
 
 class DegenerateQuadError(ValueError):
@@ -315,16 +334,139 @@ def warp_quad(
 
 
 def rectify(image: bytes, alpha_png: bytes, category: str) -> RectifyResult:
-    """Not implemented: the geometry above is ready, the pixel pipeline is not.
+    """Warp the garment onto the canonical flat-lay canvas for `category`.
 
-    What is missing is everything that touches an image: JPEG decode, alpha-PNG read, bilinear
-    resample of the garment under `homography_for_quad`, composite onto `#F2F1EE`, contact shadow.
-    Those need a codec (Pillow/OpenCV) and real fixtures, and E2-T3's SSIM comparison is what would
-    prove them — returning the input bytes and calling it "rectified" would make the eval report a
-    number for work that never ran.
+    Offline, deterministic, no model: the homography is solved from the alpha's bounding
+    box (v1 — see module docstring for what that means and what replaces it), every canvas
+    pixel is inverse-mapped and bilinearly resampled, and the result is composited onto the
+    neutral backdrop. Zero network calls.
     """
-    raise StageNotImplemented(
-        "packages.vision.rectify.rectify — pixel pipeline missing (E2-T1). The homography maths in "
-        "this module IS implemented and tested: solve_homography, homography_for_quad, "
-        "clamp_to_frame."
+    if not image:
+        raise ValueError("rectify(): image bytes are empty")
+    if not alpha_png:
+        raise ValueError("rectify(): alpha_png bytes are empty")
+
+    started = time.perf_counter()
+
+    photo = _decode_rgb(image)
+    alpha = _decode_l_array(alpha_png)
+    if alpha.shape != photo.shape[:2]:
+        raise ValueError(
+            f"rectify(): alpha shape {alpha.shape} does not match image shape {photo.shape[:2]}"
+        )
+
+    quad = _alpha_bbox_quad(alpha)
+    matrix, width, height = homography_for_quad(quad, category)
+    inverse = invert_homography(matrix)
+
+    # Inverse mapping: for each canvas pixel, find its source location. Vectorised over the
+    # canvas; clamping happens in SOURCE coordinates, which is what clamp_to_frame was
+    # written for (an overhanging quad maps some canvas pixels outside the photo).
+    ys_t, xs_t = np.meshgrid(
+        np.arange(height, dtype=np.float64),
+        np.arange(width, dtype=np.float64),
+        indexing="ij",
     )
+    src_x, src_y = _apply_homography_to_grid(inverse, xs_t, ys_t)
+    src_x = np.clip(src_x, 0.0, float(photo.shape[1] - 1))
+    src_y = np.clip(src_y, 0.0, float(photo.shape[0] - 1))
+
+    garment = np.stack(
+        [_bilinear(photo[:, :, ch], src_x, src_y) for ch in range(photo.shape[2])], axis=-1
+    )
+    alpha_soft = np.clip(_bilinear(alpha.astype(np.float64), src_x, src_y), 0.0, 255.0) / 255.0
+
+    backdrop = np.array(BACKDROP_RGB, dtype=np.float64)
+    flat = garment * alpha_soft[..., None] + backdrop * (1.0 - alpha_soft[..., None])
+    flat_png = _encode_rgb(np.rint(flat).astype(np.uint8))
+
+    seconds = time.perf_counter() - started
+    meta = StageMeta(
+        stage="rectify",
+        backend=_RECTIFY_BACKEND,
+        device="cpu",
+        seconds=seconds,  # measured wall-clock; None would mean UNMEASURED
+        notes={
+            "quad_source": "alpha_bbox",  # coarse on purpose in v1; corner detector replaces it
+            "contact_shadow": False,  # owed, and the SSIM eval (E2-T3) will score the gap
+            "backdrop": f"#{BACKDROP_RGB[0]:02X}{BACKDROP_RGB[1]:02X}{BACKDROP_RGB[2]:02X}",
+            "canvas": [width, height],
+            "category": category,
+            "garment_px": int((alpha > 0).sum()),
+            "network_calls": 0,
+        },
+    )
+    return RectifyResult(flat_png=flat_png, homography=tuple(matrix), meta=meta)
+
+
+def _decode_rgb(image_bytes: bytes) -> np.ndarray:
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as opened:
+            frame = opened.convert("RGB")
+            return np.asarray(frame, dtype=np.float64)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - PIL raises a zoo of formats for bad bytes
+        raise ValueError(f"rectify(): could not decode image bytes ({exc})") from exc
+
+
+def _decode_l_array(png_bytes: bytes) -> np.ndarray:
+    try:
+        with Image.open(io.BytesIO(png_bytes)) as opened:
+            frame = opened.load()  # force the decode: a truncated file fails here
+            del frame
+            if opened.mode in ("RGBA", "LA", "PA"):
+                channel = opened.getchannel("A")
+            else:
+                channel = opened.convert("L")
+            return np.asarray(channel, dtype=np.uint8)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"rectify(): could not decode alpha_png bytes ({exc})") from exc
+
+
+def _alpha_bbox_quad(alpha: np.ndarray) -> Quad:
+    """The garment quad, v1: the alpha channel's bounding box.
+
+    Honest about being coarse — a photographed garment is rarely axis-aligned, so the warp
+    this produces is a scale-to-canvas, not a true perspective correction. The corner
+    detector that replaces it must emit the same quad order (TL, TR, BR, BL) and the same
+    `meta.notes["quad_source"]` honesty marker.
+    """
+    ys, xs = np.nonzero(alpha > 0)
+    if xs.size == 0:
+        raise ValueError("rectify(): alpha contains no garment pixels (no_garment)")
+    left, right = float(xs.min()), float(xs.max())
+    top, bottom = float(ys.min()), float(ys.max())
+    return ((left, top), (right, top), (right, bottom), (left, bottom))
+
+
+def _apply_homography_to_grid(
+    matrix: Sequence[float], xs: np.ndarray, ys: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    a, b, c, d, e, f, g, h, i = (float(value) for value in matrix)
+    w = g * xs + h * ys + i
+    if np.any(np.abs(w) < INFINITY_EPSILON):
+        raise DegenerateQuadError("a canvas point maps to infinity under the inverse homography")
+    return (a * xs + b * ys + c) / w, (d * xs + e * ys + f) / w
+
+
+def _bilinear(channel: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Bilinear sample of a 2-D channel at float coordinates. Callers pre-clamp."""
+    height, width = channel.shape
+    x0 = np.clip(np.floor(xs).astype(np.int64), 0, width - 1)
+    y0 = np.clip(np.floor(ys).astype(np.int64), 0, height - 1)
+    x1 = np.minimum(x0 + 1, width - 1)
+    y1 = np.minimum(y0 + 1, height - 1)
+    fx = xs - x0
+    fy = ys - y0
+    top = channel[y0, x0] * (1.0 - fx) + channel[y0, x1] * fx
+    bottom = channel[y1, x0] * (1.0 - fx) + channel[y1, x1] * fx
+    return top * (1.0 - fy) + bottom * fy
+
+
+def _encode_rgb(pixels: np.ndarray) -> bytes:
+    buffer = io.BytesIO()
+    Image.fromarray(pixels).save(buffer, format="PNG", optimize=False)
+    return buffer.getvalue()

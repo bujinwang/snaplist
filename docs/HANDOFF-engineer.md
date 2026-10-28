@@ -149,7 +149,7 @@ Test counts: **163 pytest** (128 API + 27 vision + 8 evals — QA's three new fi
 | P0-3 | E7-T2 Poshmark + Vinted mappers | **done, all columns UNVERIFIED** | §5 |
 | P0-4 | E7-T3 copy generator | **done, hallucination test proven red-able** | §5 |
 | P1 | E2-T1 rectify **pure math** | **done** (homography, target rect, clamping) | `packages/vision/tests/test_rectify_geometry.py` |
-| P1 | E2-T1 rectify **pixel pipeline** | **still stub** (`StageNotImplemented`) | — |
+| P1 | E2-T1 rectify **pixel pipeline** | **done — Pip, 2026-10-28, second session (§15)**; contact shadow + real quad estimate still owed | §15 |
 | P2 | E7-T4 comps pricing (offline) | **done**, `insufficient_data` under 5 comps | §5 |
 | P1 | E1-T1 runtime probe (`packages/vision/runtime.py`) | **done — Pip, 2026-10-28, second session** | §12 — acceptance command output pasted, 10 unit tests, `make test`/`make lint` re-run green |
 | P1 | E1-T3 matte (`packages/vision/matte.py`) | **done — Pip, 2026-10-28, second session (§14)**; golden-fixture histogram acceptance still owed to E0-T1 | §14 |
@@ -975,3 +975,57 @@ meta: local_feather_v1 seconds=0.00077 notes: {'feather_sigma_px': 1.0, 'halo_ba
 * `matte()` is not yet wired into any job handler: the worker's `full` handler still fails
   terminal until E1-T2 (`segment`) lands ahead of it in the pipeline. Wiring order when it
   does: segment → matte, sharing one decode of the image bytes.
+
+---
+
+## 15. Addendum — E2-T1 rectify pixel pipeline (Pip, 2026-10-28, same session as §12–14)
+
+Scope claimed: **E2-T1** (the pixel half; the homography maths were already done and tested).
+`rectify()` went from `StageNotImplemented` to a working, deterministic, offline warp.
+
+### What shipped
+
+* `packages/vision/rectify.py` — `rectify(image, alpha_png, category)`:
+  1. decode photo (RGB, JPEG/PNG both exercised) + alpha (L, or the alpha channel of RGBA/LA);
+     garbage bytes and size mismatches raise `ValueError` naming the culprit;
+  2. garment quad from the alpha bounding box — **v1 shortcut, declared in
+     `meta.notes["quad_source"] = "alpha_bbox"`**; a real corner detector replaces it in this
+     same file and must keep the TL,TR,BR,BL order;
+  3. homography quad → canonical canvas (`homography_for_quad`, the frozen geometry);
+  4. **inverse mapping** of every canvas pixel into the photo (inverse is what avoids holes),
+     bilinear resample of garment and alpha, source-coordinate clamping via the existing
+     `clamp_to_frame` semantics;
+  5. composite onto `#F2F1EE`, sRGB PNG, long edge per `canonical_size` (≤1600px).
+* The full-bleed design is pinned, not discovered: `CANONICAL_ASPECT`'s "fill the frame without
+  letterboxing" means the garment quad maps onto the whole canvas and the backdrop shows through
+  soft alpha. My first three pixel tests assumed a centred garment with margins and failed — the
+  tests were wrong, the frozen geometry was right, and the tests now pin the actual design
+  (`test_corners_sample_the_quad_and_centre_is_garment`).
+* `test_rectify_pixels.py` — 13 tests: canvas size per category, ≤1600px everywhere, corner
+  sampling, alpha-blend betweenness on a half-covered column, unknown-category fallback
+  (`other`, no raise), empty alpha → `no_garment` ValueError, size mismatch, garbage bytes,
+  honest meta, determinism, and forward-homography corner mapping at 1e-6. Socket trap on every
+  test. The geometry file's stub-marker test flipped to the new contract: `rectify()` now
+  validates inputs with ValueError instead of raising `StageNotImplemented`.
+
+### Real output (400×300 gradient garment, JPEG q92)
+
+```
+canvas (960, 1200), wall 0.161s, meta.seconds=0.1614
+garment_px 39600, output texture std 38.3 (the gradient survives the warp — no flat fill)
+```
+
+### Suite after this addendum
+
+`make test` → **72 node + 213 pytest** (was 72 + 200), 0 failed. `make lint` → all green.
+
+### Honest caveats
+
+* **`contact_shadow` is not done** — `meta.notes["contact_shadow"] = False`. PLAN lists it in
+  E2-T1; prompts/02-vision.md's soft contact shadow is a later pass in this file.
+* The bbox quad means v1 "rectify" is a scale-to-canvas, not a true perspective correction. The
+  SSIM eval (E2-T3) will score it; if it fails the 0.85 gate the corner detector is the fix.
+* The CLI acceptance (`python -m packages.vision.cli --in evals/fixtures/bottom-03.jpg`) remains
+  open on E0-T1's real fixtures — synthetic unit fixtures are not golden evidence.
+* `rectify()` is not wired into a worker handler yet; the pipeline order when it is: segment →
+  matte → rectify, sharing decodes.

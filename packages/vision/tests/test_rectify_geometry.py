@@ -15,7 +15,6 @@ import math
 
 import pytest
 
-from packages.vision import StageNotImplemented
 from packages.vision.rectify import (
     CANONICAL_ASPECT,
     DEFAULT_LONG_EDGE_PX,
@@ -232,11 +231,14 @@ def test_target_rect_is_clockwise_from_the_top_left() -> None:
         target_rect(0, 3)
 
 
-def test_the_pixel_pipeline_is_still_explicitly_unimplemented() -> None:
-    """The geometry is real; `rectify()` must still refuse rather than return the input bytes."""
+def test_the_pixel_pipeline_validates_its_inputs() -> None:
+    """`rectify()` used to be a stub that raised `StageNotImplemented`; since E2-T1's pixel
+    pipeline landed it must still refuse garbage loudly — with ValueError naming the culprit,
+    never a silent pass-through.
+    """
     from packages.vision.rectify import rectify
 
-    with pytest.raises(StageNotImplemented) as excinfo:
+    with pytest.raises(ValueError, match="image"):
         rectify(b"", b"", "top")
-    assert "E2-T1" in str(excinfo.value)
-    assert "homography" in str(excinfo.value)
+    with pytest.raises(ValueError, match="alpha"):
+        rectify(b"x", b"", "top")
