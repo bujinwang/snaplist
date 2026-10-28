@@ -1242,3 +1242,97 @@ python -m packages.vision.segment --in <a real garment photo> --out /tmp/sn1
 With 20 hand masks in `evals/golden/masks/`, E1-T4 is a report away: the mask format is already
 `mask_px`-enumerable and `meta` already carries everything the report needs.
 
+---
+
+## 18. Addendum — the web-sourced provisional set, and the first segmentation IoU (Pip, same day)
+
+### What was asked, and what the web actually had
+
+Bert's instruction was "go find the photos". I did, and the finding is a negative one that
+needs to be written down before the artefacts:
+
+* **One source was reachable.** Openverse's API times out from here, Unsplash's search
+  endpoint answers `307 Authorization required`, Pexels returns 403, the Met's collection API
+  is 410. That leaves Wikimedia Commons, which is a fine source for encyclopaedic material
+  and a poor one for seller photos.
+* **672 candidates** survived licence filtering (CC0 / public domain / CC BY; share-alike and
+  non-commercial excluded so the repo's own licence is not complicated), mime, and a 700 px
+  size floor. They came from 40+ categories, targeted full-text searches, and depth-first
+  paging into subcategories (`Trousers/Breeches`, `Skirts/Bases (fashion)`, …).
+* **89 survived a "can a colour mask isolate this" screen** (uniform border, plausible
+  foreground fraction, one dominant blob).
+* **25 were picked by eye; 17 survived mask verification.** The rest were dropped for masks
+  that missed a hem, a cuff or a sole, or because the photo was a fencing manual, a letter, a
+  textile fragment or a person wearing the garment.
+* **The resulting composition is 2 top / 6 bottom / 4 shoe / 4 accessory / 1 outerwear /
+  0 dress.** `docs/PLAN.md` E0-T1 wants 10/10/5/5/5. Ten bottoms did not exist in a clean
+  licence; dresses did not survive verification at all.
+
+So the golden set stays empty, `make golden` keeps exiting 2, and every number below carries
+the word *provisional*. Substituting a convenient set for the contract set, silently, is how a
+project ends up quoting an IoU that only holds on museum mannequins.
+
+### What shipped
+
+* `evals/golden-provisional/` — 17 entries, every one with a mask:
+  * `photos/` 1280 px Commons thumbnails (not the multi-megabyte originals; the pipeline caps
+    at 1600 px anyway, and 4.5 MB is committable where 60 MB is not);
+  * `masks/` 8-bit single channel, same size as their photo;
+  * `manifest.json` — the E0-T1 shape **plus** two extra keys per entry that the validator
+    ignores and the report prints: `mask_source` and `source{provider,page,file,licence,artist}`;
+  * `CREDITS.md` — per-photo licence and author, because a CC BY photo without attribution is
+    not licensed;
+  * `README.md` — what the set is, what it is not, and the two biases stated plainly.
+* `evals/tools/provisional_masks.py` — the mask generator: background-colour distance → Otsu
+  → corner flood fill → keep the body at the centre of mass → 3×3 close → 1 px feather.
+  numpy + PIL only, no new dependency, ~1 s per photo.
+* `evals/tools/seg_iou.py` — E1-T4, first half: segment every entry, binarise both masks at
+  128, report per-image IoU, per-category means, and the provenance header (git sha, backend,
+  device, model sha256, n, mask source).
+* `evals/tools/validate_golden.py` — `--profile {golden,provisional}`. `golden` is still the
+  default and still strict; `provisional` checks structure, prints the composition as
+  *reported, not gated*, and renders a banner saying in as many words that a set validated
+  under it is not the golden set.
+* `Makefile` — `golden-provisional`, `masks-provisional`, `seg-iou`.
+* `evals/tests/test_provisional_set.py` — 16 tests, no weights, no network.
+
+### The first real number (provisional, n=17)
+
+```
+backend u2net · cpu · model 8d10d2f3bb75ae3b… · mean per-image segment 0.217 s
+segmentation mean IoU  0.9416      median 0.9697      worst 0.7090 (shoe-04)  best 0.9925
+by category            bottom 0.9794 · outerwear 0.9925 · top 0.9653 · accessory 0.9186 · shoe 0.8833
+```
+
+It clears the DoD's 0.92. **That is the flattering direction and it is not evidence.** The
+photos were selected for colour separability, the masks are algorithmic, there are no dresses
+and no hard cases. On real seller photos — a black knit on a black chair, phone camera, one
+lamp — this will be lower, and the gap between the two numbers is itself the useful finding.
+
+The two worst rows are informative rather than alarming: `shoe-04` (worn leather tennis shoes,
+predicted coverage 0.495 against a reference 0.396) is the model pulling the shadow in;
+`shoe-03` is a pale shoe on a pale background.
+
+### Mutation check
+
+| mutation | result |
+|---|---|
+| drop `.copy()` before `ImageDraw.floodfill` | killed — this is the Pillow 11 trap: `fromarray` is read-only and floodfill **silently** no-ops, which produced coverage 1.0 for every photo until the corner assertion caught it |
+| IoU denominator → `ref.sum()` instead of the union | killed |
+| provisional profile stops requiring a mask | killed |
+
+### Suite after this addendum
+
+`make test` → **72 node + 274 pytest** (was 72 + 258), 0 failed, 0 skipped. `make lint` clean.
+`make golden` → still exit 2. `make golden-provisional` → exit 0.
+
+### What is still owed
+
+* **E1-T4, second half**: a `segmentation mean IoU` row in `evals/run.py` and a gate. It is
+  not there because a gate over algorithmic masks on 17 colour-separable photos would be a
+  gate that passes for the wrong reason. It lands with the hand masks.
+* **The 20 masks.** Nothing in this session changed that: an algorithmic mask is a stand-in
+  for the *plumbing*, never for the measurement.
+* A dress and ten bottoms still do not exist from a clean-licence web source.
+
+

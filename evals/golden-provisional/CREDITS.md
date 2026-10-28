@@ -1,0 +1,24 @@
+# Credits — evals/golden-provisional
+
+Every photo is from Wikimedia Commons. The licence shown is the one Commons records
+for that file; entries under CC BY require attribution, which is this table.
+
+| id | Commons file | licence | author | file URL |
+|---|---|---|---|---|
+| acc-01 | File:58 dress hat.jpg | Public domain | jcalz (talk)calzarette | https://upload.wikimedia.org/wikipedia/commons/d/d0/58_dress_hat.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| acc-02 | File:A BOOK BAG FOR LIFE... (26041690263).jpg | CC BY 2.0 | summonedbyfells | https://upload.wikimedia.org/wikipedia/commons/4/4e/A_BOOK_BAG_FOR_LIFE..._%2826041690263%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| acc-03 | File:Belt (USA), late 19th century (CH 18188479).jpg | Public domain | Unknown artistUnknown artist | https://upload.wikimedia.org/wikipedia/commons/6/65/Belt_%28USA%29%2C_late_19th_century_%28CH_18188479%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| acc-04 | File:0-02-04-5197a0c53c10b8c86357343fdadc7d0bd06cf792af845a643fe0b0911af829fe 6021ba31.jpg | CC BY 4.0 | Gohstyman | https://upload.wikimedia.org/wikipedia/commons/d/dd/0-02-04-5197a0c53c10b8c86357343fdadc7d0bd06cf792af845a643fe0b0911af829fe_6021ba31.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-01 | File:Breeches (AM 1973.193-1).jpg | CC BY 4.0 | not researched | https://upload.wikimedia.org/wikipedia/commons/b/bd/Breeches_%28AM_1973.193-1%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-02 | File:Breeches (AM 1973.193-2).jpg | CC BY 4.0 | not researched | https://upload.wikimedia.org/wikipedia/commons/6/69/Breeches_%28AM_1973.193-2%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-03 | File:Breeches (AM 1973.193-3).jpg | CC BY 4.0 | not researched | https://upload.wikimedia.org/wikipedia/commons/7/79/Breeches_%28AM_1973.193-3%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-04 | File:Breeches (AM 1973.193-4).jpg | CC BY 4.0 | not researched | https://upload.wikimedia.org/wikipedia/commons/3/31/Breeches_%28AM_1973.193-4%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-05 | File:Breeches (AM 1973.193-5).jpg | CC BY 4.0 | not researched | https://upload.wikimedia.org/wikipedia/commons/1/11/Breeches_%28AM_1973.193-5%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| bottom-06 | File:Breeches MET 1972.139.7 B.jpg | CC0 | not stated | https://upload.wikimedia.org/wikipedia/commons/f/f9/Breeches_MET_1972.139.7_B.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| outer-01 | File:Canadienne civile ayant appartenu à Bertrand Branet, 2002.2151(3).jpg | CC0 | AnonymousUnknown author | https://upload.wikimedia.org/wikipedia/commons/c/cb/Canadienne_civile_ayant_appartenu_%C3%A0_Bertrand_Branet%2C_2002.2151%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| shoe-01 | File:78 chelsea boots.jpg | CC BY 4.0 | Free open sources aholaS | https://upload.wikimedia.org/wikipedia/commons/8/84/78_chelsea_boots.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| shoe-02 | File:Goodyear sneakers, 1890s, Goodyear Rubber Manufacturing Company - Bata Shoe Museum - DSC00745-001.JPG | CC0 | Daderot | https://upload.wikimedia.org/wikipedia/commons/b/bb/Goodyear_sneakers%2C_1890s%2C_Goodyear_Rubber_Manufacturing_Company_-_Bata_Shoe_Museum_-_DSC00745-001.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| shoe-03 | File:Michael Kors Kristy Lace Up Sneaker 43S4KRFS2E Kalbsleder braun (1) (16286299927).jpg | CC BY 2.0 | SPERA.de Designerschuhe, Taschen und Accessoires from Deutschland | https://upload.wikimedia.org/wikipedia/commons/b/bb/Michael_Kors_Kristy_Lace_Up_Sneaker_43S4KRFS2E_Kalbsleder_braun_%281%29_%2816286299927%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| shoe-04 | File:Shoes, leather tennis (pair) (AM 2017.30.1-9).jpg | CC BY 4.0 | Adidas | https://upload.wikimedia.org/wikipedia/commons/4/4c/Shoes%2C_leather_tennis_%28pair%29_%28AM_2017.30.1-9%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| top-01 | File:Guards Fest 2024 (53479474703).jpg | CC BY 2.0 | Erik Drost | https://upload.wikimedia.org/wikipedia/commons/7/72/Guards_Fest_2024_%2853479474703%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+| top-02 | File:T-shirt2.jpg | Public domain | Elkagye | https://upload.wikimedia.org/wikipedia/commons/0/0f/T-shirt2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |

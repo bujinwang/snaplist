@@ -42,6 +42,15 @@ BASE_QUOTAS: dict[str, int] = {
     "accessory": 5,
 }
 
+# Profiles. `golden` is the E0-T1 contract and the default everywhere. `provisional` is for
+# `evals/golden-provisional/` — a web-sourced stand-in whose whole point is to exercise the
+# metric while the real set waits for Bert's photos. It checks structure only: the files are
+# promised, the vocabulary is right, every entry carries a mask. It does **not** invent a
+# composition rule the source could not satisfy, because a set that pretends to be the
+# golden set is worse than one that says out loud that it is not.
+PROFILES = ("golden", "provisional")
+PROVISIONAL_MIN_ENTRIES = 10
+
 # Tokens that smell like a fabricated fixture. The tool cannot prove a photo is real; it can
 # refuse the obvious placeholder that would otherwise make every number downstream a fiction.
 FORBIDDEN_TOKENS = ("placeholder", "synthetic", "fake", "dummy", "todo", "lorem", "sample")
@@ -61,6 +70,7 @@ class Check:
 class Report:
     checks: list[Check] = field(default_factory=list)
     fatal: bool = False  # the manifest itself is unusable, not merely incomplete
+    profile: str = "golden"
 
     def record(self, name: str, ok: bool, detail: str) -> None:
         self.checks.append(Check(name=name, ok=ok, detail=detail))
@@ -70,7 +80,14 @@ class Report:
         return all(check.ok for check in self.checks)
 
     def render(self, golden_dir: Path) -> str:
-        lines = [f"golden set check — {golden_dir}", ""]
+        lines = [f"golden set check — {golden_dir}"]
+        if self.profile != "golden":
+            lines += [
+                "",
+                f"*** profile: {self.profile.upper()} — composition is NOT checked. A set "
+                "validated here is not the E0-T1 golden set and cannot stand in for it. ***",
+            ]
+        lines.append("")
         width = max((len(check.name) for check in self.checks), default=0)
         for check in self.checks:
             mark = "PASS" if check.ok else "FAIL"
@@ -78,7 +95,13 @@ class Report:
         failed = [check for check in self.checks if not check.ok]
         lines.append("")
         if self.passed:
-            lines.append("summary: COMPLETE — the golden set satisfies every rule above.")
+            if self.profile == "golden":
+                lines.append("summary: COMPLETE — the golden set satisfies every rule above.")
+            else:
+                lines.append(
+                    "summary: COMPLETE (provisional profile) — structure holds. Composition "
+                    "and mask provenance were not verified; see the directory's README."
+                )
         else:
             lines.append(f"summary: INCOMPLETE — {len(failed)} blocking problem(s).")
         return "\n".join(lines)
@@ -96,8 +119,11 @@ def _contains_forbidden(text: str) -> str | None:
     return None
 
 
-def validate(golden_dir: Path) -> Report:
-    report = Report()
+def validate(golden_dir: Path, profile: str = "golden") -> Report:
+    if profile not in PROFILES:
+        raise ValueError(f"profile must be one of {PROFILES}, got {profile!r}")
+    strict = profile == "golden"
+    report = Report(profile=profile)
     manifest_path = golden_dir / "manifest.json"
 
     if not manifest_path.exists():
@@ -128,11 +154,18 @@ def validate(golden_dir: Path) -> Report:
         return report
 
     report.record("manifest is an array", True, f"{len(payload)} entries")
-    report.record(
-        f"entry count is {TOTAL_ENTRIES}",
-        len(payload) == TOTAL_ENTRIES,
-        f"{len(payload)}/{TOTAL_ENTRIES}",
-    )
+    if strict:
+        report.record(
+            f"entry count is {TOTAL_ENTRIES}",
+            len(payload) == TOTAL_ENTRIES,
+            f"{len(payload)}/{TOTAL_ENTRIES}",
+        )
+    else:
+        report.record(
+            f"at least {PROVISIONAL_MIN_ENTRIES} entries",
+            len(payload) >= PROVISIONAL_MIN_ENTRIES,
+            f"{len(payload)} entries (no composition requirement in this profile)",
+        )
 
     # --- per-entry structure -----------------------------------------------------------
     entries = [entry for entry in payload if isinstance(entry, dict)]
@@ -255,35 +288,47 @@ def validate(golden_dir: Path) -> Report:
     )
 
     # --- composition -------------------------------------------------------------------
-    hard_entries = [entry for entry in entries if entry.get("hard_case") is True]
-    report.record(
-        f"exactly {HARD_CASES} hard cases",
-        len(hard_entries) == HARD_CASES,
-        f"{len(hard_entries)}/{HARD_CASES}",
-    )
-    if any("hard_case" not in entry for entry in entries):
+    if strict:
+        hard_entries = [entry for entry in entries if entry.get("hard_case") is True]
         report.record(
-            "hard_case is explicit on every entry", False, "boolean missing on some entries"
+            f"exactly {HARD_CASES} hard cases",
+            len(hard_entries) == HARD_CASES,
+            f"{len(hard_entries)}/{HARD_CASES}",
         )
+        if any("hard_case" not in entry for entry in entries):
+            report.record(
+                "hard_case is explicit on every entry", False, "boolean missing on some entries"
+            )
 
-    base = [entry for entry in entries if entry.get("hard_case") is not True]
-    base_counts = {category: 0 for category in BASE_QUOTAS}
-    for entry in base:
-        category = entry.get("category")
-        if category in base_counts:
-            base_counts[category] += 1
-    quota_failures = [
-        f"{category} {count}/{quota}"
-        for category, quota in BASE_QUOTAS.items()
-        if (count := base_counts[category]) != quota
-    ]
-    report.record(
-        "category quotas (35 non-hard entries)",
-        not quota_failures,
-        ", ".join(quota_failures) if quota_failures else ", ".join(
-            f"{category} {count}" for category, count in base_counts.items()
-        ),
-    )
+        base = [entry for entry in entries if entry.get("hard_case") is not True]
+        base_counts = {category: 0 for category in BASE_QUOTAS}
+        for entry in base:
+            category = entry.get("category")
+            if category in base_counts:
+                base_counts[category] += 1
+        quota_failures = [
+            f"{category} {count}/{quota}"
+            for category, quota in BASE_QUOTAS.items()
+            if (count := base_counts[category]) != quota
+        ]
+        report.record(
+            "category quotas (35 non-hard entries)",
+            not quota_failures,
+            ", ".join(quota_failures) if quota_failures else ", ".join(
+                f"{category} {count}" for category, count in base_counts.items()
+            ),
+        )
+    else:
+        # Reported, never gated: the reader has to know what the number was measured on.
+        tally: dict[str, int] = {}
+        for entry in entries:
+            tally[str(entry.get("category"))] = tally.get(str(entry.get("category")), 0) + 1
+        ordered = ", ".join(f"{name} {count}" for name, count in sorted(tally.items()))
+        report.record(
+            "composition (reported, not gated)",
+            True,
+            f"{len(entries)} entries: {ordered}",
+        )
 
     # --- files on disk -----------------------------------------------------------------
     missing_photos: list[str] = []
@@ -316,11 +361,20 @@ def validate(golden_dir: Path) -> Report:
     )
 
     mask_entries = [entry for entry in entries if _non_empty_str(entry.get("mask_path"))]
-    report.record(
-        f"exactly {TOTAL_MASKS} hand masks",
-        len(mask_entries) == TOTAL_MASKS,
-        f"{len(mask_entries)}/{TOTAL_MASKS}",
-    )
+    if strict:
+        report.record(
+            f"exactly {TOTAL_MASKS} hand masks",
+            len(mask_entries) == TOTAL_MASKS,
+            f"{len(mask_entries)}/{TOTAL_MASKS}",
+        )
+    else:
+        # In this profile every entry is meant to be measurable, so a missing mask is a
+        # failure — but the masks are not claimed to be hand-drawn, and the report says so.
+        report.record(
+            "every entry carries a mask",
+            len(mask_entries) == len(entries),
+            f"{len(mask_entries)}/{len(entries)}",
+        )
     mask_problems: list[str] = []
     for entry in mask_entries:
         mask_path = golden_dir / str(entry["mask_path"])
@@ -354,6 +408,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--golden-dir", type=Path, default=DEFAULT_GOLDEN)
     parser.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default="golden",
+        help="golden = the E0-T1 contract; provisional = structure only, composition not gated",
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="only print the summary line and failures"
     )
     args = parser.parse_args(argv)
@@ -363,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: {golden_dir} is not a directory", file=sys.stderr)
         return 2
 
-    report = validate(golden_dir)
+    report = validate(golden_dir, profile=args.profile)
     if args.quiet:
         failures = [check for check in report.checks if not check.ok]
         state = "COMPLETE" if report.passed else f"INCOMPLETE ({len(failures)} problems)"

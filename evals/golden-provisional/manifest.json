@@ -1,0 +1,485 @@
+[
+  {
+    "id": "acc-01",
+    "path": "photos/acc-01.jpg",
+    "mask_path": "masks/acc-01.png",
+    "category": "accessory",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "felt"
+    ],
+    "hard_attributes": [
+      "gold braid crossed over the crown",
+      "red tassel under the brim",
+      "single black feather at the side"
+    ],
+    "hard_case": false,
+    "notes": "dress hat on a brass stand",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:58_dress_hat.jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/d/d0/58_dress_hat.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "Public domain",
+      "artist": "jcalz (talk)calzarette"
+    }
+  },
+  {
+    "id": "acc-02",
+    "path": "photos/acc-02.jpg",
+    "mask_path": "masks/acc-02.png",
+    "category": "accessory",
+    "colors": [
+      "beige",
+      "blue"
+    ],
+    "pattern": "graphic",
+    "material": [
+      "canvas"
+    ],
+    "hard_attributes": [
+      "printed library logo in blue and orange",
+      "handle shadow falls on the cloth",
+      "tote sags to the left of centre"
+    ],
+    "hard_case": false,
+    "notes": "canvas tote on a dark purple backdrop",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:A_BOOK_BAG_FOR_LIFE..._(26041690263).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/4/4e/A_BOOK_BAG_FOR_LIFE..._%2826041690263%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 2.0",
+      "artist": "summonedbyfells"
+    }
+  },
+  {
+    "id": "acc-03",
+    "path": "photos/acc-03.jpg",
+    "mask_path": "masks/acc-03.png",
+    "category": "accessory",
+    "colors": [
+      "red",
+      "blue",
+      "white"
+    ],
+    "pattern": "plaid",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "two brass rings, one per end",
+      "tartan is cut on the bias at the tips",
+      "belt laid open in a V"
+    ],
+    "hard_case": false,
+    "notes": "late-19th-century belt, museum documentation on grey",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Belt_(USA),_late_19th_century_(CH_18188479).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/6/65/Belt_%28USA%29%2C_late_19th_century_%28CH_18188479%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "Public domain",
+      "artist": "Unknown artistUnknown artist"
+    }
+  },
+  {
+    "id": "acc-04",
+    "path": "photos/acc-04.jpg",
+    "mask_path": "masks/acc-04.png",
+    "category": "accessory",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "acetate"
+    ],
+    "hard_attributes": [
+      "two small hinges at the temples",
+      "gradient lens tint",
+      "cast shadow on the red cloth"
+    ],
+    "hard_case": false,
+    "notes": "sunglasses on red fabric",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:0-02-04-5197a0c53c10b8c86357343fdadc7d0bd06cf792af845a643fe0b0911af829fe_6021ba31.jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/d/dd/0-02-04-5197a0c53c10b8c86357343fdadc7d0bd06cf792af845a643fe0b0911af829fe_6021ba31.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "Gohstyman"
+    }
+  },
+  {
+    "id": "bottom-01",
+    "path": "photos/bottom-01.jpg",
+    "mask_path": "masks/bottom-01.png",
+    "category": "bottom",
+    "colors": [
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "buttoned cuff at the knee",
+      "small cream label at the waist",
+      "legs folded into an S"
+    ],
+    "hard_case": false,
+    "notes": "knee breeches, museum documentation",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-1).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/b/bd/Breeches_%28AM_1973.193-1%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "not researched"
+    }
+  },
+  {
+    "id": "bottom-02",
+    "path": "photos/bottom-02.jpg",
+    "mask_path": "masks/bottom-02.png",
+    "category": "bottom",
+    "colors": [
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "colour chart and grey scale beside the garment",
+      "buttoned cuff at the knee",
+      "waistband label top left"
+    ],
+    "hard_case": false,
+    "notes": "same breeches as bottom-01 with a colour reference chart in frame",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-2).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/6/69/Breeches_%28AM_1973.193-2%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "not researched"
+    }
+  },
+  {
+    "id": "bottom-03",
+    "path": "photos/bottom-03.jpg",
+    "mask_path": "masks/bottom-03.png",
+    "category": "bottom",
+    "colors": [
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "cuff buttons are two different sizes",
+      "seat is worn smooth",
+      "one leg twists at the knee"
+    ],
+    "hard_case": false,
+    "notes": "knee breeches, museum documentation",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-3).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/7/79/Breeches_%28AM_1973.193-3%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "not researched"
+    }
+  },
+  {
+    "id": "bottom-04",
+    "path": "photos/bottom-04.jpg",
+    "mask_path": "masks/bottom-04.png",
+    "category": "bottom",
+    "colors": [
+      "brown"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "reinforced seat patch in a darker hide",
+      "left cuff splayed open",
+      "waistband uneven at the top"
+    ],
+    "hard_case": false,
+    "notes": "breeches with a contrasting seat reinforcement",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-4).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/3/31/Breeches_%28AM_1973.193-4%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "not researched"
+    }
+  },
+  {
+    "id": "bottom-05",
+    "path": "photos/bottom-05.jpg",
+    "mask_path": "masks/bottom-05.png",
+    "category": "bottom",
+    "colors": [
+      "brown",
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "inner-leg panels are a different shade",
+      "both cuffs are cut open",
+      "garment leans right of centre"
+    ],
+    "hard_case": false,
+    "notes": "breeches with a two-tone inner leg",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-5).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/1/11/Breeches_%28AM_1973.193-5%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "not researched"
+    }
+  },
+  {
+    "id": "bottom-06",
+    "path": "photos/bottom-06.jpg",
+    "mask_path": "masks/bottom-06.png",
+    "category": "bottom",
+    "colors": [
+      "tan",
+      "yellow"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "laces threaded through both cuffs",
+      "buckskin is stained in the middle",
+      "one cuff is torn"
+    ],
+    "hard_case": false,
+    "notes": "buckskin breeches, laced cuffs",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Breeches_MET_1972.139.7_B.jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/f/f9/Breeches_MET_1972.139.7_B.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC0",
+      "artist": ""
+    }
+  },
+  {
+    "id": "outer-01",
+    "path": "photos/outer-01.jpg",
+    "mask_path": "masks/outer-01.png",
+    "category": "outerwear",
+    "colors": [
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "canvas"
+    ],
+    "hard_attributes": [
+      "brown pile collar lining",
+      "four patch pockets, two of them bellows",
+      "button placket warps at the hem"
+    ],
+    "hard_case": false,
+    "notes": "French civilian 'canadienne' jacket, museum object on white",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Canadienne_civile_ayant_appartenu_\u00e0_Bertrand_Branet,_2002.2151(3).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/c/cb/Canadienne_civile_ayant_appartenu_%C3%A0_Bertrand_Branet%2C_2002.2151%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC0",
+      "artist": "AnonymousUnknown author"
+    }
+  },
+  {
+    "id": "shoe-01",
+    "path": "photos/shoe-01.jpg",
+    "mask_path": "masks/shoe-01.png",
+    "category": "shoe",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "elastic side gore",
+      "chunky lug sole",
+      "boot reflects the studio light on its toe"
+    ],
+    "hard_case": false,
+    "notes": "chelsea boot on white, commercial product photo",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:78_chelsea_boots.jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/8/84/78_chelsea_boots.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "Free open sources aholaS"
+    }
+  },
+  {
+    "id": "shoe-02",
+    "path": "photos/shoe-02.jpg",
+    "mask_path": "masks/shoe-02.png",
+    "category": "shoe",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "laces tied unevenly",
+      "toe boxes creased and dull",
+      "one shoe turned slightly inward"
+    ],
+    "hard_case": false,
+    "notes": "1890s Goodyear shoes on white",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Goodyear_sneakers,_1890s,_Goodyear_Rubber_Manufacturing_Company_-_Bata_Shoe_Museum_-_DSC00745-001.JPG",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/b/bb/Goodyear_sneakers%2C_1890s%2C_Goodyear_Rubber_Manufacturing_Company_-_Bata_Shoe_Museum_-_DSC00745-001.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC0",
+      "artist": "Daderot"
+    }
+  },
+  {
+    "id": "shoe-03",
+    "path": "photos/shoe-03.jpg",
+    "mask_path": "masks/shoe-03.png",
+    "category": "shoe",
+    "colors": [
+      "beige"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "rope-textured sole edge",
+      "five pairs of eyelets",
+      "left shoe sits behind the right"
+    ],
+    "hard_case": false,
+    "notes": "lace-up sneakers on white, catalogue style",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Michael_Kors_Kristy_Lace_Up_Sneaker_43S4KRFS2E_Kalbsleder_braun_(1)_(16286299927).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/b/bb/Michael_Kors_Kristy_Lace_Up_Sneaker_43S4KRFS2E_Kalbsleder_braun_%281%29_%2816286299927%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 2.0",
+      "artist": "SPERA.de Designerschuhe, Taschen und Accessoires from Deutschland"
+    }
+  },
+  {
+    "id": "shoe-04",
+    "path": "photos/shoe-04.jpg",
+    "mask_path": "masks/shoe-04.png",
+    "category": "shoe",
+    "colors": [
+      "white",
+      "grey"
+    ],
+    "pattern": "striped",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "three side stripes, partly worn away",
+      "scuffs and creasing on both toes",
+      "laces dangling loose"
+    ],
+    "hard_case": false,
+    "notes": "leather tennis shoes, museum pair on white",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Shoes,_leather_tennis_(pair)_(AM_2017.30.1-9).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/4/4c/Shoes%2C_leather_tennis_%28pair%29_%28AM_2017.30.1-9%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 4.0",
+      "artist": "Adidas"
+    }
+  },
+  {
+    "id": "top-01",
+    "path": "photos/top-01.jpg",
+    "mask_path": "masks/top-01.png",
+    "category": "top",
+    "colors": [
+      "white",
+      "red"
+    ],
+    "pattern": "graphic",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "red number 48 on the chest",
+      "sleeveless armholes with red piping",
+      "mannequin neck visible above the collar"
+    ],
+    "hard_case": false,
+    "notes": "baseball jersey on a mannequin, dark backdrop",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:Guards_Fest_2024_(53479474703).jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/7/72/Guards_Fest_2024_%2853479474703%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "CC BY 2.0",
+      "artist": "Erik Drost"
+    }
+  },
+  {
+    "id": "top-02",
+    "path": "photos/top-02.jpg",
+    "mask_path": "masks/top-02.png",
+    "category": "top",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "deep creases across the body",
+      "sleeves creased at the fold lines",
+      "hem is not level"
+    ],
+    "hard_case": false,
+    "notes": "white tee laid flat on a brown rug",
+    "mask_source": "algorithmic:background_colour_distance",
+    "source": {
+      "provider": "Wikimedia Commons",
+      "page": "https://commons.wikimedia.org/wiki/File:T-shirt2.jpg",
+      "file": "https://upload.wikimedia.org/wikipedia/commons/0/0f/T-shirt2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+      "licence": "Public domain",
+      "artist": "Elkagye"
+    }
+  }
+]
