@@ -151,6 +151,7 @@ Test counts: **163 pytest** (128 API + 27 vision + 8 evals — QA's three new fi
 | P1 | E2-T1 rectify **pure math** | **done** (homography, target rect, clamping) | `packages/vision/tests/test_rectify_geometry.py` |
 | P1 | E2-T1 rectify **pixel pipeline** | **still stub** (`StageNotImplemented`) | — |
 | P2 | E7-T4 comps pricing (offline) | **done**, `insufficient_data` under 5 comps | §5 |
+| P1 | E1-T1 runtime probe (`packages/vision/runtime.py`) | **done — Pip, 2026-10-28, second session** | §12 — acceptance command output pasted, 10 unit tests, `make test`/`make lint` re-run green |
 | — | E1/E3/E4 vision + VTON stages | **untouched stubs**, as instructed | — |
 | — | E5-T3 job worker | **not built**; state machine implemented and tested, no process claims jobs | §2 "jobs stay queued" |
 | — | E8-T1/T2 Stripe | **501**, names the missing secret | §3 P |
@@ -805,3 +806,57 @@ psql -d snaplist_migcheck -f infra/migrations/verify/constraints_check.sql      
 #   2. E2-T1 pixel pipeline    → assets exist, exports stop refusing on prettified_url
 #   3. eBay Taxonomy creds     → *Category resolves, warnings drop to zero
 ```
+
+---
+
+## 12. Addendum — E1-T1 runtime probe (Pip, 2026-10-28, second working session)
+
+Scope claimed this session: **E1-T1 only**. Everything in §1–§9 above is Kou's and is untouched;
+nothing in `apps/api/`, `infra/` or `evals/` was modified. No new dependencies (stdlib only), so
+`docs/DEPS.md` needed no row.
+
+### What shipped
+
+* `packages/vision/runtime.py` — `probe()` returns `RuntimeInfo(device, backend, torch_available,
+  hosted_available, reason, notes)` and `RuntimeInfo.stage_meta()` carries the decision into the
+  `StageMeta` every stage must populate. Policy, first rule that fires wins:
+  1. explicit override `SNAPLIST_SEGMENT_BACKEND=birefnet|u2net|sam2_hosted` — an unknown value
+     **raises** rather than silently swapping ("no silent model swap" cuts both ways);
+  2. `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` both set → `sam2_hosted` (contract primary, runs on
+     Modal GPUs, so device does not matter);
+  3. torch sees `cuda`/`mps` → local `birefnet`;
+  4. CPU only → cheap `u2net`, **with a note stating the quality downgrade**.
+  torch itself is import-guarded: absent torch ⇒ device reported as `cpu` with a note saying
+detection was impossible — a missing accelerator is a logged fallback, never an exception
+(E1-T1 DoD). `probe()` performs zero network calls (proven by a socket-blocking test).
+* `packages/vision/tests/test_runtime.py` — 10 tests; every policy branch is forced by faking
+  `_detect_torch`/`_hosted_available`, so no branch is reachable only in production.
+* `packages/vision/tests/test_imports.py` — `runtime` added to the MODULES import guard.
+
+### Acceptance output (verbatim, this machine)
+
+```
+$ .venv/bin/python -c "from packages.vision.runtime import probe; print(probe())"
+RuntimeInfo(device='cpu', backend=<SegmentBackend.U2NET: 'u2net'>, torch_available=False,
+hosted_available=False, reason='cpu-only machine without hosted credentials: cheap backend by policy',
+notes=("torch is not installed: device detection is unavailable, reporting 'cpu'; no local
+accelerated backend can run in this process", 'no CUDA/MPS and no hosted credentials: selecting
+the cheap backend (u2net); segmentation quality will be lower — stated here, not silent'))
+```
+
+### Suite after this session
+
+`make test` → **72 node + 173 pytest** (was 72 + 163), 0 failed, 0 skipped. `make lint` → all
+green (one E501 in the MODULES line during the round, fixed before landing).
+
+### What E1-T1 deliberately does NOT cover
+
+* No backend is *implemented* — `segment()` still raises `StageNotImplemented` (E1-T2).
+* The `mps`/`cuda` branches were exercised by faking `_detect_torch`, not by running torch:
+  this machine's venv has no torch, so "birefnet runs on MPS" remains **UNMEASURED**.
+* No `SNAPLIST_SEGMENT_BACKEND` row was added to `.env.example` — the variable is documented in
+  the module docstring only. Adding it touches a lead-owned file; flagged here instead per the
+  do-not-edit-another-role's-directory rule.
+
+Next command (unchanged from §9): the three unblockers stand; E1-T3 (`matte`, local, no network)
+is the next vision ticket that does not need credentials.

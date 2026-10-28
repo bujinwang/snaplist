@@ -13,7 +13,10 @@ import pytest
 
 import packages.vision as vision_pkg
 
-MODULES = ["segment", "matte", "rectify", "prettify", "attrs", "vton", "dedupe", "cli", "types"]
+MODULES = [
+    "segment", "matte", "rectify", "prettify", "attrs",
+    "vton", "dedupe", "cli", "types", "runtime",
+]
 
 
 def test_every_vision_module_imports() -> None:
