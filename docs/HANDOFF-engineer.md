@@ -1367,5 +1367,73 @@ and leave the golden check to the release gate.
 
 Suite after this: 72 node + 277 pytest, lint clean, `make golden` still exit 2.
 
+---
+
+## 20. Addendum — the search-engine experiment (same day, after Bert pushed back)
+
+Bert's objection was fair: I said "the web cannot supply this set" after testing only
+*image APIs*. Bing/Google Images were never tried, and "no API key" is not "no images". So I
+tried them. Bing works — `bing.com/images/search` returns ~25–35 results per query and embeds
+the media URL in the result markup.
+
+### What the harvest actually produced
+
+| step | count |
+|---|---|
+| queries issued (12 + 12, "preloved / second hand / used / thrifted / vinted / depop") | 24 |
+| image URLs after filtering stock-photo domains (freepik, vecteezy, dreamstime, shutterstock, …) | **636** |
+| passed an automatic "can a colour mask isolate this" screen | **75** |
+| downloaded at up to 1600 px and inspected by eye in batches of twelve | 40 |
+| **actually one garment, with a correct mask** | **9** |
+
+**The 9/636 pass rate is the finding, not an accident.** Two separate things went wrong, and
+the second one is the interesting one:
+
+1. My index picking was sloppy. Labels sit at the bottom edge of each contact-sheet tile and I
+   read a few rows off, so a third of the picks were the wrong image entirely. My error, and it
+   cost a whole verification round.
+2. **The "maskable" screen is a bias machine.** It rewards a uniform background, and the single
+   most uniform-background class in a garment-photo search is *wholesale inventory*: racks of
+   jeans on a flat floor, bales of clothes in a warehouse, two hundred shoes laid out in rows.
+   Those pass the screen and are worthless as fixtures. Meanwhile a real Vinted photo — one
+   dress on a bed, phone camera, cluttered room — fails it, because there is nothing uniform
+   to key on.
+
+So the funnel is self-defeating in exactly the way §18 predicted for Commons, now confirmed on
+a 636-image pool instead of a 40-image sample: **"looks like a seller photo" and "a colour mask
+can isolate it" are anti-correlated.** Any automatic screen picks the wrong half.
+
+### The licensing point, stated properly this time
+
+I previously said the web "does not have" the photos. It has plenty. What it does not have is
+photos anyone may redistribute: the top results for `t-shirt flat lay` are freepik/vecteezy/
+dreamstime listings — paid stock, some watermarked — and the marketplace photos belong to the
+shops that shot them. Copying either into this repo (or any repo) is infringement regardless of
+whether the repo is private.
+
+That is a licensing constraint, not an availability one, and it is why the local cache is the
+only honest home for internet photos.
+
+### What was kept
+
+* `SNAPLIST_GOLDEN_DIR` in `evals/run.py` — a set can now live outside the tree. It exists for
+  exactly this case: fixtures that may be measured but not shipped. Provenance, `n` and the
+  "outside the repo" fact all appear in the report.
+* `~/.cache/snaplist/golden-web/` — 9 verified photos + masks + `sources.json`, with a
+  `README.txt` saying what they are, what they are not, and that they must never be committed.
+  Not a fixture set; not referenced by any make target.
+* The harvester itself is **not** committed. A scraper for all-rights-reserved images is not
+  something this repo should carry.
+
+### The conclusion I should have reached three hours earlier
+
+Everything points the same way: 40 photos take Bert fifteen minutes with a phone, and they are
+the only version of this set that is licensed, representative, and cheap. The web path costs
+more effort than shooting, produces a worse distribution, and cannot be committed. If the
+photos never arrive, the provisional Commons set stays and every number stays labelled.
+
+Suite unchanged: 72 node + 277 pytest, lint clean.
+
+
 
 

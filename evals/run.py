@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import sys
 from dataclasses import dataclass
@@ -107,8 +108,18 @@ def masked_set() -> Path | None:
     Golden wins whenever it has any masks at all, because a number measured on Bert's photos
     is the number everybody wants; the provisional set only exists to keep the pipeline
     exercised until then.
+
+    `SNAPLIST_GOLDEN_DIR` overrides both, and it exists for a licensing reason rather than a
+    testing one: photos pulled off a search engine cannot legally be committed to this repo,
+    but they can be measured against locally. A set pointed at from outside the tree is
+    reproducible on one machine and explicitly not shipped — which is the honest shape for
+    fixtures whose provenance is "found on the internet, all rights reserved".
     """
-    for path in (GOLDEN, PROVISIONAL):
+    override = os.environ.get("SNAPLIST_GOLDEN_DIR", "").strip()
+    candidates = [Path(override).expanduser() / "manifest.json"] if override else []
+    candidates += [GOLDEN, PROVISIONAL]
+
+    for path in candidates:
         if not path.exists():
             continue
         try:
@@ -173,7 +184,11 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
             f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
         ),
     )
-    notes.append(f"segmentation: measured on {golden.relative_to(ROOT)} (n={meta['n']})")
+    try:
+        where = str(golden.relative_to(ROOT))
+    except ValueError:
+        where = f"{golden} (outside the repo, via SNAPLIST_GOLDEN_DIR — not committed)"
+    notes.append(f"segmentation: measured on {where} (n={meta['n']})")
     if "provisional" in golden.name:
         notes.append(
             "that set is the web-sourced stand-in: algorithmic masks, chosen for colour "
