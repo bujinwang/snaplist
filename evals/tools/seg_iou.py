@@ -30,7 +30,6 @@ import argparse
 import io
 import json
 import statistics
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +37,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from evals import git_sha
 from packages.vision.runtime import probe
 from packages.vision.segment import segment
 
@@ -47,18 +47,8 @@ DEFAULT_REPORT = ROOT / "evals" / "reports" / "seglab.md"
 
 
 def _git_sha() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        return result.stdout.strip() or "unknown"
-    except (subprocess.SubprocessError, OSError):
-        return "unknown"
+    """Kept as a thin alias so the report code reads the same as it always has."""
+    return git_sha()
 
 
 def _iou(predicted: np.ndarray, reference: np.ndarray) -> float:

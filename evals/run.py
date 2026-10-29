@@ -1,23 +1,27 @@
 """`python -m evals.run --suite vision` — the one eval entry point every role calls.
 
-Today it measures nothing: the golden manifest does not exist yet (the CV role writes it
-in E0/T1 with 40 real photos) and the vision stages are stubs. So it prints `UNMEASURED`
-for every target and exits 0 — a scaffold must not turn CI red just by existing.
+It measures **one** metric today: segmentation mean IoU, over whichever masked set exists
+(`evals/golden/` first, `evals/golden-provisional/` as a stand-in). Everything else prints
+`UNMEASURED`, because no other stage has both an implementation and reference fixtures on
+disk. The prerequisites are checked rather than assumed: no masked set, no model weights, or
+a failing measurement each produce an `UNMEASURED` row **plus a line naming the reason**, since
+"no number" and "no number because you have not run `make fetch-models`" are different fixes.
 
 **`--gate` and `--allow-inconclusive` are PARSED BUT NOT IMPLEMENTED.** They exist so the
 Makefile targets (`make evals`, `make evals-strict`) have a stable interface, and so nobody
-mistakes the current green for a passing gate. The real gate — four exit codes, the
-nearest-rank percentile, the per-item `tool_time` summation, the single `excluded_rate > 0.20`
-guard — is docs/PLAN.md ticket **E0-T5**, and that ticket owns every line of it. Do not
-implement bits of it here in passing: a half-built gate is worse than a clearly absent one,
-because the exit code starts looking trustworthy before the arithmetic is right.
+mistakes a green exit for a passing gate. The real gate — four exit codes, the nearest-rank
+percentile, the per-item `tool_time` summation, the single `excluded_rate > 0.20` guard — is
+docs/PLAN.md ticket **E0-T5**, and that ticket owns every line of it. Do not implement bits of
+it here in passing: a half-built gate is worse than a clearly absent one, because the exit code
+starts looking trustworthy before the arithmetic is right. That is also why a measured row does
+**not** turn into an exit code: the banner says `n=17 measured, but the gate itself is E0-T5`.
 
-Current behaviour until E0-T5 lands:
+Current behaviour:
 
     --suite X                       report only: prints the table, exit 0, no banner
-    --suite X --gate                RELEASE gate: refuses, exit 2 (no measurement exists)
+    --suite X --gate                RELEASE gate: refuses, exit 2 (the gate does not exist)
     --suite X --allow-inconclusive  dev gate: prints the table, then the banner
-                                    `GATE NOT EVALUATED — n=0. This is NOT a pass.`, exit 0
+                                    `GATE NOT EVALUATED — …`. This is NOT a pass.`, exit 0
 
 The banner exists because exit 0 in CI is simply green, and "not counted as a pass" would
 otherwise survive only inside the report body — i.e. it would depend on somebody reading it,
@@ -36,10 +40,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from evals import UNMEASURED
+from evals import UNMEASURED, git_sha
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "evals" / "golden" / "manifest.json"
+PROVISIONAL = ROOT / "evals" / "golden-provisional" / "manifest.json"
 REPORTS = ROOT / "evals" / "reports"
 
 
@@ -78,6 +83,105 @@ def golden_state() -> dict[str, object]:
     return {"present": True, "entries": entries}
 
 
+@dataclass(frozen=True, slots=True)
+class Measurement:
+    """A number, the fixture count behind it, and which set it came from.
+
+    E0-T2's rule is "either a measured number with the fixture count that produced it, or the
+    literal UNMEASURED". Keeping all three fields in one object is what makes that rule
+    checkable instead of aspirational.
+    """
+
+    value: float
+    n: int
+    set_name: str
+    note: str  # e.g. "masks are algorithmic, not hand-drawn"
+
+    def cell(self) -> str:
+        return f"{self.value:.4f} (n={self.n}, {self.set_name})"
+
+
+def masked_set() -> Path | None:
+    """The set a segmentation number may be measured on: golden first, provisional as a stand-in.
+
+    Golden wins whenever it has any masks at all, because a number measured on Bert's photos
+    is the number everybody wants; the provisional set only exists to keep the pipeline
+    exercised until then.
+    """
+    for path in (GOLDEN, PROVISIONAL):
+        if not path.exists():
+            continue
+        try:
+            entries = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entries, list) and any(entry.get("mask_path") for entry in entries):
+            return path.parent
+    return None
+
+
+def measurements() -> tuple[dict[str, Measurement], list[str]]:
+    """Every metric this harness can actually measure right now, plus the reasons it could not.
+
+    Today that is exactly one: segmentation IoU, because it is the only stage with both an
+    implementation (`segment()`) and reference masks on disk. Everything else stays
+    UNMEASURED — and a missing prerequisite is named out loud rather than silently skipped,
+    because "the number is missing" and "the number is missing because you have not run
+    `make fetch-models`" are different fixes.
+    """
+    measured: dict[str, Measurement] = {}
+    notes: list[str] = []
+
+    golden = masked_set()
+    if golden is None:
+        notes.append(
+            "segmentation: UNMEASURED — no masked set on disk (evals/golden/manifest.json and "
+            "evals/golden-provisional/manifest.json both lack an entry with a mask_path)"
+        )
+        return measured, notes
+
+    try:
+        from packages.vision.segment import weights_path  # local: keeps import cost off --help
+
+        if not weights_path().is_file():
+            notes.append(
+                f"segmentation: UNMEASURED — model weights absent at {weights_path()} "
+                "(run `make fetch-models`)"
+            )
+            return measured, notes
+    except Exception as exc:  # noqa: BLE001 - any import failure is the same "cannot measure"
+        notes.append(f"segmentation: UNMEASURED — vision package unavailable ({exc})")
+        return measured, notes
+
+    from evals.tools import seg_iou
+
+    try:
+        rows, meta = seg_iou.run(golden)
+    except Exception as exc:  # noqa: BLE001 - report the reason, never a fake number
+        reason = f"{type(exc).__name__}: {exc}"
+        notes.append(f"segmentation: UNMEASURED — the measurement failed ({reason})")
+        return measured, notes
+
+    stats = seg_iou.summarise(rows)
+    sources = sorted({row["mask_source"] for row in rows})
+    measured["segmentation mean IoU"] = Measurement(
+        value=stats["mean"],
+        n=meta["n"],
+        set_name="provisional" if "provisional" in golden.name else "golden",
+        note=(
+            f"backend {meta['backend']} on {meta['device']}, mask source: {', '.join(sources)}; "
+            f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
+        ),
+    )
+    notes.append(f"segmentation: measured on {golden.relative_to(ROOT)} (n={meta['n']})")
+    if "provisional" in golden.name:
+        notes.append(
+            "that set is the web-sourced stand-in: algorithmic masks, chosen for colour "
+            "separability, no dresses, no hard cases — the number is optimistic by construction"
+        )
+    return measured, notes
+
+
 GATE_NOT_EVALUATED_BANNER = "GATE NOT EVALUATED — n=0. This is NOT a pass."
 
 RELEASE_GATE_REFUSAL = (
@@ -86,7 +190,16 @@ RELEASE_GATE_REFUSAL = (
 )
 
 
-def render(suite: str, *, banner: bool = True) -> str:
+def render(
+    suite: str,
+    *,
+    banner: bool = True,
+    measured: dict[str, Measurement] | None = None,
+    notes: list[str] | None = None,
+) -> str:
+    """Pure text. Measurements are injected so the report can be tested without a model."""
+    measured = measured or {}
+    notes = notes or []
     g = golden_state()
     golden_line = (
         f"present, {g['entries']} entries" if g["present"] else "MISSING"
@@ -95,6 +208,7 @@ def render(suite: str, *, banner: bool = True) -> str:
         f"# eval report — suite `{suite}`",
         "",
         f"- generated: {datetime.now(UTC).isoformat(timespec='seconds')}",
+        f"- git: `{git_sha()}`",
         f"- python: {platform.python_version()} on {platform.system()}/{platform.machine()}",
         f"- golden manifest: {golden_line}",
         "",
@@ -103,13 +217,31 @@ def render(suite: str, *, banner: bool = True) -> str:
     ]
     for t in TARGETS:
         if t.suite == suite or suite == "all":
-            lines.append(f"| {t.metric} | {t.threshold} | {UNMEASURED} | {t.epic} |")
+            found = measured.get(t.metric)
+            cell = found.cell() if found else UNMEASURED
+            lines.append(f"| {t.metric} | {t.threshold} | {cell} | {t.epic} |")
+
+    if measured:
+        lines += ["", "## Where the measured numbers came from", ""]
+        for metric, found in measured.items():
+            lines.append(f"- **{metric}** — {found.set_name}, n={found.n}: {found.note}")
+        for note in notes:
+            lines.append(f"- {note}")
+    else:
+        lines += [
+            "",
+            f"Every metric above is `{UNMEASURED}`: no stage has both an implementation and "
+            "reference fixtures on disk yet.",
+        ]
+    if notes and not measured:
+        lines += [""] + [f"- {note}" for note in notes]
+
     lines += [
         "",
-        f"Every metric above is `{UNMEASURED}`: the golden set and the pipeline stages do "
-        "not exist yet.",
         "Per BRIEF.md honesty rules a metric is either measured against fixtures on disk "
-        "or reported as UNMEASURED — never estimated.",
+        "or reported as UNMEASURED — never estimated. A measured row names the set and the "
+        "entry count that produced it; a set name containing `provisional` is not the golden "
+        "set and its numbers are not release evidence.",
         "",
     ]
     if banner:
@@ -117,7 +249,15 @@ def render(suite: str, *, banner: bool = True) -> str:
         # machine: QA pastes it, a PR carries it, and six weeks from now it is all anyone
         # reads. The terminal copy is suppressed by the caller in pure report mode — a warning
         # printed on every routine run is a warning people learn to skip.
-        lines += [GATE_NOT_EVALUATED_BANNER, ""]
+        if measured:
+            total = sum(m.n for m in measured.values())
+            lines += [
+                f"GATE NOT EVALUATED — n={total} measured, but the gate itself is E0-T5. "
+                "This is NOT a pass.",
+                "",
+            ]
+        else:
+            lines += [GATE_NOT_EVALUATED_BANNER, ""]
     return "\n".join(lines)
 
 
@@ -145,13 +285,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Two audiences, two rules: the file always carries the banner, the terminal only when a
     # gate is actually being asked for. Quiet terminal, honest artifact.
-    report = render(args.suite, banner=True)
+    measured, notes = measurements()
+    report = render(args.suite, banner=True, measured=measured, notes=notes)
     REPORTS.mkdir(parents=True, exist_ok=True)
     out = REPORTS / f"{args.suite}.md"
     out.write_text(report)
 
     gating = args.gate or args.allow_inconclusive
-    sys.stdout.write(report if gating else render(args.suite, banner=False))
+    quiet = render(args.suite, banner=False, measured=measured, notes=notes)
+    sys.stdout.write(report if gating else quiet)
     try:
         shown = out.relative_to(ROOT)
     except ValueError:  # tests point REPORTS at tmp_path
