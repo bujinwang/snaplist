@@ -1335,4 +1335,37 @@ predicted coverage 0.495 against a reference 0.396) is the model pulling the sha
   for the *plumbing*, never for the measurement.
 * A dress and ten bottoms still do not exist from a clean-licence web source.
 
+---
+
+## 19. Addendum — the harness measures segmentation, and the repo is on GitHub (same day, `7122c28`)
+
+E1-T4's second half landed: `python -m evals.run --suite vision` prints
+`0.9416 (n=17, provisional)` in the segmentation row instead of `UNMEASURED`, with a
+provenance block naming backend, device, mask source and worst case, and the "this set is
+optimistic by construction" caveat inside the same report.
+
+* Set selection is ordered — `evals/golden` wins as soon as it has one mask, so Bert's photos
+  replace the stand-in with no code change (a test pins the ordering).
+* Prerequisites are checked, never assumed: no masked set / no weights / a raising measurement
+  each give `UNMEASURED` **plus the reason**, because "no number" and "no number because you
+  have not run `make fetch-models`" are different fixes.
+* The gate is still E0-T5's. A measured row does **not** become an exit code; the banner reads
+  `n=17 measured, but the gate itself is E0-T5. This is NOT a pass.` and `--gate` still exits 2
+  with the same refusal — a gate over 17 colour-separable photos would pass for the wrong reason.
+* Two stale things fixed while in there: the report's "the pipeline stages do not exist yet"
+  sentence (untrue since `da3cdfe`), and the missing git SHA in the header (E0-T2 asked for it).
+
+**Remote**: `https://github.com/bujinwang/snaplist` — **private**, `master` tracking
+`origin/master`. Private on purpose: the repo carries BRIEF/PRD/METRICS/INTERVIEWS. Making it
+public is a decision about publishing the business plan, not a `gh` flag.
+
+**E0-T3 is now half-unblocked and still not done.** A push is a real CI trigger, so the missing
+piece is the workflow file itself — and it needs one design call first: `make golden` exits 2
+while the golden set is empty, so a naive `make ci` would make every PR red for a reason that is
+correct but useless. The workflow has to run `make test lint` and the *report-only* eval path,
+and leave the golden check to the release gate.
+
+Suite after this: 72 node + 277 pytest, lint clean, `make golden` still exit 2.
+
+
 
