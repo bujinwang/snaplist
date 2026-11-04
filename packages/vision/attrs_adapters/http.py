@@ -48,6 +48,19 @@ class _Config:
 
 
 def _config_from_env() -> _Config:
+    # .env is gitignored (.gitignore:19), so a key placed there never reaches the repo.
+    # python-dotenv is already in docs/DEPS.md (transitive via pydantic-settings); it is
+    # imported lazily here for the same reason as httpx: no import-time side effects.
+    # override=False: an explicitly exported env var always wins over the file.
+    try:
+        from dotenv import find_dotenv, load_dotenv
+
+        # usecwd=True: load_dotenv() otherwise walks up from *this file's* directory, which
+        # is packages/vision/attrs_adapters/ and never sees the repo-root .env.
+        load_dotenv(find_dotenv(usecwd=True), override=False)
+    except ImportError:  # pragma: no cover - only if the dep is ever removed
+        pass
+
     missing = [name for name in (_BASE_URL_ENV, _MODEL_ENV, _KEY_ENV) if not os.environ.get(name)]
     if missing:
         raise AttributesUnavailable(

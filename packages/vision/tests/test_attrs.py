@@ -212,8 +212,18 @@ def test_bare_attributes_object_is_accepted() -> None:
 
 
 def test_no_config_raises_attributes_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tempfile
+
     for var in ("SNAPLIST_VLM_BASE_URL", "SNAPLIST_VLM_MODEL", "VLM_API_KEY"):
         monkeypatch.delenv(var, raising=False)
+    # Isolate from cwd: once a real (gitignored) .env exists at the repo root, chdir-ing away
+    # is what keeps this test about "no config" rather than about that file.
+    clean = Path(tempfile.gettempdir()) / "snaplist_no_dotenv"
+    if not clean.is_dir():
+        clean.mkdir()
+    for stray in clean.glob(".env*"):
+        stray.unlink()
+    monkeypatch.chdir(clean)
     with pytest.raises(AttributesUnavailable) as exc:
         HttpVlmExtractor().extract(b"\xff\xd8\xff")
     message = str(exc.value)
@@ -221,3 +231,34 @@ def test_no_config_raises_attributes_unavailable(monkeypatch: pytest.MonkeyPatch
     assert "SNAPLIST_VLM_MODEL" in message
     assert "VLM_API_KEY" in message
     assert "stub" not in message.lower().replace("substitute the stub", "")
+
+
+def test_dotenv_values_are_read_without_a_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key in gitignored .env must be picked up; an exported var must still win.
+
+    Uses a fixed dir rather than pytest's `tmp_path`: the WorkBuddy shim raises EEXIST from
+    `mkdir(exist_ok=True)`, which is what tmp_path's own fixture does internally.
+    """
+    import tempfile
+
+    from packages.vision.attrs_adapters.http import _config_from_env
+
+    for var in ("SNAPLIST_VLM_BASE_URL", "SNAPLIST_VLM_MODEL", "VLM_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    workdir = Path(tempfile.gettempdir()) / "snaplist_dotenv_test"
+    if not workdir.is_dir():
+        workdir.mkdir()
+    (workdir / ".env").write_text(
+        "SNAPLIST_VLM_BASE_URL=https://example.invalid/v1\n"
+        "SNAPLIST_VLM_MODEL=fixture-model\n"
+        "VLM_API_KEY=fixture-key\n"
+    )
+    monkeypatch.chdir(workdir)
+    cfg = _config_from_env()
+    assert cfg.base_url == "https://example.invalid/v1"
+    assert cfg.model == "fixture-model"
+    assert cfg.key == "fixture-key"
+
+    monkeypatch.setenv("SNAPLIST_VLM_MODEL", "exported-model")
+    assert _config_from_env().model == "exported-model"  # override=False honours env
+    (workdir / ".env").unlink()

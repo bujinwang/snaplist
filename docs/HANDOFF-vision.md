@@ -63,9 +63,16 @@ would still need E0-T1's golden set to be measured.
 
 ## Exact next commands
 
+Bert chose the hosted-key route on 2026-11-04. Put the key in the repo-root `.env` — it is
+gitignored (`.gitignore:19`), so it never reaches the repo or the chat. `http._config_from_env()`
+loads it lazily with `find_dotenv(usecwd=True)`, `override=False` (an exported var still wins).
+
 ```bash
-# 1. Bert's decision, then:
-export SNAPLIST_VLM_BASE_URL=... SNAPLIST_VLM_MODEL=... VLM_API_KEY=...
+# 1. Bert's decision, then create /Users/bujin/Documents/Projects/SnapList/.env:
+#    SNAPLIST_VLM_BASE_URL=https://<chosen-provider>/v1
+#    SNAPLIST_VLM_MODEL=<model id>
+#    VLM_API_KEY=<key>
+#    (or export the same three in the shell)
 
 # 2. Real E3-T2 acceptance (prints provider round-trip seconds):
 python -m packages.vision.cli --in <photo> --out /tmp/sn3 && cat /tmp/sn3/attributes.json
@@ -80,11 +87,16 @@ make lint      # ruff clean
 ```
 $ make test
 1..72 / # pass 72 / # fail 0           (node)
-292 passed, 1 warning in 13.59s         (pytest)
+293 passed, 1 warning in 14.77s         (pytest)
 
 $ python -m ruff check .
 All checks passed!
 ```
+
+Note: pushing required a command-scoped credential override. macOS keychain hands git the
+`bertwang32-alt` account, which cannot see the private `bujinwang/snaplist` repo, so GitHub
+returns the misleading `Repository not found`; `gh` is logged in as `bujinwang`. No global
+config was changed.
 
 Mutation check (both killed the tests, file restored afterwards): disabling the evidence
 gate made `test_unevidenced_brand_and_material_dropped` and
