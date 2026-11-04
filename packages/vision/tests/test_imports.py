@@ -66,13 +66,19 @@ def test_public_signatures_are_stable() -> None:
         segment: ["image", "backend"],
         matte: ["image", "mask_png"],
         rectify: ["image", "alpha_png", "category"],
-        prettify: ["flat_png", "alpha_png", "mode"],
+        # `protect` joined the frozen list with E2-T2: it is a default-`None` keyword, so
+        # every existing caller compiles and behaves exactly as before, and the entry here is
+        # the acknowledgement that the contract gained an optional input — not a silent change.
+        prettify: ["flat_png", "alpha_png", "mode", "protect"],
         get_extractor: ["name"],
         find_duplicate: ["user_id", "image", "candidates"],
         get_adapter: ["name"],
     }
     for fn, params in expected.items():
         assert list(inspect.signature(fn).parameters) == params, fn.__name__
+
+    signature = inspect.signature(prettify)
+    assert signature.parameters["protect"].default is None, "protect must stay optional"
 
 
 def test_vton_is_documented_as_single_owner_file() -> None:

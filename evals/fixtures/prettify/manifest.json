@@ -1,0 +1,351 @@
+{
+  "owner": "CV role (E2-T2)",
+  "generated_by": "evals/fixtures/prettify/build_fixtures.py",
+  "honesty": "Every overlay (label, wordmark, emblem, fold) is synthesised by the build script on top of a Wikimedia Commons photograph whose licence is recorded per case. These are not the marks of any real product.",
+  "camera_cast": [
+    1.035,
+    1.0,
+    0.96
+  ],
+  "camera_cast_note": "every flat-lay is multiplied by camera_cast before it is written, i.e. it carries a ~3 degree warm white-balance error; without it the backdrop would be exactly #F2F1EE and the white-balance step would be measured as an identity",
+  "cases": [
+    {
+      "id": "logo-01-tee-chest",
+      "kind": "logo",
+      "flat": "flat/logo-01-tee-chest.png",
+      "alpha": "alpha/logo-01-tee-chest.png",
+      "note": "chest wordmark on a white tee; a fold runs through the print, so deleting the protection subtraction makes the mask overlap the box",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/top-02.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:T-shirt2.jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/0/0f/T-shirt2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "white tee laid flat on a brown rug",
+        "licence": "Public domain",
+        "artist": "Elkagye",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/top-02.jpg",
+          "alpha": "evals/golden-provisional/masks/top-02.png",
+          "category": "top"
+        }
+      },
+      "protect_box": [
+        165,
+        145,
+        142,
+        58
+      ],
+      "overlay": {
+        "drawn": "a 142x58 label patch at (165,145) with \"SPRING\" and \"1948\" drawn in a bitmap font, ink rgb(22, 22, 30) plus a 20px circle in rgb(176, 32, 40); a fold is re-centred to cross the patch and the fold field is applied *after* the label, so the crease is visible on the print too",
+        "colour": "ink rgb(22, 22, 30), patch rgb(246,245,241), outline rgb(206,203,197)",
+        "synthetic": true,
+        "why_synthetic": "no logo of any real brand is used or downloaded; this fixture measures that the protection region is not invaded, not that a detector recalls real packaging",
+        "folds": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "fold_colour": "luminance multiplier (achromatic)"
+      },
+      "crease_box": [
+        77,
+        152,
+        299,
+        118
+      ],
+      "ink": "ink/logo-01-tee-chest.png"
+    },
+    {
+      "id": "logo-02-breeches-waistband",
+      "kind": "logo",
+      "flat": "flat/logo-02-breeches-waistband.png",
+      "alpha": "alpha/logo-02-breeches-waistband.png",
+      "note": "maker stamp near the waistband, with two folds across it",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/bottom-03.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-3).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/7/79/Breeches_%28AM_1973.193-3%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "knee breeches, museum documentation",
+        "licence": "CC BY 4.0",
+        "artist": "not researched",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/bottom-03.jpg",
+          "alpha": "evals/golden-provisional/masks/bottom-03.png",
+          "category": "bottom"
+        }
+      },
+      "protect_box": [
+        121,
+        205,
+        88,
+        58
+      ],
+      "overlay": {
+        "drawn": "a 88x58 label patch at (121,205) with \"BREE\" and \"W 32\" drawn in a bitmap font, ink rgb(30, 28, 34); a fold is re-centred to cross the patch and the fold field is applied *after* the label, so the crease is visible on the print too",
+        "colour": "ink rgb(30, 28, 34), patch rgb(246,245,241), outline rgb(206,203,197)",
+        "synthetic": true,
+        "why_synthetic": "no logo of any real brand is used or downloaded; this fixture measures that the protection region is not invaded, not that a detector recalls real packaging",
+        "folds": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "fold_colour": "luminance multiplier (achromatic)"
+      },
+      "crease_box": [
+        92,
+        221,
+        162,
+        73
+      ],
+      "ink": "ink/logo-02-breeches-waistband.png"
+    },
+    {
+      "id": "logo-03-sneaker-side",
+      "kind": "logo",
+      "flat": "flat/logo-03-sneaker-side.png",
+      "alpha": "alpha/logo-03-sneaker-side.png",
+      "note": "side-of-shoe label, dark ink on light canvas",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/shoe-02.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Goodyear_sneakers,_1890s,_Goodyear_Rubber_Manufacturing_Company_-_Bata_Shoe_Museum_-_DSC00745-001.JPG",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/b/bb/Goodyear_sneakers%2C_1890s%2C_Goodyear_Rubber_Manufacturing_Company_-_Bata_Shoe_Museum_-_DSC00745-001.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "1890s Goodyear shoes on white",
+        "licence": "CC0",
+        "artist": "Daderot",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/shoe-02.jpg",
+          "alpha": "evals/golden-provisional/masks/shoe-02.png",
+          "category": "shoe"
+        }
+      },
+      "protect_box": [
+        249,
+        89,
+        181,
+        58
+      ],
+      "overlay": {
+        "drawn": "a 181x58 label patch at (249,89) with \"GOODYEAR\" and \"1890\" drawn in a bitmap font, ink rgb(20, 24, 40) plus a 20px circle in rgb(30, 72, 132); a fold is re-centred to cross the patch and the fold field is applied *after* the label, so the crease is visible on the print too",
+        "colour": "ink rgb(20, 24, 40), patch rgb(246,245,241), outline rgb(206,203,197)",
+        "synthetic": true,
+        "why_synthetic": "no logo of any real brand is used or downloaded; this fixture measures that the protection region is not invaded, not that a detector recalls real packaging",
+        "folds": "1 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "fold_colour": "luminance multiplier (achromatic)"
+      },
+      "crease_box": [
+        121,
+        78,
+        322,
+        62
+      ],
+      "ink": "ink/logo-03-sneaker-side.png"
+    },
+    {
+      "id": "logo-04-belt-stamp",
+      "kind": "logo",
+      "flat": "flat/logo-04-belt-stamp.png",
+      "alpha": "alpha/logo-04-belt-stamp.png",
+      "note": "stamped initials on a leather belt; a narrow garment, so a shallow-angle fold",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/acc-03.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Belt_(USA),_late_19th_century_(CH_18188479).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/6/65/Belt_%28USA%29%2C_late_19th_century_%28CH_18188479%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "late-19th-century belt, museum documentation on grey",
+        "licence": "Public domain",
+        "artist": "Unknown artistUnknown artist",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/acc-03.jpg",
+          "alpha": "evals/golden-provisional/masks/acc-03.png",
+          "category": "accessory"
+        }
+      },
+      "protect_box": [
+        45,
+        37,
+        70,
+        58
+      ],
+      "overlay": {
+        "drawn": "a 70x58 label patch at (45,37) with \"CH\" and \"1884\" drawn in a bitmap font, ink rgb(40, 26, 20); a fold is re-centred to cross the patch and the fold field is applied *after* the label, so the crease is visible on the print too",
+        "colour": "ink rgb(40, 26, 20), patch rgb(246,245,241), outline rgb(206,203,197)",
+        "synthetic": true,
+        "why_synthetic": "no logo of any real brand is used or downloaded; this fixture measures that the protection region is not invaded, not that a detector recalls real packaging",
+        "folds": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "fold_colour": "luminance multiplier (achromatic)"
+      },
+      "crease_box": [
+        34,
+        57,
+        412,
+        118
+      ],
+      "ink": "ink/logo-04-belt-stamp.png"
+    },
+    {
+      "id": "logo-05-jacket-emblem",
+      "kind": "logo",
+      "flat": "flat/logo-05-jacket-emblem.png",
+      "alpha": "alpha/logo-05-jacket-emblem.png",
+      "note": "chest emblem on a wool jacket; low-contrast fabric, the hard case for the detector",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/outer-01.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Canadienne_civile_ayant_appartenu_à_Bertrand_Branet,_2002.2151(3).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/c/cb/Canadienne_civile_ayant_appartenu_%C3%A0_Bertrand_Branet%2C_2002.2151%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "French civilian 'canadienne' jacket, museum object on white",
+        "licence": "CC0",
+        "artist": "AnonymousUnknown author",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/outer-01.jpg",
+          "alpha": "evals/golden-provisional/masks/outer-01.png",
+          "category": "outerwear"
+        }
+      },
+      "protect_box": [
+        141,
+        213,
+        100,
+        58
+      ],
+      "overlay": {
+        "drawn": "a 100x58 label patch at (141,213) with \"AB\" and \"2002\" drawn in a bitmap font, ink rgb(34, 30, 44) plus a 20px circle in rgb(150, 44, 96); a fold is re-centred to cross the patch and the fold field is applied *after* the label, so the crease is visible on the print too",
+        "colour": "ink rgb(34, 30, 44), patch rgb(246,245,241), outline rgb(206,203,197)",
+        "synthetic": true,
+        "why_synthetic": "no logo of any real brand is used or downloaded; this fixture measures that the protection region is not invaded, not that a detector recalls real packaging",
+        "folds": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "fold_colour": "luminance multiplier (achromatic)"
+      },
+      "crease_box": [
+        29,
+        221,
+        331,
+        101
+      ],
+      "ink": "ink/logo-05-jacket-emblem.png"
+    },
+    {
+      "id": "crease-01-breeches-leg",
+      "kind": "crease",
+      "flat": "flat/crease-01-breeches-leg.png",
+      "alpha": "alpha/crease-01-breeches-leg.png",
+      "note": "three folds across a pressed leg",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/bottom-01.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Breeches_(AM_1973.193-1).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/b/bd/Breeches_%28AM_1973.193-1%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "knee breeches, museum documentation",
+        "licence": "CC BY 4.0",
+        "artist": "not researched",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/bottom-01.jpg",
+          "alpha": "evals/golden-provisional/masks/bottom-01.png",
+          "category": "bottom"
+        }
+      },
+      "crease_box": [
+        59,
+        181,
+        172,
+        130
+      ],
+      "overlay": {
+        "drawn": "3 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "colour": "luminance multiplier (achromatic)",
+        "synthetic": true
+      }
+    },
+    {
+      "id": "crease-02-tee-body",
+      "kind": "crease",
+      "flat": "flat/crease-02-tee-body.png",
+      "alpha": "alpha/crease-02-tee-body.png",
+      "note": "two folds across a tee body",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/top-01.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Guards_Fest_2024_(53479474703).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/7/72/Guards_Fest_2024_%2853479474703%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "baseball jersey on a mannequin, dark backdrop",
+        "licence": "CC BY 2.0",
+        "artist": "Erik Drost",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/top-01.jpg",
+          "alpha": "evals/golden-provisional/masks/top-01.png",
+          "category": "top"
+        }
+      },
+      "crease_box": [
+        137,
+        114,
+        200,
+        101
+      ],
+      "overlay": {
+        "drawn": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "colour": "luminance multiplier (achromatic)",
+        "synthetic": true
+      }
+    },
+    {
+      "id": "crease-03-tennis-shoe",
+      "kind": "crease",
+      "flat": "flat/crease-03-tennis-shoe.png",
+      "alpha": "alpha/crease-03-tennis-shoe.png",
+      "note": "toe-box creases on a leather sneaker",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/shoe-04.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Shoes,_leather_tennis_(pair)_(AM_2017.30.1-9).jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/4/4c/Shoes%2C_leather_tennis_%28pair%29_%28AM_2017.30.1-9%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "leather tennis shoes, museum pair on white",
+        "licence": "CC BY 4.0",
+        "artist": "Adidas",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/shoe-04.jpg",
+          "alpha": "evals/golden-provisional/masks/shoe-04.png",
+          "category": "shoe"
+        }
+      },
+      "crease_box": [
+        27,
+        52,
+        430,
+        141
+      ],
+      "overlay": {
+        "drawn": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "colour": "luminance multiplier (achromatic)",
+        "synthetic": true
+      }
+    },
+    {
+      "id": "crease-04-breeches-back",
+      "kind": "crease",
+      "flat": "flat/crease-04-breeches-back.png",
+      "alpha": "alpha/crease-04-breeches-back.png",
+      "note": "two long folds across a dark ground",
+      "source": {
+        "fixture": "evals/golden-provisional/photos/bottom-06.jpg",
+        "commons_page": "https://commons.wikimedia.org/wiki/File:Breeches_MET_1972.139.7_B.jpg",
+        "commons_file": "https://upload.wikimedia.org/wikipedia/commons/f/f9/Breeches_MET_1972.139.7_B.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "collection": "buckskin breeches, laced cuffs",
+        "licence": "CC0",
+        "artist": "",
+        "mask": "algorithmic:background_colour_distance (provisional set, not hand-drawn)",
+        "rectify_inputs": {
+          "photo": "evals/golden-provisional/photos/bottom-06.jpg",
+          "alpha": "evals/golden-provisional/masks/bottom-06.png",
+          "category": "bottom"
+        }
+      },
+      "crease_box": [
+        72,
+        190,
+        209,
+        109
+      ],
+      "overlay": {
+        "drawn": "2 fold band(s): multiplicative luminance field, dark band with an adjacent highlight, sigma 3.2 px, clipped to [0.52, 1.06]",
+        "colour": "luminance multiplier (achromatic)",
+        "synthetic": true
+      }
+    }
+  ]
+}

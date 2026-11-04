@@ -62,7 +62,10 @@ def test_no_masked_set_means_unmeasured_with_a_reason(monkeypatch) -> None:
         monkeypatch.setattr(run_mod, "PROVISIONAL", Path(tmp) / "nope2" / "manifest.json")
         measured, notes = run_mod.measurements()
 
-    assert measured == {}
+    # E2-T2 made a second stage measurable (prettify, off its own shipped fixtures), so "the
+    # dict is empty" is no longer the same claim as "the segmentation row is missing". The
+    # claim this test defends is unchanged: a missing masked set must not produce a number.
+    assert "segmentation mean IoU" not in measured
     assert any("no masked set on disk" in note for note in notes)
 
 

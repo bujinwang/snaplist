@@ -1,11 +1,12 @@
 """`python -m evals.run --suite vision` — the one eval entry point every role calls.
 
-It measures **one** metric today: segmentation mean IoU, over whichever masked set exists
-(`evals/golden/` first, `evals/golden-provisional/` as a stand-in). Everything else prints
-`UNMEASURED`, because no other stage has both an implementation and reference fixtures on
-disk. The prerequisites are checked rather than assumed: no masked set, no model weights, or
-a failing measurement each produce an `UNMEASURED` row **plus a line naming the reason**, since
-"no number" and "no number because you have not run `make fetch-models`" are different fixes.
+It measures **two** metrics today: segmentation mean IoU, over whichever masked set exists
+(`evals/golden/` first, `evals/golden-provisional/` as a stand-in), and prettify SSIM over the
+flat-lay fixtures in `evals/fixtures/prettify/`. Everything else prints `UNMEASURED`, because
+no other stage has both an implementation and reference fixtures on disk. The prerequisites are
+checked rather than assumed: no masked set, no model weights, or a failing measurement each
+produce an `UNMEASURED` row **plus a line naming the reason**, since "no number" and "no number
+because you have not run `make fetch-models`" are different fixes.
 
 **`--gate` and `--allow-inconclusive` are PARSED BUT NOT IMPLEMENTED.** They exist so the
 Makefile targets (`make evals`, `make evals-strict`) have a stable interface, and so nobody
@@ -46,6 +47,7 @@ from evals import UNMEASURED, git_sha
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "evals" / "golden" / "manifest.json"
 PROVISIONAL = ROOT / "evals" / "golden-provisional" / "manifest.json"
+PRETTIFY_FIXTURES = ROOT / "evals" / "fixtures" / "prettify"
 REPORTS = ROOT / "evals" / "reports"
 
 
@@ -134,35 +136,57 @@ def masked_set() -> Path | None:
 def measurements() -> tuple[dict[str, Measurement], list[str]]:
     """Every metric this harness can actually measure right now, plus the reasons it could not.
 
-    Today that is exactly one: segmentation IoU, because it is the only stage with both an
-    implementation (`segment()`) and reference masks on disk. Everything else stays
-    UNMEASURED — and a missing prerequisite is named out loud rather than silently skipped,
-    because "the number is missing" and "the number is missing because you have not run
-    `make fetch-models`" are different fixes.
+    Two stages have both an implementation and reference fixtures on disk: segmentation IoU
+    (E1) and prettify SSIM (E2-T2). Everything else stays UNMEASURED — and a missing
+    prerequisite is named out loud rather than silently skipped, because "the number is
+    missing" and "the number is missing because you have not run `make fetch-models`" are
+    different fixes.
+
+    The two measurements are independent: prettify runs on flat-lay fixtures that ship with
+    the repo, so it does not need the segmentation model weights, and a missing masked set
+    must not take the prettify row down with it (or the reverse).
     """
     measured: dict[str, Measurement] = {}
     notes: list[str] = []
 
+    segmentation, segmentation_notes = _measure_segmentation()
+    notes.extend(segmentation_notes)
+    if segmentation is not None:
+        measured["segmentation mean IoU"] = segmentation
+
+    prettify_measurement, prettify_notes = _measure_prettify()
+    notes.extend(prettify_notes)
+    if prettify_measurement is not None:
+        measured["prettify SSIM (inside mask)"] = prettify_measurement
+
+    # Stays UNMEASURED by design this round: a 1-5 "did it hallucinate text" score is a human
+    # judgement, and E2-T3 owns the rubric, the images it is scored on and the report file.
+    notes.append(
+        "prettify hallucinated-text rubric: UNMEASURED — the manual 1-5 rubric is E2-T3; no "
+        "human has scored anything yet, and a machine cannot stand in for it"
+    )
+    return measured, notes
+
+
+def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
+    """E1: mean IoU over whichever masked set exists. `None` means UNMEASURED, with a reason."""
     golden = masked_set()
     if golden is None:
-        notes.append(
+        return None, [
             "segmentation: UNMEASURED — no masked set on disk (evals/golden/manifest.json and "
             "evals/golden-provisional/manifest.json both lack an entry with a mask_path)"
-        )
-        return measured, notes
+        ]
 
     try:
         from packages.vision.segment import weights_path  # local: keeps import cost off --help
 
         if not weights_path().is_file():
-            notes.append(
+            return None, [
                 f"segmentation: UNMEASURED — model weights absent at {weights_path()} "
                 "(run `make fetch-models`)"
-            )
-            return measured, notes
+            ]
     except Exception as exc:  # noqa: BLE001 - any import failure is the same "cannot measure"
-        notes.append(f"segmentation: UNMEASURED — vision package unavailable ({exc})")
-        return measured, notes
+        return None, [f"segmentation: UNMEASURED — vision package unavailable ({exc})"]
 
     from evals.tools import seg_iou
 
@@ -170,12 +194,11 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
         rows, meta = seg_iou.run(golden)
     except Exception as exc:  # noqa: BLE001 - report the reason, never a fake number
         reason = f"{type(exc).__name__}: {exc}"
-        notes.append(f"segmentation: UNMEASURED — the measurement failed ({reason})")
-        return measured, notes
+        return None, [f"segmentation: UNMEASURED — the measurement failed ({reason})"]
 
     stats = seg_iou.summarise(rows)
     sources = sorted({row["mask_source"] for row in rows})
-    measured["segmentation mean IoU"] = Measurement(
+    measurement = Measurement(
         value=stats["mean"],
         n=meta["n"],
         set_name="provisional" if "provisional" in golden.name else "golden",
@@ -188,13 +211,83 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
         where = str(golden.relative_to(ROOT))
     except ValueError:
         where = f"{golden} (outside the repo, via SNAPLIST_GOLDEN_DIR — not committed)"
-    notes.append(f"segmentation: measured on {where} (n={meta['n']})")
+    notes = [f"segmentation: measured on {where} (n={meta['n']})"]
     if "provisional" in golden.name:
         notes.append(
             "that set is the web-sourced stand-in: algorithmic masks, chosen for colour "
             "separability, no dresses, no hard cases — the number is optimistic by construction"
         )
-    return measured, notes
+    return measurement, notes
+
+
+def _measure_prettify() -> tuple[Measurement | None, list[str]]:
+    """E2-T2: SSIM between the prettify output and its own input, inside the garment mask.
+
+    **Read the note in the report before quoting the number.** A perfect 1.0 means the stage
+    changed nothing (a pass-through scores 1.0), so this row is a *destruction budget*: the
+    DoD's `>= 0.80` caps how much the fill may alter the garment, it does not certify that
+    any crease was removed. The cleaning quality is E2-T3's manual rubric and stays
+    UNMEASURED until a human scores it.
+    """
+    manifest = PRETTIFY_FIXTURES / "manifest.json"
+    if not manifest.is_file():
+        return None, [
+            f"prettify: UNMEASURED — no fixture manifest at {PRETTIFY_FIXTURES.relative_to(ROOT)}"
+        ]
+
+    from evals.metrics import prettify as prettify_metric
+
+    try:
+        rows, meta = prettify_metric.run(PRETTIFY_FIXTURES)
+    except Exception as exc:  # noqa: BLE001 - report the reason, never a fake number
+        return None, [
+            f"prettify: UNMEASURED — the measurement failed ({type(exc).__name__}: {exc})"
+        ]
+
+    stats = prettify_metric.summarise(rows)
+    if stats["mean"] is None:
+        return None, [
+            "prettify: UNMEASURED — every fixture produced an empty garment mask, so there "
+            "was no region to compare"
+        ]
+
+    # Per-backend wall clock, because the report has to print seconds per backend and record
+    # the mode that produced them (PLAN E2-T2 acceptance). Both halves of the path: prettify
+    # and rectify, which PLAN names together.
+    backend_line = "; ".join(
+        f"{name} {info['seconds_total']:.2f}s total / {info['seconds_mean']:.3f}s mean "
+        f"(n={info['n']})"
+        for name, info in meta["seconds_by_backend"].items()
+    )
+    rectify_line = "; ".join(
+        f"{name} {info['seconds_total']:.2f}s total / {info['seconds_mean']:.3f}s mean "
+        f"(n={info['n']})"
+        for name, info in meta.get("rectify_seconds_by_backend", {}).items()
+    )
+    note = (
+        f"mode {', '.join(meta['modes'])} · backend {', '.join(meta['backends'])} on "
+        f"{', '.join(meta['devices'])} · wall clock prettify {backend_line}"
+        + (f" · rectify {rectify_line}" if rectify_line else "")
+        + f"; SSIM compares the prettify output against its own input inside the garment mask, "
+        f"so 1.0 = nothing changed: this is a destruction budget, not a cleaning score "
+        f"(median {stats['median']:.4f}, worst {stats['min']:.4f}, mean |dL| inside the mask "
+        f"{stats['mean_abs_delta_in_mask']} levels); protect-box overlap "
+        f"{stats['protect_overlap_total']} px over {stats['protect_cases']} logo cases with the "
+        f"caller box passed, and {stats['auto_overlap_total']} px on the same boxes with the "
+        f"automatic detector alone (of which {stats['auto_ink_overlap_total']} px are printed "
+        f"ink); mask coverage max {stats['mask_coverage_max']:.4f} against a cap of "
+        f"{stats['coverage_cap']}"
+    )
+    notes = [
+        "prettify: measured on evals/fixtures/prettify (n="
+        f"{meta['n']}) — licensed photos with **synthetic** labels and folds drawn on them, so "
+        "it measures that the protection region is not invaded, never that a detector recalls "
+        "real packaging logos"
+    ]
+    return (
+        Measurement(value=stats["mean"], n=meta["n"], set_name="fixtures/prettify", note=note),
+        notes,
+    )
 
 
 GATE_NOT_EVALUATED_BANNER = "GATE NOT EVALUATED — n=0. This is NOT a pass."

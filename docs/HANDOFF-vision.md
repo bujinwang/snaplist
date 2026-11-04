@@ -632,3 +632,431 @@ Nothing was committed (`git status`: `M docs/HANDOFF-vision.md`, `M packages/vis
 No ADR: `DedupeResult`'s fields and the function signature are exactly what the stub declared —
 the second layer is internal policy, not a wire shape, and `docs/CONTRACTS.md` is untouched. The
 one contract *fact* this round consumed (`source_sha256`) already existed; nothing was added to it.
+
+---
+
+# E2-T2 round 1 — `prettify()` foundation (no model, no download)
+
+Ticket: `docs/PLAN.md` E2-T2, **first of two rounds**. Round 1 ships the whole shape of the
+stage executed for real — white balance, wrinkle mask with a coverage cap and a boundary
+exclusion, logo/text protection from two sources, and a deterministic non-generative fill.
+Round 2 (SDXL inpaint, torch, ~10 GB of weights) is **not** in this build and refuses with the
+fix inside the error. Nothing was downloaded, `import torch` still raises
+`ModuleNotFoundError`, and no file was committed.
+
+## What changed
+
+| file | why |
+|---|---|
+| `packages/vision/prettify.py` | the four real steps, `wrinkle_mask_for()` (the audit), `PrettifyBackendUnavailable`, the SDXL refusal, `sdxl_weights_dir()` / `fetch_hint()` |
+| `packages/vision/types.py` | **one** new enum value: `PrettifyMode.CLASSICAL` (see "why PASS_THROUGH could not be reused") |
+| `packages/vision/tests/test_prettify.py` | new, 28 tests |
+| `packages/vision/cli.py` | `--prettify {pass_through,classical,sdxl_inpaint}` (default `classical`), per-stage seconds by backend, alpha resampled onto the flat-lay canvas |
+| `evals/metrics/__init__.py`, `evals/metrics/prettify.py` | new: SSIM (numpy, no scikit-image) + the mask audit, `run()` / `summarise()` / `render()` |
+| `evals/run.py` | `measurements()` split into `_measure_segmentation()` / `_measure_prettify()`; the prettify row became a real number, the rubric row stays UNMEASURED with its reason |
+| `evals/fixtures/prettify/**` | new: 9 cases, `build_fixtures.py`, `README.md`, `CREDITS.md` |
+| `evals/golden-provisional/CREDITS.md` | **appended** (attribution chain for the derived fixtures) |
+| `packages/vision/tests/test_imports.py` | signature freeze updated: `prettify` gained `protect` — see "out of the declared file list" |
+| `evals/tests/test_harness.py` | one assertion — see "out of the declared file list" |
+
+### Why `PrettifyMode.CLASSICAL` had to exist
+
+`PASS_THROUGH` is defined by `test_pass_through_is_byte_identical` as *bytes out == bytes in*.
+The non-generative pipeline changes pixels, so reporting it as `pass_through` would put "no
+cleanup was applied" in the report about a cleaned image — the exact dishonesty BRIEF.md
+forbids, in the one field the cost report reads. `CLASSICAL` is the honest label:
+model-free, deterministic. Nothing is reported as `pass_through` unless it truly is.
+
+The other place that treats `PrettifyMode` as a closed set is `cli.py`, which now builds its
+`--prettify` choices from the enum (so a future value cannot be silently unreachable), plus
+`test_imports.py::test_eval_relevant_types_are_present` which only asserts `PASS_THROUGH in
+tuple(PrettifyMode)`. No other code switches exhaustively on it — `segment.py`'s
+`[b.value for b in SegmentBackend ...]` is `SegmentBackend`, not this enum.
+
+## `python -m evals.run --suite vision`, real output
+
+```console
+| metric | target | measured | epic |
+|---|---|---|---|
+| segmentation mean IoU | >= 0.92 | 0.9416 (n=17, provisional) | E1 |
+| rectify SSIM (inside mask) | >= 0.85 | UNMEASURED | E2 |
+| prettify SSIM (inside mask) | >= 0.80 | 0.9927 (n=9, fixtures/prettify) | E2 |
+| prettify hallucinated-text rubric | >= 4 / 5 | UNMEASURED | E2 |
+...
+- **prettify SSIM (inside mask)** — fixtures/prettify, n=9: mode classical · backend
+  local_shadow_attenuation_v1 on cpu · wall clock local_shadow_attenuation_v1 1.23s total /
+  0.137s mean (n=9); SSIM compares the prettify output against its own input inside the
+  garment mask, so 1.0 = nothing changed: this is a destruction budget, not a cleaning score
+  (median 0.9938, worst 0.9884, mean |dL| inside the mask 5.311 levels); protect-box overlap
+  0 px over 5 logo cases; mask coverage max 0.1252 against a cap of 0.25
+- prettify hallucinated-text rubric: UNMEASURED — the manual 1-5 rubric is E2-T3; no human has
+  scored anything yet, and a machine cannot stand in for it
+```
+
+`prettify_mode` is printed (`mode classical`), and the wall clock is per backend, as E2-T2's
+acceptance requires. Rectify's row is still `UNMEASURED`: E2-T1's SSIM is measured by
+`prompts/02-vision.md`, and wiring it is not this ticket's file list.
+
+## `python -m evals.metrics.prettify` — per case
+
+```console
+| id | kind | SSIM (destruction) | mean |ΔL| in mask | mask cov | cap | protect overlap px | crease hit | changed px | seconds |
+| logo-01-tee-chest | logo | 0.9915 | 3.40 | 0.094 | 0.25 | 0 | 0.090 | 29827 | 0.182 |
+| logo-02-breeches-waistband | logo | 0.9938 | 4.32 | 0.066 | 0.25 | 0 | 0.053 | 15288 | 0.122 |
+| logo-03-sneaker-side | logo | 0.9931 | 5.30 | 0.044 | 0.25 | 0 | 0.036 | 9808 | 0.087 |
+| logo-04-belt-stamp | logo | 0.9950 | 7.74 | 0.108 | 0.25 | 0 | 0.092 | 25223 | 0.088 |
+| logo-05-jacket-emblem | logo | 0.9884 | 6.55 | 0.073 | 0.25 | 0 | 0.085 | 20071 | 0.151 |
+| crease-01-breeches-leg | crease | 0.9942 | 3.63 | 0.082 | 0.25 | n/a | 0.090 | 18957 | 0.120 |
+| crease-02-tee-body | crease | 0.9947 | 4.50 | 0.072 | 0.25 | n/a | 0.067 | 18060 | 0.121 |
+| crease-03-tennis-shoe | crease | 0.9892 | 8.66 | 0.125 | 0.25 | n/a | 0.123 | 22726 | 0.093 |
+| crease-04-breeches-back | crease | 0.9941 | 3.70 | 0.072 | 0.25 | n/a | 0.079 | 19560 | 0.129 |
+
+mean SSIM (n=9) 0.9927 · median/worst/best 0.9938/0.9884/0.9950
+mean |ΔL| inside the mask 5.311 levels · mask coverage max 0.1252 (cap 0.25)
+cap bound on 0 fixtures · protection overlap 0 px over 5 logo cases
+mean crease hit 0.0795 · wall clock 1.09 s total / 0.121 s mean
+```
+
+Read the SSIM column the way `evals/metrics/prettify.py`'s docstring says to: **it is a
+destruction budget.** A pass-through scores a perfect 1.0, so `0.9927 ≥ 0.80` is trivially
+satisfied — that number cannot distinguish "a gentle correction" from "nothing happened". The
+`mean |ΔL| in mask` column is what stops that ambiguity: 3.4–8.7 levels of luminance change
+inside the mask is a real, if deliberately mild, correction. **Nothing here measures whether a
+crease is gone.** That is E2-T3's manual rubric.
+
+The mask numbers, which are the ones with teeth:
+
+* **protect overlap = 0 px on all 5 logo cases**, measured from the same mask the fill
+  consumed, `pytest`-asserted per case by `test_protection_region_is_never_invaded`.
+* **coverage 0.044–0.125 against a 0.25 cap** — the cap never bound on a real photograph,
+  because the score floor was already stricter. The cap binds on the synthetic over-creased
+  garment in the test suite, which is the only way to show the rail works.
+* **crease hit 0.036–0.123**: on the `crease-*` fixtures, 4–12 % of the garment interior inside
+  the drawn crease box is selected; on the `logo-*` fixtures the band under the label is
+  0.036–0.092, which is what makes the protection subtraction load bearing. Low by design —
+  see "what is not proven" below.
+
+## Fixtures — `evals/fixtures/prettify/`
+
+| | |
+|---|---|
+| cases | 9 = **5 logo** + **4 crease** |
+| files | 18 PNGs + `manifest.json` + `build_fixtures.py` + `README.md` + `CREDITS.md` (22 files) |
+| size | **1.10 MB** total (limit 4 MB); long edge **480 px** (limit 800) |
+| sources | 9 of the 17 `evals/golden-provisional` photos: `top-02`, `bottom-03`, `shoe-02`, `acc-03`, `outer-01`, `bottom-01`, `top-01`, `shoe-04`, `bottom-06` — CC0 / PD / CC BY, all attributed |
+| truth | `protect_box` on the 5 logo cases, `crease_box` on all 9 |
+
+Two design decisions worth flagging, because they are what makes the fixtures able to fail:
+
+1. **A fold is re-centred to cross every label**, and the fold field is applied *after* the
+   label, so the crease is visible on the print too. Without that, the protection subtraction
+   is a no-op on a flatly lit photo and `test_protection_region_is_never_invaded` would stay
+   green with the subtraction deleted. `test_protection_subtraction_is_load_bearing` asserts
+   the premise (the candidate mask enters all 5 boxes).
+2. **Every flat-lay carries a ~3° warm camera cast** (`CAMERA_CAST = (1.035, 1.0, 0.96)`).
+   Without it the backdrop is *exactly* `#F2F1EE` — which is what `rectify()` composites — and
+   the white-balance step would be measured as an identity on every fixture.
+
+## Mutations (6, all killed, run only in `/tmp` copies)
+
+`prettify.py` md5 **before and after the whole run: `9efd6438fec35ca8daca34b97761d3ac`** — the
+real file was never written. Each mutation was applied to a fresh copy of the tree, the
+prettify tests were run there, then the copy was restored from pristine and its md5 compared
+to the pristine md5 (all `True`).
+
+| # | mutation | md5 (mutant) | red test(s) |
+|---|---|---|---|
+| M1 | protection subtraction removed (`final = cleaned & interior`) | `3ed6ea2c80e491f363e3007cd62d3edf` | `test_protection_region_is_never_invaded` |
+| M2 | `WRINKLE_COVERAGE_CAP = 1.0` | `421562b5f8dc41935749a422e766cbf6` | `test_coverage_cap_binds_on_an_over_creased_garment` |
+| M3 | white balance made an identity (`rgb * 1.0`) | `9d4d559a1fd11011334bd9b01a659f82` | `test_white_balance_pulls_a_known_cast_back_to_neutral`, `test_outside_the_mask_only_the_white_balance_gain_moves` |
+| M4 | boundary band removed (`interior = garment`) | `0c7b21b3ff01ed6bbbffe0de99f31838` | `test_mask_never_enters_the_boundary_band` |
+| M5 | automatic logo detector disabled (`PROTECT_SCORE_MIN = 10.0`) | `1d405a1e92408024b200f9c051774704` | `test_automatic_detector_fires_on_the_synthetic_ink` |
+| M6 | fill disabled (`FILL_STRENGTH = 0.0`) | `58a5cc8b3636270d42c1dc43300d1d86` | `test_fill_does_not_change_pixels_outside_the_feathered_mask`, `test_fill_actually_attenuates_local_contrast_inside_the_mask` |
+
+**One honest note about the mutation run itself.** M2's first attempt *survived* — because my
+`replace("WRINKLE_COVERAGE_CAP = 0.25", ...)` matched the **docstring** line
+(`` **Coverage cap `WRINKLE_COVERAGE_CAP = 0.25`** ``) before the constant, so the constant was
+never touched and the mutant was a no-op that "passed". A surviving mutant can mean "weak test"
+or "mutation never applied", and only printing the mutated line distinguishes them — which is
+why the runner now prints it. Recorded here rather than quietly re-run: that is precisely the
+failure mode mutation testing exists to expose, and I hit it in the tooling first.
+
+M1 kills only one test. That is worth saying plainly: the "never overlap the logo" claim has
+**one** behavioural killer plus the fixture premise test, so a reviewer who deletes the
+subtraction gets one red, not a wall of red. The premise test
+(`test_protection_subtraction_is_load_bearing`) does not go red under M1 — it asserts the
+candidate mask, not the final one — so it must not be counted as a second kill.
+
+## `make test` / `make lint`, real tails
+
+```console
+$ make test
+# pass 72                     (node; baseline 72)
+449 passed, 1 warning in 30.55s          (pytest; baseline 421, +28 here)
+
+$ make lint
+All checks passed!                       (ruff)
+packages/shared lint: Done
+apps/mobile lint: Done
+```
+
+`ruff format --check .` reports 35 files would be reformatted — the repo is not format-clean
+and `make lint` does not run it, so I left the new files hand-formatted like their neighbours
+rather than reformatting the tree.
+
+## Out of the declared file list — two files, both deliberate
+
+1. **`packages/vision/tests/test_imports.py`** — `test_public_signatures_are_stable` pins the
+   exact parameter list, and the ticket requires a `protect` keyword. The frozen list gained
+   `protect`, plus an assertion that its default is `None`. `prettify`'s existing three
+   parameters are unchanged, so every current caller compiles and behaves identically.
+2. **`evals/tests/test_harness.py`** — `test_no_masked_set_means_unmeasured_with_a_reason`
+   asserted `measured == {}`. With a second stage measurable off its own shipped fixtures that
+   assertion now encodes "only one stage can ever be measured", which is the opposite of what
+   the test exists for. It now asserts `"segmentation mean IoU" not in measured` — same claim,
+   about the right row — with the reason in a comment.
+
+Neither change moves a threshold, and both are narrower than the alternative (silently
+renaming a parameter, or leaving a test that would fail the moment a second stage landed).
+
+## Still not standing / not proven
+
+1. **SSIM ≥ 0.80 is not a quality gate here, and the report says so.** A pass-through scores
+   1.0; the classical fill scores 0.9927. The number therefore certifies "we barely damaged the
+   garment", nothing more. If round 2 replaces the fill with an inpaint, this row will start
+   measuring something real — and it will also start being breakable.
+2. **No crease-removal measurement exists.** `crease hit` says the mask selected pixels inside a
+   drawn crease box; it says nothing about whether the crease disappeared. Catalogue photos
+   have no creases, so the honest substitute is E2-T3's manual rubric on phone photos. Until
+   then, "the de-wrinkle works" is unmeasured, and calling the step *shadow/crease attenuation*
+   is the only claim the numbers support.
+3. **The logo fixtures measure arithmetic, not detection.** The labels are drawn by
+   `build_fixtures.py` in a bitmap font on clean fabric. Real packaging adds embossing, foil,
+   tonal prints on tonal fabric, and small multi-line care text. The automatic detector was
+   calibrated on these nine cases; its **recall on real garments is unknown**, and one fixture
+   (`logo-04`, a tartan belt) shows the failure mode up close: the detector cannot tell print
+   from a busy woven pattern, so on patterned fabric it will over-protect (harmless) and
+   confuse "pattern" with "logo".
+4. **The white-balance sample assumes a backdrop exists.** On a garment cropped to the frame
+   the ring holds fewer than 500 pixels and the step is skipped with
+   `white_balance_detail.skipped = true` and gains `[1.0, 1.0, 1.0]`. That is honest, but it
+   means the stage's headline correction silently does nothing on the photos most likely to be
+   badly lit. A per-image grey-patch or illuminant estimate would be the real fix; neither is
+   here.
+5. **White balance is nearly a no-op on the production input path.** `rectify()` composites the
+   garment onto exactly `#F2F1EE`, so on any real flat-lay from that stage the backdrop is
+   already neutral and the gains come out ~1.0. It only earns its keep if rectify stops
+   compositing the backdrop, or if raw photos are passed in. That is worth deciding before
+   round 2 rather than carrying a stage that looks busy and does nothing.
+6. **`WRINKLE_SCORE_MIN = 0.55` is tuned in-sample on 9 fixtures.** No held-out set. The
+   detector's behaviour on dark garments (where a 20 % luminance dip is 12 levels, not 40) is
+   likely worse than on the pale museum fabric used here — `crease-04` is the only dark case
+   and it scores the second-lowest crease hit (0.079).
+7. **Performance is unmeasured as a requirement.** 1.88 s for the classical path at 1200×960
+   on CPU (CLI run, `segment` 0.93 s + `attrs` 2.37 s beside it). PLAN has no per-stage latency
+   gate for prettify — the gate is client-side `prettify_latency_ms` p50 ≤ 20 s for the whole
+   pipeline — but 1.9 s of it is a plain numpy box-blur bill, and half-resolution scoring would
+   cut it without changing a single threshold. Not done, because the constant-tuning would then
+   need re-measuring.
+8. **Round 2 will change these numbers and probably worsen them.** An SDXL inpaint inside a mask
+   that covers 4–12 % of the garment will move SSIM down (more pixels changed, further), and
+   the `>= 0.80` ceiling was chosen with an inpaint in mind, not with a low-pass filter. The
+   current 0.9927 is not a cushion that survives a real generative step; treat it as the
+   *classical* baseline.
+9. **`--prettify` defaults to `classical` in the CLI**, i.e. the dev CLI now hands back a
+   processed image where it used to hand back the rectified flat-lay. That is the intended
+   change (it is the only mode with pixels behind it), but anyone who diffed `prettified.png`
+   against an older run will see a difference that is not a bug. `--prettify pass_through`
+   reproduces the old bytes exactly.
+
+---
+
+# E2-T2 round 1b — the protection red line, and the missing metric tests
+
+QA returned **CONDITIONAL PASS** with one finding that invalidated the central claim: the
+`protect_overlap = 0` I reported was `~(box) & box`. The test passed `protect=[protect_box]`
+and then measured the same box — the subtraction *made* it zero. With no caller box the mask
+put **362 px** into the ground-truth rectangle, and on QA's own 48 px synthetic wordmark the
+mask touched **63 %** of the stroke pixels. In the same round, a mutation that made the metric compare an
+image with itself printed `1.0000` and the whole suite stayed green.
+
+Both are now fixed, and the second one was the more dangerous.
+
+## 1. The detector: a resolution pyramid, not a threshold relaxation
+
+`_auto_protect_mask` is now multi-scale (`PROTECT_SCALES = (1, 2, 4)`) and takes the strongest
+of two contrast radii. The reasoning that made it work: **a large glyph at 1/4 resolution is
+small type** — which is the case the old filter was already good at — and the score was made
+polarity-free (`|lum − local mean|`, not "darkness"), so light ink scores like dark ink.
+
+`PROTECT_SCORE_MIN` is **unchanged at 0.30**. QA measured that 0.40 starts eating knit texture,
+so the whole gain had to come from geometry. Measured coverage of the printed pixels
+(`test_auto_detector_covers_large_solid_and_light_type`, synthetic probes, short edge 260 px):
+
+| probe | printed px | covered | mask leak |
+|---|---|---|---|
+| 48 px solid wordmark (QA's case) | 1605 | **98.3 %** (round 1: 12 %) | 0 |
+| light type on dark fabric, 48 px (QA: 0 %) | 1605 | **100 %** | 0 |
+| 24 px dark type | 484 | 100 % | 0 |
+| navy on white, 36 px | 928 | 100 % | 0 |
+| 14 px light-on-dark | 177 | 91 % | 0 |
+| 11 px dark type (~4 % of the short edge) | 119 | **21 %** | 94 |
+
+The last row is the honest limit: recall is **scale-relative**, and small type is still weak.
+Protection dilation went 2 px → 4 px (`PROTECT_DILATE_MIN_PX`) because a stroke's antialiased
+halo is 1–2 px on each side; at 2 px, 18 printed pixels of the 9 fixtures leaked, at 4 px, 0.
+The cost is over-protection: the protection region now covers **19–22 % of the garment on
+average, 69 % worst** (the tartan belt). That is the safe direction, and it is reported.
+
+## 2. The red line, measured on **print** instead of on the rectangle
+
+The fixtures now carry a second ground truth: `ink/<id>.png`, the pixels the builder actually
+**printed** (glyphs + emblem, no patch background, no outline). Blank padding inside a label is
+pixel-identical to the fabric around it — no pixel-level detector can separate them — so a red
+line drawn on the rectangle is a red line nobody can meet; a red line drawn on the print is the
+DoD's actual sentence and it is meetable.
+
+`protect=None` (automatic detector only, no caller help), on the delivered fixtures:
+
+| case | protect_box | ink px | residual on rectangle | residual on **printed ink** |
+|---|---|---|---|---|
+| logo-01-tee-chest | 8236 | 845 | 149 (1.81 %) | **0** |
+| logo-02-breeches-waistband | 5104 | 358 | 34 (0.67 %) | **0** |
+| logo-03-sneaker-side | 10498 | 1010 | 65 (0.62 %) | **0** |
+| logo-04-belt-stamp | 4060 | 245 | 56 (1.38 %) | **0** |
+| logo-05-jacket-emblem | 5800 | 609 | 78 (1.34 %) | **0** |
+| **total** | 33698 | 3067 | **382** (round 1: 407 on the old fixtures, QA: 362) | **0** |
+
+* `test_mask_never_overlaps_the_printed_ink_without_a_caller_box` — **hard 0**, no caller box,
+  ground truth is the builder's ink. This is the test that would have caught round 1.
+* `test_mask_never_enters_the_label_rectangle_without_a_caller_box` —
+  `@pytest.mark.xfail(strict=True)`, carrying the numbers above in its reason. It is red because
+  the residual is real (crease pixels inside the label's blank padding), and `strict=True` means
+  the day the detector reaches 0 it turns into XPASS and fails the suite until somebody promotes
+  it to a real assertion. **I did not relax it to `<= N`**: that would hide a regression back to
+  362 px, which is exactly the failure QA found.
+* The residual is also in the artifact, not just in a test: `python -m evals.metrics.prettify`
+  prints an `auto only px` column and `evals/reports/vision.md` carries
+  "…and 382 px on the same boxes with the automatic detector alone (of which **0 px are printed
+  ink**)".
+
+## 3. The other five QA findings
+
+| finding | fix |
+|---|---|
+| fixture truth box 1 px off (Pillow's `rectangle` includes both endpoints) | `[x, y, x+w-1, y+h-1]`; the box and the pixels now agree by construction, and `test_fixture_manifest_records_provenance_and_truth_boxes` asserts `ink ⊂ protect_box`. Fixtures rebuilt; a rebuild reproduces byte-identical output (aggregate md5 `b417672e…` before and after) |
+| `summarise()` dropped a `0.0` measurement (`if row[...]`) | `is not None`, plus `n_delta` in the summary so the denominator is printed next to the mean |
+| `sources` claimed `['auto']` with `auto_px = 0` | each source is listed only if it produced pixels |
+| docstring conflated `natural_coverage` (7.0–17.3 %) with final `coverage` (4.4–12.5 %), and quoted an unverifiable crease-band number | both numbers are now stated separately, and the unverifiable one is replaced by `crease_hit`, which `evals/metrics/prettify.py` prints |
+| PLAN wants the **rectify+prettify** wall clock per backend; only prettify was reported | `build_fixtures.py` records `source.rectify_inputs` (the photo + alpha each fixture came from) and the metric times `rectify()` on them: **rectify `local_bbox_warp_v1` 1.30–1.43 s total / 0.145–0.159 s mean**, prettify `local_shadow_attenuation_v1` 1.54–1.66 s total / 0.171–0.184 s mean (two runs; wall clock on this CPU-only machine varies ~10 %). Both lines print |
+
+## 4. The metric now has tests — `evals/tests/test_prettify_metric.py` (8)
+
+`ssim_inside_mask` is pinned on: identity = 1.0 and noise strictly lowers it; the closed form
+`(2µaµb + C1)/(µa² + µb² + C1)` to 1e-9 on constant images; shape mismatch raises (`mask` of
+the wrong shape now raises `ValueError` with both shapes named instead of numpy's
+`IndexError`); symmetry **and** sensitivity (`changed < identical` when one output pixel moves);
+the mask really changes the denominator (same pair, box vs whole garment); an empty mask is
+`NaN`, not 0.0; and `summarise()` keeps an exact `0.0` (two 0.0s and one 9.0 must mean 3.0).
+
+QA's mutation — "SSIM compares an image with itself" — now reddens **five** of those tests
+(M8 below), and the `summarise()` falsy-filter regression reddens the sixth (M9).
+
+## 5. Mutations, 9/9 killed, `/tmp` copies only
+
+`prettify.py` md5 `b6e5c75384ee4a47bca51abb76574e56` and `evals/metrics/prettify.py` md5
+`4b6bc6d0b1b223aac0bf9d180802a717` are **identical before and after the whole run**; each
+mutant was reverted from a pristine copy and its md5 compared (all match).
+
+| # | mutation | red test(s) |
+|---|---|---|
+| M1 | protection subtraction removed | `test_protection_region_is_never_invaded`, `test_mask_never_overlaps_the_printed_ink_…`, 2 detector probes |
+| M2 | `WRINKLE_COVERAGE_CAP = 1.0` | `test_coverage_cap_binds_on_an_over_creased_garment` |
+| M3 | white balance made an identity | `test_white_balance_pulls_a_known_cast_back_to_neutral`, `test_outside_the_mask_only_the_white_balance_gain_moves` |
+| M4 | boundary band removed | `test_mask_never_enters_the_boundary_band` |
+| M5 | auto detector disabled (`PROTECT_SCORE_MIN = 10`) | the printed-ink red line + `test_automatic_detector_fires_on_the_synthetic_ink` + 4 parametrised probes |
+| M6 | fill disabled (`FILL_STRENGTH = 0`) | `test_fill_does_not_change_pixels_outside_the_feathered_mask`, `test_fill_actually_attenuates_local_contrast_inside_the_mask` |
+| M7 | pyramid collapsed to one scale | the printed-ink red line + the 48 px and light-type probes — i.e. **round 1's behaviour is now a red test** |
+| M8 | SSIM compares an image with itself (QA's) | 5 of the 8 metric tests |
+| M9 | `summarise()` drops a `0.0` again | `test_summarise_keeps_a_zero_measurement` |
+
+## 6. `make test` / `make lint`, real tails
+
+```console
+$ make test
+# pass 72                                (node; baseline 72)
+461 passed, 1 xfailed, 1 warning in 44.94s   (pytest; baseline 421, +40)
+
+$ make lint
+All checks passed!                       (ruff)
+packages/shared lint: Done
+apps/mobile lint: Done
+```
+
+Final md5s: `prettify.py` `b6e5c75384ee4a47bca51abb76574e56` ·
+`evals/metrics/prettify.py` `4b6bc6d0b1b223aac0bf9d180802a717` ·
+`evals/fixtures/prettify/manifest.json` `b2f77b1a91565f59fa20e3c9cfb6de60` ·
+`packages/vision/tests/test_prettify.py` `6f2fbe4da6a117cdda63a37f579516c2` ·
+`evals/tests/test_prettify_metric.py` `e7eb77518a6bcf4988f3eea1db41c7f9` ·
+`evals/run.py` `81ede28b987f9f09eb0d8e4b0577472a`.
+Fixtures: 27 files, **1.2 MB**, long edge 480 px.
+
+## 7. Still not standing
+
+1. **The rectangle red line is not met, and cannot be met by a pixel detector.** 382 px of the
+   5 label rectangles are unprotected without a caller box; they are crease pixels in blank
+   padding. Meeting it needs either a region model (a label is a rectangle whose border is
+   detected — I tried closing, hole filling, strong-edge enclosure and coarse-cluster bounding
+   boxes; all either missed the padding or flooded patterned garments) or a PLAN wording change
+   from "logo/text region" to "printed pixels". **This is the decision I am handing back.**
+2. **Small type is the weak spot**, and the number moved once the factory dilation was used.
+   The `21 % at ~4 % of the short edge` above was measured at `PROTECT_DILATE_MIN_PX = 2`;
+   at the factory value of 4 it is ≈58 % with 30 px leaking, and `SNAP` @9 px is 0 % covered /
+   55 px leaking. Real care-label print sits at the small end. If the product needs
+   care-label text protected, this detector is not enough. The per-probe table in
+   `packages/vision/prettify.py` is the authority; it is quoted per probe precisely because
+   recall depends on the glyph string.
+3. **Over-protection is now material**: 22 % of the garment on average, 69 % worst. On patterned
+   fabric the stage will do very little de-wrinkling. That is the correct trade under a "never"
+   constraint, but it is a product cost and nobody has looked at a patterned garment photo yet.
+4. **All of this is synthetic type.** No printed garment was photographed for these probes; the
+   numbers are detector behaviour, not recall on real packaging.
+5. Unchanged from round 1 and still true: SSIM ≥ 0.80 is a destruction budget (0.9936 means
+   "barely touched"), crease *removal* is unmeasured (that is E2-T3's rubric), white balance is
+   near-dead code on the `rectify()` output path, and the classical path costs ~0.17 s/case at
+   480 px / 1.9 s at 1200×960.
+
+## 8. Final round (1c) — what closed, and the decision I handed back
+
+Three things QA's round-1b audit found, all fixed after the section above was written:
+
+* **The metric's wiring had no test.** Round 1 shipped teeth for `ssim_inside_mask()` and none
+  for `run()`, so `after = before.copy()` inside `run()` reported **1.0** for every case (a
+  perfect score against a 0.80 threshold) with 461 tests green. `test_run_reports_input_against_output_on_the_real_fixtures`
+  now runs `run()` on the real fixtures, requires every row's SSIM to be `< 1.0`, and recomputes
+  that row from the fixture bytes to 1e-9. This is the only test that pins the number the report
+  publishes, as opposed to the function that produces it.
+* **The probe table was quoted at a stale dilation.** The prose numbers were measured at
+  `PROTECT_DILATE_MIN_PX = 2` after the constant moved to 4 — the third time in this ticket that
+  a constant changed and the prose did not. The table is now generated at factory settings and
+  includes the counterexamples that break the absolute claim: `M` @48 leaks 38 px,
+  `MADE IN PORTUGAL` @36 leaks 66 px, `SNAPLIST` @36 leaks 54 px.
+* **`_time_rectify` promised "never raises" and raised.** One stale `rectify_inputs.photo` path
+  turned the whole prettify SSIM row into UNMEASURED. It now returns `(None, reason)` and the
+  reason is printed, so a timing number cannot take the measurement down with it.
+
+**The wording decision, stated once.** `docs/PLAN.md` E2-T2 says the inpaint mask must *never*
+overlap the logo/text region. That is only satisfiable if "region" means **printed pixels**:
+blank padding inside a label is pixel-identical to the fabric around it, so no pixel detector can
+separate them, and the workaround (grow the dilation until the rectangle is covered) was measured
+to zero out crease detection. So:
+
+* printed ink → **hard assertion, 0 px** on the fixture set and the four equal-length `SNAP`
+  probes; **not** a general claim, and the counterexamples above are printed in the module
+  docstring rather than omitted;
+* the label rectangle → **382 px residual**, pinned by an `xfail(strict=True)` test whose reason
+  carries the five per-case numbers. `strict=True` means reaching zero turns it into XPASS and
+  reddens the suite, which forces the assertion to be promoted instead of the xfail rotting.
+
+I did not edit `docs/PLAN.md` to match the implementation: the acceptance text stays as written,
+and the interpretation plus its evidence lives here.

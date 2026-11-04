@@ -19,7 +19,11 @@ class SegmentBackend(StrEnum):
 
 
 class PrettifyMode(StrEnum):
-    PASS_THROUGH = "pass_through"  # rectify only, no generative step
+    PASS_THROUGH = "pass_through"  # bytes out == bytes in; no cleanup of any kind
+    # Model-free pipeline (white balance, wrinkle mask, shadow attenuation). Added by E2-T2
+    # round 1: it changes pixels, so it cannot be reported as `pass_through` — the report would
+    # say "no cleanup applied" about a cleaned image. Still not the SDXL path.
+    CLASSICAL = "classical"
     SDXL_INPAINT = "sdxl_inpaint"
     UNMEASURED = "unmeasured"
 

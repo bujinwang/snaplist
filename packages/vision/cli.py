@@ -3,11 +3,11 @@
 Wires the implemented stages into the product's core asset pack and writes three files into
 --out:
 
-    python -m packages.vision.cli --in PHOTO --out DIR [--category top]
+    python -m packages.vision.cli --in PHOTO --out DIR [--category top] [--prettify classical]
 
     cutout.png       garment composited onto transparency (segment -> matte alpha)
     prettified.png   rectified flat-lay on the neutral backdrop (segment -> matte -> rectify
-                     -> prettify(PASS_THROUGH))
+                     -> prettify(--prettify, default CLASSICAL))
     attributes.json  the E3 VLM extractor's validated ItemAttributes, or an explicit
                      `UNMEASURED` marker naming the missing config when no VLM is set
 
@@ -16,8 +16,14 @@ chosen by configuration (`SNAPLIST_ATTRS_PROVIDER`), not by a code change here o
 When the real provider is configured but returns bad JSON twice, the failure is
 `low_confidence` (CONTRACTS §4), not `internal`.
 
-Stages that are not implemented yet (prettify.SDXL_INPAINT) fail loudly with a reason rather
-than producing a silent pass-through that looks like a result.
+`--prettify` defaults to `classical` because that is the only mode with pixels behind it in
+this build (E2-T2 round 1: white balance + wrinkle mask + feathered shadow attenuation). The
+name printed in the summary is the mode that actually ran, and `--prettify sdxl_inpaint`
+fails loudly with the fix inside the error rather than producing a classical result under a
+generative label. `--prettify pass_through` is available and returns the flat-lay untouched.
+
+Per-stage wall clock is printed for every stage and keyed by its backend, because PLAN E2-T2's
+acceptance asks for seconds per backend rather than one total that hides which stage costs.
 
 The acceptance command from prompts/02-vision.md must keep working verbatim once the stages
 land. `category` defaults to "top" so `--in evals/fixtures/tee.jpg --out /tmp/out` runs
@@ -49,6 +55,7 @@ from packages.vision.segment import SegmentResult, segment
 from packages.vision.types import PrettifyMode, SegmentBackend
 
 _DEFAULT_CATEGORY = "top"
+_DEFAULT_PRETTIFY = PrettifyMode.CLASSICAL.value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override segmentation backend (default: runtime.probe())",
     )
+    p.add_argument(
+        "--prettify",
+        dest="prettify_mode",
+        choices=[mode.value for mode in PrettifyMode],
+        default=_DEFAULT_PRETTIFY,
+        help=(
+            "prettify mode: classical (white balance + wrinkle mask + shadow attenuation, "
+            "no model) | pass_through (bytes untouched) | sdxl_inpaint (E2-T2 round 2, "
+            "refuses with instructions)"
+        ),
+    )
     return p
 
 
@@ -72,6 +90,32 @@ def _coverage(mask_png: bytes) -> float:
     with Image.open(io.BytesIO(mask_png)) as opened:
         arr = np.asarray(opened.convert("L"))
     return round(float((arr >= 128).mean()), 4)
+
+
+def _alpha_on_flat_canvas(alpha_png: bytes, flat_png: bytes) -> bytes:
+    """Resample the alpha onto the flat-lay canvas when the two disagree.
+
+    `rectify()` warps the alpha internally but returns only the flat-lay, so the alpha this
+    CLI holds is still in *photo* coordinates. Prettify refuses a shape mismatch on purpose
+    (a silently rescaled mask is a silently rescaled wrinkle mask), so the resize happens
+    here, visibly, and is a no-op once rectify returns its own alpha.
+    """
+    with Image.open(io.BytesIO(flat_png)) as opened:
+        flat_size = opened.size
+    with Image.open(io.BytesIO(alpha_png)) as opened:
+        channel = opened.convert("L")
+        if channel.size == flat_size:
+            return alpha_png
+        resized = channel.resize(flat_size, Image.BILINEAR)
+    buffer = io.BytesIO()
+    resized.save(buffer, format="PNG", optimize=False)
+    return buffer.getvalue()
+
+
+def _fmt_seconds(meta_stage: str, backend: object, seconds: float | None) -> str:
+    """One line per backend, so the report can attribute the wall clock to a stage."""
+    shown = "UNMEASURED" if seconds is None else f"{seconds:.3f}s"
+    return f"  {meta_stage:<17} backend={backend} seconds={shown}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime = probe()
     backend = SegmentBackend(args.backend) if args.backend else runtime.backend
+    mode = PrettifyMode(args.prettify_mode)
     photo = src.read_bytes()
 
     started = time.perf_counter()
@@ -98,7 +143,14 @@ def main(argv: list[str] | None = None) -> int:
 
     mt = matte(photo, seg.mask_png)
     rect = rectify(photo, mt.alpha_png, args.category)
-    pt = prettify(rect.flat_png, mt.alpha_png, mode=PrettifyMode.PASS_THROUGH)
+    alpha_for_flat = _alpha_on_flat_canvas(mt.alpha_png, rect.flat_png)
+    try:
+        pt = prettify(rect.flat_png, alpha_for_flat, mode=mode)
+    except StageNotImplemented as exc:
+        # A mode that this build cannot run is a terminal, deterministic failure. Printing the
+        # refusal (which carries the fix) is the whole point of raising it.
+        print(f"PRETTIFY UNAVAILABLE: {exc}", file=sys.stderr)
+        return 2
     elapsed = time.perf_counter() - started
 
     # cutout = original photo composited onto the matte alpha
@@ -108,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         base.putalpha(alpha.convert("L"))
     base.save(dst / "cutout.png")
 
-    # prettified = rectified flat-lay, pass-through prettify
+    # prettified = rectified flat-lay through the selected prettify mode
     (dst / "prettified.png").write_bytes(pt.prettified_png)
 
     # attributes: config-driven extractor. No VLM configured => explicit UNMEASURED marker,
@@ -153,7 +205,15 @@ def main(argv: list[str] | None = None) -> int:
         f"OK  backend={seg.meta.backend} device={seg.meta.device} "
         f"category={args.category} mask_coverage={cov} "
         f"prettify={pt.meta.notes.get('mode')} total={elapsed:.2f}s\n"
-        f"  cutout     -> {dst / 'cutout.png'}\n"
+        + "\n".join(
+            [
+                _fmt_seconds("segment", seg.meta.backend, seg.meta.seconds),
+                _fmt_seconds("matte", mt.meta.backend, mt.meta.seconds),
+                _fmt_seconds("rectify", rect.meta.backend, rect.meta.seconds),
+                _fmt_seconds("prettify", pt.meta.backend, pt.meta.seconds),
+            ]
+        )
+        + f"\n  cutout     -> {dst / 'cutout.png'}\n"
         f"  prettified -> {dst / 'prettified.png'}\n"
         f"  attributes -> {dst / 'attributes.json'} ({attributes_doc['status']})"
     )

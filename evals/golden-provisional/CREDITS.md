@@ -22,3 +22,18 @@ for that file; entries under CC BY require attribution, which is this table.
 | shoe-04 | File:Shoes, leather tennis (pair) (AM 2017.30.1-9).jpg | CC BY 4.0 | Adidas | https://upload.wikimedia.org/wikipedia/commons/4/4c/Shoes%2C_leather_tennis_%28pair%29_%28AM_2017.30.1-9%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
 | top-01 | File:Guards Fest 2024 (53479474703).jpg | CC BY 2.0 | Erik Drost | https://upload.wikimedia.org/wikipedia/commons/7/72/Guards_Fest_2024_%2853479474703%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
 | top-02 | File:T-shirt2.jpg | Public domain | Elkagye | https://upload.wikimedia.org/wikipedia/commons/0/0f/T-shirt2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original |
+
+## Derived fixtures that reuse these photos (appended)
+
+`evals/fixtures/prettify/` (E2-T2) derives 9 images from 9 of the photos above — composited
+onto the flat-lay backdrop, rescaled to 480 px, and overlaid with **synthetic** labels and
+folds drawn by `evals/fixtures/prettify/build_fixtures.py`. No logo of any real brand is used
+or downloaded. Those files are adapted material under the same licences, and
+[`evals/fixtures/prettify/CREDITS.md`](../fixtures/prettify/CREDITS.md) carries the per-case
+attribution chain back to this table.
+
+Reused: `top-02`, `bottom-03`, `shoe-02`, `acc-03`, `outer-01`, `bottom-01`, `top-01`,
+`shoe-04`, `bottom-06`.
+
+`evals/fixtures/dedupe/` (E3-T4) already reuses 12 of the photos above for its 20-pair
+false-merge fixture; see [`evals/fixtures/dedupe/CREDITS.md`](../fixtures/dedupe/CREDITS.md).
