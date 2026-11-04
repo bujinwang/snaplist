@@ -24,7 +24,13 @@ def test_create_returns_202_with_item_and_job(
     assert response.status_code == 202, response.text
     body = response.json()
     assert set(body) == {"item_id", "job_id", "upload_url"}
-    assert body["upload_url"] is None, "no signed-URL issuer exists, so it must be null"
+    # E5-T4: the URL is a signed capability for the key this item will own. It is asserted in
+    # full (and exercised end to end) in apps/api/tests/test_storage.py; here the point is
+    # only that create no longer hands back `null` on a process that has a storage backend.
+    upload_url = body["upload_url"]
+    assert isinstance(upload_url, str), "a configured LocalStorage must hand out a URL"
+    assert f"/v1/uploads/items/{headers_a['x-snaplist-user-id']}/{body['item_id']}/" in upload_url
+    assert "sig=" in upload_url and "exp=" in upload_url
     assert response.headers["x-snaplist-auth-mode"] == "local_dev"
 
 
@@ -237,10 +243,15 @@ def test_provider_backed_routes_still_answer_501(
 def test_binary_upload_is_refused_as_501_not_as_a_fake_202(
     client: TestClient, headers_a: dict[str, str]
 ) -> None:
+    """The bytes go to `upload_url`, not here. The 501 must say so, or the client sits on a
+    multipart request the server will never accept."""
     response = client.post(
         "/v1/items",
         headers={**headers_a, "content-type": "multipart/form-data; boundary=xyz"},
         content=b"--xyz--",
     )
     assert response.status_code == 501, response.text
-    assert "E5-T4" in response.json()["error"]["message"]
+    message = response.json()["error"]["message"]
+    assert "two-step" in message
+    assert "upload_url" in message
+    assert "/v1/uploads/" in message

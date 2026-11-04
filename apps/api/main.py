@@ -27,9 +27,11 @@ from apps.api.routers import billing as billing_router
 from apps.api.routers import exports as exports_router
 from apps.api.routers import items as items_router
 from apps.api.routers import jobs as jobs_router
+from apps.api.routers import uploads as uploads_router
 from apps.api.routers import usage as usage_router
 from apps.api.schemas import CONTRACT_VERSION
 from apps.api.settings import Settings, get_settings
+from apps.api.storage import Storage, build_storage
 
 API_VERSION = "0.2.0"
 
@@ -38,6 +40,7 @@ def create_app(
     *,
     repository: Repository | None = None,
     settings: Settings | None = None,
+    storage: Storage | None = None,
 ) -> FastAPI:
     resolved_settings = settings if settings is not None else get_settings()
     app = FastAPI(
@@ -50,6 +53,10 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.repository = repository if repository is not None else build_repository()
+    # The backend is chosen from settings so a laptop with an empty `.env` gets the
+    # filesystem and a deployment with Supabase credentials gets the bucket; both satisfy
+    # `Storage`, so no router knows which one it is talking to.
+    app.state.storage = storage if storage is not None else build_storage(resolved_settings)
 
     errors.install_error_handlers(app)
 
@@ -76,23 +83,33 @@ def create_app(
 
     @app.get("/readyz", tags=["ops"])
     def readyz() -> dict[str, object]:
-        """Reports which credentials are missing and which auth mode is active.
+        """Reports which credentials are missing, which auth mode is active, and which
+        repository/storage backends are in use.
 
         Returns credential *names* only, never values. `ready=false` means "a provider-backed
         feature will 501", not "the process is down" — `/health` answers that.
+
+        `repository` and `storage` are separate keys on purpose. The single `storage` key that
+        used to live here reported `type(app.state.repository).__name__`, so a process running
+        on SQLite with no bucket at all said `"storage": "SqliteRepository"` — a field that
+        read like an answer and was not one.
         """
         missing = app.state.settings.missing()
         mode = resolve_auth_mode(app.state.settings)
+        storage: Storage = app.state.storage
         return {
             "ready": not missing,
             "missing_credentials": missing,
             "auth_mode": mode.value,
             "unverified_identity": mode.value == "local_dev",
-            "storage": type(app.state.repository).__name__,
+            "repository": type(app.state.repository).__name__,
+            "storage": storage.describe(),
+            "storage_configured": storage.configured,
             "migrations_applied": False,
         }
 
     app.include_router(items_router.router)
+    app.include_router(uploads_router.router)
     app.include_router(jobs_router.router)
     app.include_router(exports_router.router)
     app.include_router(usage_router.router)

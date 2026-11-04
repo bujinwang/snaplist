@@ -3,7 +3,11 @@
 What is real here
 -----------------
 * create with an idempotency key, atomically spending one quota unit
-* `GET` returning the five-key `AssetPack`
+* a **signed upload URL** for the original photo (`upload_url`), issued from the key the item
+  will own — the client PUTs the bytes to it, and the job becomes claimable the moment they
+  land (E5-T4; see `apps/api/routers/uploads.py`)
+* `GET` returning the five-key `AssetPack`, with its three URL fields signed **at read time**
+  from the stored object keys, so a cached pack never holds an expired link
 * `PATCH .../attributes` validated by `ItemAttributes` (illegal values are 422, never stored)
 * `DELETE` as a soft delete that immediately stops resolving
 * cross-user isolation: every query carries `user_id`, a foreign id is a 404 (not a 403, so
@@ -14,6 +18,10 @@ What is still 501, and why
 `POST /v1/items/{id}/rerender` and `POST /v1/items/{id}/on-model` need a worker that runs
 `packages/vision` stages. Those stages raise `StageNotImplemented` today (`E1`-`E4`), so a 501
 is the truth. Returning 202 and quietly doing nothing would be worse than refusing.
+
+A `multipart/form-data` body on create is also 501, but for a different reason: the bytes are
+not uploaded *here* any more. They go to `upload_url` in a second request, which keeps this
+endpoint a small transaction and keeps a 20 MB body out of the JSON API.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from apps.api.schemas import (
     ItemAttributes,
     JobKind,
 )
+from apps.api.storage import StorageError, source_object_key, storage_of
 
 router = APIRouter(prefix="/v1", tags=["items"])
 
@@ -96,6 +105,33 @@ def _as_uuid(raw: str) -> UUID:
         raise errors.not_found(f"No item {raw} for this account.") from exc
 
 
+def _base_url(request: Request) -> str:
+    """The origin the client used, so a signed URL is absolute and fetchable from a phone.
+
+    Taken from the request rather than a setting: a dev laptop, a phone on the LAN and the
+    deployed API each need a different host, and the request already knows which one this is.
+    A proxy that rewrites `Host` is therefore also handled, which is the usual deployment.
+    """
+    return str(request.base_url).rstrip("/")
+
+
+def _upload_url(
+    request: Request, *, user_id: UUID, item_id: UUID, content_type: str | None
+) -> str | None:
+    """A signed PUT URL for the original photo, or None when no bucket is configured.
+
+    `null` is allowed by the contract (`CreateItemResponse.upload_url`) and is the honest
+    answer when the deployment has no storage backend: an invented URL that 404s is worse than
+    a client that knows it must ask an operator.
+    """
+    storage = storage_of(request)
+    key = source_object_key(user_id, item_id, content_type)
+    try:
+        return storage.signed_upload_url(key, base_url=_base_url(request))
+    except StorageError as exc:
+        raise errors.unavailable(f"Storage could not issue an upload URL: {exc}") from exc
+
+
 @router.post(
     "/items",
     status_code=status.HTTP_202_ACCEPTED,
@@ -109,9 +145,14 @@ async def create_item(
 ) -> CreateItemResponse:
     """Create `items` + `jobs` rows and spend one quota unit, all or nothing.
 
-    The body is parsed by hand: a `multipart/form-data` request must answer 501 (binary upload
-    needs the Supabase Storage signing in E5-T4), and letting FastAPI validate it as JSON would
-    answer 422 instead and tell the client to fix the wrong thing.
+    The body is parsed by hand: a `multipart/form-data` request must answer 501 with a message
+    that says *where the bytes go instead* (`upload_url`, a second request), and letting
+    FastAPI validate it as JSON would answer 422 and tell the client to fix the wrong thing.
+
+    `upload_url` is signed after the transaction commits, from the key the item will own:
+    `items/<user_id>/<item_id>/source.<ext>`. It is a capability, not a bearer-authenticated
+    endpoint (see `apps/api/routers/uploads.py`), and it expires after
+    `Settings.storage_upload_ttl_seconds`.
     """
     repository: Repository = web.repository_of(request)
     idempotency_key = _idempotency_key(request.headers.get("idempotency-key"))
@@ -119,50 +160,65 @@ async def create_item(
     media_type = web.media_type_of(request)
     if media_type not in web.JSON_MEDIA_TYPES:
         raise errors.not_implemented(
-            f"Binary upload (content-type {media_type or 'unset'}) needs a signed Supabase "
-            "Storage URL, which is E5-T4. This build accepts a JSON description of the photo."
+            f"Binary upload (content-type {media_type or 'unset'}) is a two-step flow: "
+            "POST /v1/items without a body, then PUT the bytes to the `upload_url` it returns "
+            "(`PUT /v1/uploads/{key}?exp=&sig=`). This endpoint accepts a JSON description "
+            "of the photo only."
         )
 
     raw = await request.body()
-    if raw:
-        web.parse_json_body(request, raw, CreateItemRequest)
+    body = web.parse_json_body(request, raw, CreateItemRequest) if raw else None
+    content_type = body.content_type if body is not None else None
     limits = usage.limits_from_settings(web.settings_of(request))
 
+    replay_of: tuple[UUID, UUID] | None = None
+    item_id: UUID
+    job_id: UUID
     try:
         with repository.transaction():
             if idempotency_key is not None:
-                replay = repository.get_idempotent_item(
+                replay_of = repository.get_idempotent_item(
                     idempotency_key, user_id=caller.user_id, endpoint=CREATE_ENDPOINT
                 )
-                if replay is not None:
-                    item_id, job_id = replay
-                    return CreateItemResponse(item_id=item_id, job_id=job_id)
-
-            item = repository.create_item(user_id=caller.user_id, status="draft")
-            job = repository.create_job(
-                item_id=item.id, user_id=caller.user_id, kind=JobKind.FULL
-            )
-            usage.spend_one(
-                repository,
-                caller.user_id,
-                job_id=job.id,
-                item_id=item.id,
-                limits=limits,
-            )
-            if idempotency_key is not None:
-                repository.store_idempotent_item(
-                    idempotency_key,
-                    user_id=caller.user_id,
-                    endpoint=CREATE_ENDPOINT,
-                    item_id=item.id,
-                    job_id=job.id,
+            if replay_of is not None:
+                # Nothing is written: the caller is retrying a create it already succeeded at,
+                # and the quota unit was spent the first time.
+                item_id, job_id = replay_of
+            else:
+                item = repository.create_item(user_id=caller.user_id, status="draft")
+                job = repository.create_job(
+                    item_id=item.id, user_id=caller.user_id, kind=JobKind.FULL
                 )
+                usage.spend_one(
+                    repository,
+                    caller.user_id,
+                    job_id=job.id,
+                    item_id=item.id,
+                    limits=limits,
+                )
+                if idempotency_key is not None:
+                    repository.store_idempotent_item(
+                        idempotency_key,
+                        user_id=caller.user_id,
+                        endpoint=CREATE_ENDPOINT,
+                        item_id=item.id,
+                        job_id=job.id,
+                    )
+                item_id, job_id = item.id, job.id
     except usage.QuotaExceeded as exc:
         raise quota_error(exc) from exc
 
-    # `upload_url` stays null: there is no signed-URL issuer in this build, and inventing one
-    # would make the client believe an upload path exists.
-    return CreateItemResponse(item_id=item.id, job_id=job.id, upload_url=None)
+    # Signed **after** the transaction: for Supabase this is an HTTPS round trip, and holding
+    # a write lock across the network is how a 200 ms provider hiccup becomes a stalled queue.
+    # A replay gets a fresh URL too — the one the first response carried expires in 15 minutes,
+    # and a retry hours later would otherwise be handed a dead link.
+    return CreateItemResponse(
+        item_id=item_id,
+        job_id=job_id,
+        upload_url=_upload_url(
+            request, user_id=caller.user_id, item_id=item_id, content_type=content_type
+        ),
+    )
 
 
 @router.get(
@@ -180,12 +236,20 @@ def get_item(
 
     FastAPI would answer 422 for a non-uuid path parameter; the client only ever holds uuids,
     so a bad one means "no such item" and a 404 keeps one not-found shape on the wire.
+
+    The three URL fields are signed here, from the object keys on the row. The row keeps a key
+    and the caller gets a URL with a TTL; that is why `AssetPack` can be cached by the client
+    without the cache going stale in any way a re-fetch could not fix.
     """
     repository: Repository = web.repository_of(request)
     record = repository.get_item(_as_uuid(item_id), user_id=caller.user_id)
     if record is None:
         raise errors.not_found(f"No item {item_id} for this account.")
-    return record.to_asset_pack()
+    storage = storage_of(request)
+    base_url = _base_url(request)
+    return record.to_asset_pack(
+        url_for=lambda key: storage.signed_asset_url(key, base_url=base_url)
+    )
 
 
 @router.patch(

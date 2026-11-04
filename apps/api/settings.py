@@ -8,8 +8,24 @@ value below defaults to empty and nothing here validates on import. Validation h
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _env(name: str, default: Any) -> Any:
+    """A field that reads `SNAPLIST_STORAGE_<name>` *or* `STORAGE_<name>`, and a keyword.
+
+    The third choice is the field's own name, so `Settings(storage_dir="/tmp/x")` in a test
+    keeps working — a `validation_alias` would otherwise make the keyword silently ignored,
+    which is the kind of bug that shows up as "the fixture wrote to my home directory".
+    """
+    field_name = f"storage_{name.lower()}"
+    return Field(
+        default=default,
+        validation_alias=AliasChoices(f"SNAPLIST_STORAGE_{name}", f"STORAGE_{name}", field_name),
+    )
 
 
 class Settings(BaseSettings):
@@ -22,6 +38,26 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
     supabase_jwt_secret: str = ""
+
+    # Object storage (E5-T4). `storage_backend` is "auto" unless an operator forces a backend:
+    # auto = Supabase when both Supabase values exist, else the local filesystem, which is what
+    # makes `make test` / `make dev` work with an empty .env.
+    #
+    # Two env spellings are accepted for each storage value — `SNAPLIST_STORAGE_DIR` and
+    # `STORAGE_DIR` — because the repo already uses both conventions (`SNAPLIST_DB`,
+    # `SNAPLIST_MODEL_DIR` in the Makefile; bare `SUPABASE_URL` here). Accepting both costs one
+    # `AliasChoices` and removes a class of "I set the variable and nothing happened" bugs.
+    storage_backend: str = _env("BACKEND", "auto")
+    storage_bucket: str = _env("BUCKET", "snaplist")
+    storage_dir: str = _env("DIR", "")
+    # Only a *secret* has no default. Empty means LocalStorage mints a random per-process key,
+    # which is honest for a laptop and useless in production — `docs/RUNBOOK.md` §6 says so.
+    storage_signing_secret: str = _env("SIGNING_SECRET", "")
+    # TTLs are product knobs, not secrets: a 15-minute upload window for a phone on 3G, and an
+    # hour for a pack the client caches on disk.
+    storage_upload_ttl_seconds: int = _env("UPLOAD_TTL_SECONDS", 900)
+    storage_asset_ttl_seconds: int = _env("ASSET_TTL_SECONDS", 3600)
+    storage_max_upload_bytes: int = _env("MAX_UPLOAD_BYTES", 20_000_000)
 
     # Stripe (E8)
     stripe_secret: str = ""

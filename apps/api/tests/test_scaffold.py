@@ -33,6 +33,18 @@ def test_readyz_lists_missing_credentials_without_values(client: TestClient) -> 
         assert not (isinstance(value, str) and len(value) > 60), f"{key} looks like a secret"
 
 
+def test_readyz_reports_repository_and_storage_as_separate_facts(
+    client: TestClient,
+) -> None:
+    """Before E5-T4 the single `storage` key said `SqliteRepository` — a field that read like
+    an answer and was not one."""
+    body = client.get("/readyz").json()
+    assert body["repository"] == "SqliteRepository"
+    assert body["storage"] == "LocalStorage", "an empty .env must land on the filesystem backend"
+    assert body["storage_configured"] is True
+    assert body["repository"] != body["storage"]
+
+
 def test_an_unknown_path_uses_the_error_envelope(client: TestClient) -> None:
     response = client.get("/v1/nope")
     assert response.status_code == 404

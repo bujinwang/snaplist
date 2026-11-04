@@ -32,7 +32,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -79,6 +79,10 @@ class AssetRecord:
     kind: str
     position: int
     storage_path: str
+    #: Measured by the writer, never accepted from a caller. None means "not measured".
+    byte_size: int | None = None
+    #: Stage metadata: sha256, content_type, backend, seconds. Absent values are absent.
+    meta: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,13 +109,43 @@ class ItemRecord:
             if asset.kind == "on_model"
         ]
 
-    def to_asset_pack(self) -> AssetPack:
-        """The five frozen keys. "Not ready yet" is `null`/`[]` inside a 200."""
+    def to_asset_pack(
+        self, url_for: Callable[[str], str | None] | None = None
+    ) -> AssetPack:
+        """The five frozen keys. "Not ready yet" is `null`/`[]` inside a 200.
+
+        `url_for` is the seam between "a path in the bucket" and "a URL a phone can fetch":
+
+        * with `url_for` (what the router passes) each `storage_path` is signed on the way
+          out, so the row keeps a canonical key and the URL keeps a TTL;
+        * without it (tests, the worker, `apps/api/devtools.py`) the raw key is returned,
+          which is the pre-E5-T4 behaviour and makes an assertion about a path readable.
+
+        A key the resolver declines (storage unconfigured) is dropped from `on_model_urls`
+        rather than emitted as `null`: that list is typed `list[str]` in the contract.
+        """
+        if url_for is None:
+            return AssetPack(
+                item_id=self.id,
+                prettified_url=self.path_for("prettified"),
+                cutout_url=self.path_for("cutout"),
+                on_model_urls=self.on_model_paths(),
+                attributes=self.attributes,
+            )
+
+        def resolve(path: str | None) -> str | None:
+            return None if path is None else url_for(path)
+
+        on_model: list[str] = []
+        for path in self.on_model_paths():
+            url = url_for(path)
+            if url is not None:
+                on_model.append(url)
         return AssetPack(
             item_id=self.id,
-            prettified_url=self.path_for("prettified"),
-            cutout_url=self.path_for("cutout"),
-            on_model_urls=self.on_model_paths(),
+            prettified_url=resolve(self.path_for("prettified")),
+            cutout_url=resolve(self.path_for("cutout")),
+            on_model_urls=on_model,
             attributes=self.attributes,
         )
 
@@ -196,6 +230,8 @@ class Repository(Protocol):
         kind: str,
         storage_path: str,
         position: int = 0,
+        byte_size: int | None = None,
+        meta: Mapping[str, Any] | None = None,
     ) -> None: ...
 
     def create_job(self, *, item_id: UUID, user_id: UUID, kind: JobKind) -> JobRecord: ...
@@ -205,6 +241,8 @@ class Repository(Protocol):
     def update_job(self, job: JobRecord) -> JobRecord: ...
 
     def peek_next_queued_job(self) -> JobRecord | None: ...
+
+    def has_finished_job(self, item_id: UUID) -> bool: ...
 
     def list_jobs_by_state(self, state: JobState) -> list[JobRecord]: ...
 
@@ -276,6 +314,10 @@ create table if not exists assets (
     kind         text not null,
     position     integer not null default 0,
     storage_path text not null,
+    -- measured by whoever wrote the bytes; NULL means unmeasured and never a fabricated 0
+    byte_size    integer,
+    -- stage metadata as JSON text (sha256, content_type, backend); mirrors `assets.meta jsonb`
+    meta         text not null default '{}',
     created_at   text not null,
     primary key (item_id, kind, position)
 );
@@ -308,6 +350,11 @@ create table if not exists jobs (
 );
 create index if not exists jobs_user_created on jobs (user_id, created_at desc);
 create index if not exists jobs_state_created on jobs (state, created_at);
+-- `has_finished_job` runs on every direct upload (E5-T4) with `item_id = ? and state = ?`.
+-- Without this, SQLite answers it by scanning the `state='queued'`/`done` slice and filtering
+-- per row — fine at demo volume, wrong the moment one item has a job history. Postgres has
+-- `jobs_item_idx` on (item_id, created_at desc) for the same lookup.
+create index if not exists jobs_item on jobs (item_id);
 
 create table if not exists usage_events (
     id                 integer primary key autoincrement,
@@ -358,6 +405,21 @@ class SqliteRepository:
         self._conn.execute("pragma foreign_keys = on")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate_asset_columns()
+
+    def _migrate_asset_columns(self) -> None:
+        """Add `byte_size`/`meta` to an `assets` table created before E5-T4.
+
+        `create table if not exists` does not touch an existing file, and `make dev` keeps
+        one (`SNAPLIST_DB`), so a checkout that predates this ticket would otherwise fail on
+        the first upload with "no such column". SQLite's `alter table ... add column` is the
+        entire migration — the Postgres table already carries both columns.
+        """
+        columns = {row["name"] for row in self._query("pragma table_info(assets)")}
+        if "byte_size" not in columns:
+            self._execute("alter table assets add column byte_size integer")
+        if "meta" not in columns:
+            self._execute("alter table assets add column meta text not null default '{}'")
 
     # -- plumbing ----------------------------------------------------------------------
     @contextmanager
@@ -423,8 +485,8 @@ class SqliteRepository:
         if record.deleted_at is not None and not include_deleted:
             return None
         assets = self._query(
-            "select kind, position, storage_path from assets where item_id = ? "
-            "order by kind, position",
+            "select kind, position, storage_path, byte_size, meta from assets "
+            "where item_id = ? order by kind, position",
             (str(item_id),),
         )
         return ItemRecord(
@@ -440,6 +502,8 @@ class SqliteRepository:
                     kind=row["kind"],
                     position=int(row["position"]),
                     storage_path=row["storage_path"],
+                    byte_size=int(row["byte_size"]) if row["byte_size"] is not None else None,
+                    meta=json.loads(row["meta"]) if row["meta"] else {},
                 )
                 for row in assets
             ),
@@ -485,13 +549,36 @@ class SqliteRepository:
         kind: str,
         storage_path: str,
         position: int = 0,
+        byte_size: int | None = None,
+        meta: Mapping[str, Any] | None = None,
     ) -> None:
+        """Upsert one `(item, kind, position)` slot. The newest write wins.
+
+        `storage_path` is the canonical **object key**, never a signed URL: signing happens on
+        the way out (`ItemRecord.to_asset_pack(url_for=...)`) because a URL embedded in a row
+        expires while the row does not.
+
+        `byte_size` and `meta` come from whoever measured the bytes; this method stores them
+        verbatim and refuses to invent them. `None` byte_size is stored as NULL — unmeasured.
+        """
+        payload = json.dumps(dict(meta or {}), sort_keys=True)
         self._execute(
-            "insert into assets (item_id, user_id, kind, position, storage_path, created_at) "
-            "values (?, ?, ?, ?, ?, ?) "
+            "insert into assets (item_id, user_id, kind, position, storage_path, byte_size, "
+            "meta, created_at) values (?, ?, ?, ?, ?, ?, ?, ?) "
             "on conflict (item_id, kind, position) do update "
-            "set storage_path = excluded.storage_path",
-            (str(item_id), str(user_id), kind, position, storage_path, to_wire(utcnow())),
+            "set storage_path = excluded.storage_path, "
+            "byte_size = excluded.byte_size, "
+            "meta = excluded.meta",
+            (
+                str(item_id),
+                str(user_id),
+                kind,
+                position,
+                storage_path,
+                byte_size,
+                payload,
+                to_wire(utcnow()),
+            ),
         )
 
     @staticmethod
@@ -590,16 +677,28 @@ class SqliteRepository:
         )
 
     def peek_next_queued_job(self) -> JobRecord | None:
-        """Oldest queued job, without claiming it. Claiming is the caller's transaction
-        plus the state machine's queued->running transition — deliberately NOT done here,
-        so no repository backend can invent a sixth state.
+        """Oldest queued job whose item has its **source** bytes, without claiming it.
+
+        Claiming is the caller's transaction plus the state machine's queued->running
+        transition — deliberately NOT done here, so no repository backend can invent a sixth
+        state.
+
+        The `kind='source'` predicate is an invariant, not an optimisation: `POST /v1/items`
+        creates the job *before* the bytes arrive (direct upload is a second request), so
+        without it a worker would claim a job with no input, fail three times and refund a
+        seller for work that never had a chance to run. An item with no source asset is
+        "not ready to be claimed", which is exactly what `queued` plus missing bytes means.
 
         Postgres selects with `for update skip locked` (the claim query is documented in
-        infra/migrations/0001_init.sql); SQLite relies on the single-writer `begin immediate`
-        transaction, which is honest for this build: one process, one connection.
+        `infra/migrations/0001_init.sql`); SQLite relies on the single-writer
+        `begin immediate` transaction, which is honest for this build: one process, one
+        connection.
         """
         rows = self._query(
-            "select * from jobs where state = 'queued' order by created_at, id limit 1"
+            "select * from jobs j where j.state = 'queued' "
+            "and exists (select 1 from assets a "
+            "            where a.item_id = j.item_id and a.kind = 'source') "
+            "order by j.created_at, j.id limit 1"
         )
         return self._job_from_row(rows[0]) if rows else None
 
@@ -608,6 +707,23 @@ class SqliteRepository:
             "select * from jobs where state = ? order by created_at, id", (state.value,)
         )
         return [self._job_from_row(row) for row in rows]
+
+    def has_finished_job(self, item_id: UUID) -> bool:
+        """True once any job for this item reached `done`.
+
+        The direct-upload route asks this *before* overwriting the original photo. A finished
+        job means the cutout/prettified/on-model assets in the bucket were derived from the
+        bytes that are already there: replacing those bytes would leave a pack that describes
+        a photo nobody has any more, with no error anywhere. 409 on the upload is the honest
+        answer ("this item is processed; create a new one or re-run rendering"), and it is
+        deliberately not "re-enqueue and wipe the downstream assets", which would be a change
+        to the job model rather than to storage.
+        """
+        rows = self._query(
+            "select 1 from jobs where item_id = ? and state = 'done' limit 1",
+            (str(item_id),),
+        )
+        return bool(rows)
 
     # -- usage ledger ------------------------------------------------------------------
     def append_usage_event(self, event: UsageEventRecord) -> None:

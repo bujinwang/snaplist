@@ -1437,3 +1437,367 @@ Suite unchanged: 72 node + 277 pytest, lint clean.
 
 
 
+
+---
+
+# E5-T4 — Storage: signed upload URL + asset write-back
+
+Run date: 2026-11-04. Every command below was executed in this working tree, on this machine.
+Suite: **419 pytest + 72 node**, `make lint` clean. No commit (the lead收口).
+
+**Second round (after QA's CONDITIONAL PASS).** Five defects the reviewer found and could
+reproduce are fixed, and each fix has a test that fails without it:
+
+| # | defect | fix | test that now kills it |
+|---|---|---|---|
+| A | `?sig=%C3%A9` → **503** on an unauthenticated route (`compare_digest` raises `TypeError` on non-ASCII), and `?sig=<valid>%20` → **201** because `_sig_of` `.strip()`ed it back into a valid value | shape check (`^[0-9a-f]{64}$`) before the comparison; `_sig_of` no longer trims | `test_a_non_ascii_signature_is_403_not_503_on_{upload,read}`, `test_a_signature_with_a_trailing_space_is_403`, `test_verify_signature_returns_false_for_any_non_hex_value` |
+| B | `write_back` "all or nothing" covered digests but not keys: asset #1 landed on disk before asset #2's traversal `kind` was refused → orphan object, zero rows | keys planned first, then `preflight` validates **every key** and rejects `/` in `kind` | `test_a_kind_that_escapes_the_root_writes_nothing_at_all` (scans the disk), `test_a_kind_with_a_path_separator_is_refused` |
+| C1 | unsigned PUT at a non-existent item must be 403, not 404 (existence oracle) — true, but unguarded | documented the ordering in `_item_for_key` | `test_an_unsigned_put_at_an_unknown_item_key_is_403_not_404` (+ the signed case still 404) |
+| C2 | `exp == now` boundary was unstated and unguarded | **chosen: inclusive**, documented in `verify_signature`'s docstring | `test_the_expiry_boundary_is_inclusive` |
+| C3 | — | same as B; the disk scan is the independent assertion | — |
+| D | a replayed PUT after `job.done` silently replaced the source while the renders still described the old photo | `Repository.has_finished_job` + **409** before any byte is overwritten | `test_a_finished_item_refuses_a_new_source_photo_with_409`, `test_an_unprocessed_item_still_accepts_a_replayed_upload` |
+| E | the mutation table's "md5 after restore" column was wrong (it listed a pre-delivery digest), so the numbers could not be trusted | §4 rewritten: every mutant has its exact patch, its measured red count, and the **delivered** md5 | — |
+| F | three known gaps + `devtools --path` writing a URL | §7.1–7.3 below; `devtools.attach_asset` now calls `validate_key` before opening the database | `test_devtools_refuses_a_storage_path_that_is_not_an_object_key`, `test_devtools_accepts_a_real_object_key` |
+
+**Third round (small).** Two survivor mutants got tests, and four sentences of documentation
+were corrected. QA's `M13` — deleting `validate_key(key)` from `preflight` — turned **zero**
+tests red, because the B tests attacked through `kind="../../escape"`, which the separator check
+catches first. The one input that reaches the key-length rule unimpeded is an over-long `kind`
+(190 characters → a 274-character key), so
+`test_a_kind_that_overflows_the_key_limit_writes_nothing_at_all` closes that door and M13 is now
+red on its own (§4). The second survivor was the row-after-bytes ordering in `write_back`:
+`test_rows_are_written_only_after_the_bytes_exist` hooks `set_asset` and asks whether the object
+is already readable, so swapping the loops is a red test (`M6b`) rather than an undocumented
+intention. §7 gained the sentence that matters most — **the 409 only exists on the `LocalStorage`
+transport** — plus the admission that `is_relative_to(root)` has no test of its own, and
+`apps/api/requests.py:20-26` joined the stale-prose list. A `jobs (item_id)` index was added to
+the SQLite mirror so `has_finished_job` stops scanning the `state` slice.
+
+
+## 1. What changed
+
+| file | change |
+|---|---|
+| `apps/api/storage.py` | **new.** `Storage` protocol + `LocalStorage` (filesystem + HMAC) + `SupabaseStorage` (REST via `httpx`) + `UnavailableStorage` + `build_storage()`. Key validation, signature **shape** check, TTLs, content-type allow-list. |
+| `apps/api/routers/uploads.py` | **new.** `PUT /v1/uploads/{key}` and `GET /v1/assets/{key}`, capability-URL only (no bearer); 409 when the item is already processed. |
+| `apps/api/jobs/writeback.py` | **new.** `AssetWrite` / `write_back()`: plan keys → preflight (digests **and** keys) → bytes → rows. |
+| `apps/api/devtools.py` | `--path` is validated as an object key; the docstring example is now a key, not a URL. |
+| `apps/api/settings.py` | seven storage knobs. TTLs/ceilings have defaults; the **signing secret has none**. Each accepts `SNAPLIST_STORAGE_X` or `STORAGE_X`. |
+| `apps/api/main.py` | `create_app(storage=...)`, `app.state.storage`, uploads router, `/readyz` split into `repository` + `storage` + `storage_configured`. |
+| `apps/api/routers/items.py` | `upload_url` is a signed URL (also on an idempotent replay); `get_item` signs the three AssetPack URLs at read time; the multipart 501 points at the two-step flow. |
+| `apps/api/repository.py` | `assets.byte_size` + `assets.meta` (+ in-place `alter table` for an old `SNAPLIST_DB`), `set_asset(byte_size=, meta=)`, `to_asset_pack(url_for=...)`, claim predicate on `kind='source'`, `has_finished_job`, and the `jobs (item_id)` index that lookup needs (`EXPLAIN QUERY PLAN` now says `SEARCH jobs USING INDEX jobs_item`). |
+| `infra/migrations/0001_init.sql` | **comment only**: the documented Postgres claim query carries the `exists (… kind='source')` predicate, and the upload-time `state='done'` lookup is written down beside it. No schema change. |
+| `apps/api/tests/test_storage.py` | **new**, 87 tests. |
+| `apps/api/tests/test_items.py`, `test_worker.py`, `test_scaffold.py` | assertions updated for the new wiring (see §6.1). |
+
+## 2. Acceptance — real uvicorn, real curl, real bytes
+
+Server: `SNAPLIST_DB=/tmp/fin/db.sqlite SNAPLIST_STORAGE_DIR=/tmp/fin/objects
+SNAPLIST_STORAGE_SIGNING_SECRET=fin-secret .venv/bin/python -m uvicorn apps.api.main:app --port 8020`
+(`x.jpg` = 37 bytes, sha256 `8f7fee3276c2ad1e…233798aac6`)
+
+```
+$ curl -s -X POST localhost:8020/v1/items -H "x-snaplist-user-id: $U" -H 'content-type: application/json' \
+       -d '{"filename":"x.jpg","content_type":"image/jpeg"}'
+{
+    "item_id": "0bb13feb-3ad9-42f9-8a7a-8120f152f9c4",
+    "job_id": "9a6c30af-af8f-4c01-84cd-1936eb2fdac2",
+    "upload_url": "http://localhost:8020/v1/uploads/items/11111111-1111-4111-8111-111111111111/0bb13feb-3ad9-42f9-8a7a-8120f152f9c4/source.jpg?exp=1793825648&sig=fbbeefe1891e30423714f726b8167a52f458bc79b3b69993403826097d8f8254"
+}
+
+$ curl -s -o /dev/null -w "%{http_code}\n" -X PUT --data-binary @x.jpg -H "content-type: image/jpeg" "$UV"
+201
+$ curl -s -o /dev/null -w "%{http_code}\n" -X PUT --data-binary @x.jpg -H "content-type: image/jpeg" "${UV%%\?*}"
+403
+$ curl -s -o /dev/null -w "%{http_code}\n" -X PUT --data-binary @x.jpg -H "content-type: image/jpeg" "$UV"   # replay, job queued
+200
+```
+
+Round-2 signatures on the same server (`KEY = items/<user>/<item>/source.jpg`):
+
+```
+$ curl ... ".../v1/uploads/$KEY?exp=9999999999&sig=%C3%A9"      # A
+403
+{"error":{"code":"forbidden","message":"Signature is missing, expired or not valid for this object.","retry_after_seconds":null,"details":{"purpose":"upload"}}}
+$ curl ... ".../v1/assets/$KEY?exp=9999999999&sig=%C3%A9"
+403
+$ curl -X PUT ... "${UV}%20"                                    # A, trailing space
+403
+```
+
+After the job reached `done` (D) — a freshly signed URL for the same key, same 900 s window:
+
+```
+$ curl -s -X PUT --data-binary @x.jpg -H "content-type: image/jpeg" "$UV_FRESH"
+409
+{
+    "error": {
+        "code": "invalid_request",
+        "message": "This item has already been processed, so its original photo can no longer be replaced: the assets derived from it would no longer match. Create a new item (POST /v1/items) to upload a different photo, or POST /v1/items/{item_id}/rerender to redo the rendering from the photo already stored.",
+        "retry_after_seconds": null,
+        "details": {"item_id": "0bb13feb-3ad9-42f9-8a7a-8120f152f9c4"}
+    }
+}
+```
+
+AssetPack after a write-back of prettified/cutout/on_model (`write_back()`, one row per slot):
+
+```
+$ curl -s localhost:8020/v1/items/$ID -H "x-snaplist-user-id: $U"
+{
+    "item_id": "0bb13feb-3ad9-42f9-8a7a-8120f152f9c4",
+    "prettified_url": "http://localhost:8020/v1/assets/…/prettified.png?exp=1793828406&sig=83601c3e7ea656c11aacf4612756d20c590af63d590fbbb2bff9e95128245f62",
+    "cutout_url":     "http://localhost:8020/v1/assets/…/cutout.png?exp=1793828406&sig=34d1ceec32d310d0f0ed0406a34aaca3d6a8f9f6783c3ca1346ddf84627e8124",
+    "on_model_urls": ["http://localhost:8020/v1/assets/…/on_model-1.png?exp=1793828406&sig=d11258a35c5c31826d813adb3bf3b26f5319769854bb96a90a1174206eeae8c0"],
+    "attributes": null
+}
+
+$ curl -s -o fetched.png -w "%{http_code} %{content_type}\n" "$prettified_url"
+200 image/png
+$ shasum -a 256 fetched.png x.jpg
+8f7fee3276c2ad1eaf77e52204448da968fbef62fef0861dc2a631233798aac6  fetched.png
+8f7fee3276c2ad1eaf77e52204448da968fbef62fef0861dc2a631233798aac6  x.jpg
+$ curl -s -o /dev/null -w "%{http_code}\n" "${prettified_url%%\?*}"     # signature stripped
+403
+$ curl -sD - -o /dev/null "$prettified_url" | grep -i cache-control
+cache-control: private, max-age=3600
+```
+
+**Expiry, on a real server, not "it looks like it would expire".** Second process,
+`SNAPLIST_STORAGE_UPLOAD_TTL_SECONDS=1`, port 8022 (8021 was already taken on this machine):
+
+```
+upload_url = http://localhost:8022/v1/uploads/items/…/87b2f3b2-9c81-4e06-99ce-da4d19806e0e/source.jpg?exp=1793824793&sig=21be6ab575113b83d91dfa04f70d03fa7d598f4805bc503ea8b541db47129252
+PUT immediately:     201
+same URL, 2 s later: 403
+body: {"error":{"code":"forbidden","message":"Signature is missing, expired or not valid for this object.","retry_after_seconds":null,"details":{"purpose":"upload"}}}
+```
+
+The suite proves the same thing with an injected clock instead of `sleep`, including the
+inclusive boundary: `exp == now` → valid, `exp + 1` → 403.
+
+`/readyz` on the same process:
+
+```
+{"ready": false, "missing_credentials": [...], "auth_mode": "local_dev", "unverified_identity": true,
+ "repository": "SqliteRepository", "storage": "LocalStorage", "storage_configured": true,
+ "migrations_applied": false}
+```
+
+## 3. Tests
+
+`apps/api/tests/test_storage.py` — **87 tests**, all with `connect`/`create_connection`/
+`getaddrinfo` trapped and time injected through `FakeClock`.
+
+* **signature (12)**: valid · unsigned · other key · tampered `exp` · purpose confusion (both
+  directions) · expired (upload and download) · non-ASCII (PUT and GET routes) · trailing
+  space · non-hex unit sweep · inclusive `exp` boundary
+* **keys (22 params)**: `items/../../etc/passwd`, `../escape.jpg`, `/etc/passwd`, `items//x`,
+  `items/./x`, `items\x`, `\x00`, newline, empty, 200+ chars — refused by `validate_key`
+  **and** shown to leave no file outside the root; plus an end-to-end traversal PUT (`%2e%2e`)
+  that asserts 400 and then looks at the disk
+* **body (6)**: 413 over the ceiling, 415 for `text/html`, all four accepted image types, 400
+  for an empty body, 404 for a deleted item (before any byte is written)
+* **bytes (10)**: write→read identical · upload stores verbatim and records the measured digest
+  · `write_back` records the digest of what it stored · `expected_sha256` mismatch → no row, no
+  file · mismatch on asset #2 → asset #1 not written either · `write` refuses a mismatch on its
+  own · replay keeps one row · empty asset refused · **a traversal `kind` with a valid first
+  asset leaves the disk empty** · **`kind="a/b"` refused** · **an over-long `kind` leaves the disk empty too** (the one input only `preflight`'s `validate_key` guards) · **rows are written only after their objects exist**
+* **idempotency (1)**: 201 then 200, one row, latest bytes
+* **read (3)**: 200 with the same bytes + `x-snaplist-sha256` · unsigned 403 even when the
+  object exists · valid signature + missing object 404
+* **AssetPack (3)**: all three URL fields fetchable, `storage_path` holds the key; a fresh item
+  keeps nulls/`[]`; the no-resolver default still returns raw keys
+* **claim (2)**: no `source` asset → not claimable; a non-source asset does not unblock it
+* **processing (2)**: finished item → 409 and bytes/metadata unchanged; queued/running/failed
+  → replay still 200
+* **authorisation order (2)**: unsigned PUT at an unknown item key is 403 (and does not echo
+  the id); signed PUT at an unknown item key is 404
+* **Supabase (5)**: `MockTransport` asserts the signing POST (URL, `authorization: Bearer …`,
+  `apikey`, body `{"expiresIn": 3600}`), upload-signing POST, `PUT` with `x-upsert: true` and
+  the exact bytes, 404 → `MissingObject`, and that Supabase never claims to verify our signatures
+* **backend selection (6)**: auto → filesystem · forced supabase with no key →
+  `UnavailableStorage` · `from_settings` names `supabase_service_key` · `POST /v1/items` still
+  202 with `upload_url: null`, `/readyz` says unconfigured, `PUT` → 503 · protocol conformance
+* **plumbing (5)**: the two TTLs are 900/3600 exactly · ephemeral secret per process unless
+  configured · an old SQLite file gains `byte_size`/`meta` in place · remaining-life
+  `cache-control`
+* **devtools (2)**: a URL is refused before the DB is opened; a real key is accepted
+
+`test_scaffold.py::test_readyz_reports_repository_and_storage_as_separate_facts` pins the
+`/readyz` split (decision 10).
+
+## 4. Mutation testing — every number below is reproducible **with its patch**
+
+Run in `/tmp/mut2` and `/tmp/mut3`, `rsync` copies of this tree (never the working tree). Each
+mutant is applied as an exact string replacement, the storage tests are run, the file is
+restored, and the restore is checked against the **working tree's** md5 (not against a backup).
+Delivered digests: `storage.py 52152d47523ee1e2e2a563b1eed24a34`,
+`uploads.py 02255f1ae7e915eb7d81340e5a344159`,
+`writeback.py a32001e9163c42aaeda3964ddba13738`,
+`repository.py beee6d1c529a607568b8fd284e459445` — all verified after every mutant.
+
+| # | mutant (exact change) | red | which tests |
+|---|---|---|---|
+| M1 | `signature_message` drops `key` | 1 | `test_a_signature_for_another_key_is_403` |
+| M2 | the `if int(clock()) > exp` check deleted | 3 | the two expiry tests + `test_the_expiry_boundary_is_inclusive` |
+| M3a | `signature_message` drops `purpose` (sign **and** verify agree) | 2 | the two purpose-confusion tests |
+| M3b | `verify_signature` signs its expectation with a fixed `"asset"` | 15 | every test that uses a *valid* upload URL — i.e. 15 tests depend on a working signature |
+| M4 | `write_back` records `expected_sha256 or digest` | 2 | both `expected_sha256` mismatch tests |
+| M5 | `validate_key` allows `.`/`..` segments | 5 | 4 key-validation params + the traversal PUT |
+| M6 | claim predicate removed from `peek_next_queued_job` | 2 | both claim tests |
+| M6b | `write_back`'s two loops swapped (rows before bytes) | 1 | `test_rows_are_written_only_after_the_bytes_exist` |
+| M7 | the `is_signature_shaped` guard deleted (pre-fix A) | 3 | non-ASCII PUT, non-ASCII GET, non-hex sweep — the third fails with `TypeError` at `storage.py:450`, which is the 503 |
+| M8 | `_sig_of` `.strip()` restored (pre-fix A) | 1 | `test_a_signature_with_a_trailing_space_is_403` |
+| M9 | pre-fix `write_back`: no `kind` check, no key validation | 2 | both B tests (disk scan sees the orphan) |
+| M10 | `_item_for_key` called before the signature check (pre-fix C1) | 1 | `test_an_unsigned_put_at_an_unknown_item_key_is_403_not_404` |
+| M11 | `>` → `>=` in the expiry comparison (C2) | 1 | `test_the_expiry_boundary_is_inclusive` |
+| M12 | `_require_unprocessed` call removed (pre-fix D) | 1 | `test_a_finished_item_refuses_a_new_source_photo_with_409` |
+| M13 | `validate_key(key)` deleted from `preflight` (only the key-length guard goes) | 1 | `test_a_kind_that_overflows_the_key_limit_writes_nothing_at_all` — **0 red before this test existed**, which is why it exists |
+
+**On the numbers the reviewer measured (11 for purpose, 1 for claim).** A red count is a
+property of *a patch*, not of a sentence: M3a (both sides stop using purpose) gives 2, M3b
+(verification stops agreeing) gives 15. QA's "11" therefore came from a different edit than my
+M3a, and both are honest numbers for different mutants — which is exactly why the exact patch
+is now written next to each count. For claim, this tree gives 2 (`…source_asset_exists` *and*
+`…non_source_asset_does_not_unblock_the_claim`); a run that only counts the first would report
+1. No mutant survived: there is no row with `red = 0`.
+
+**M13 was the last survivor and it is now dead.** Deleting only `validate_key(key)` from
+`preflight` left every test green, because the B tests attack through `kind="../../escape"`,
+which the separator check catches first. The one input that reaches the key-length rule
+unimpeded is a 190-character `kind`: its key is 274 characters, past the 200-character ceiling,
+so asset #1 would land on disk before asset #2 was refused — the orphan bug through a second
+door. `test_a_kind_that_overflows_the_key_limit_writes_nothing_at_all` closes it and turns
+M13 red on its own.
+
+
+## 5. Gates
+
+```
+$ make test
+# pass 72        (node)
+# fail 0
+421 passed, 1 warning in 22.14s
+
+$ make lint
+All checks passed!                      (ruff)
+packages/shared lint: Done              (tsc --noEmit)
+apps/mobile lint: Done                  (tsc --noEmit)
+```
+
+Baseline was 333 pytest before E5-T4: +88 (87 storage + 1 scaffold).
+
+## 6. Deliberate choices worth arguing about
+
+1. **`test_worker.py::make_job` writes a `source` asset.** Decision 8 said to change the test
+   if it went red, and to say so: this is that. The old fixture created a job with no bytes
+   behind it and asserted the worker claimed it — it pinned the *bug* as the invariant. One
+   fixture edit fixed 15 tests; no assertion was relaxed.
+2. **Route `PUT`/`GET` take no bearer token.** The signature is the capability, bound to
+   `purpose` + `key` + `exp`. Adding `Authorization` would make the URL insufficient on its own
+   and force a token refresh mid-upload — the failure mode a signed URL exists to avoid.
+3. **`/v1/uploads` and `/v1/assets` are the `LocalStorage` transport.** On Supabase they 403
+   (`SupabaseStorage.verify_signature` returns `False`), because Supabase signs with its own
+   key and this process must not pretend to verify it. Clients never call them in that mode.
+4. **Key convention** `items/<user_id>/<item_id>/<name>`; the upload route parses it to write
+   the `source` row, so the format is load-bearing. `parse_item_key` returns `None` for
+   anything else rather than raising.
+5. **`set_asset` is newest-wins** for `storage_path`/`byte_size`/`meta`. `apps/api/devtools.py`
+   attaches an asset without measurements, so a re-attach clears `byte_size` to NULL — honest
+   (unmeasured ≠ 0), but a behaviour change for that CLI.
+6. **`source.<ext>` for the upload; `prettified.png`/`cutout.png`/`on_model-<n>.png` for
+   outputs.** One extension rule per origin, so a bucket listing is readable.
+7. **Ephemeral signing secret.** No `SNAPLIST_STORAGE_SIGNING_SECRET` → 32 random bytes per
+   process, so local URLs die on `--reload`. Chosen over a hard-coded default, which would sign
+   everything for everybody.
+8. **A finished item refuses a new source photo (409) — the refusal names the alternative.**
+   The message says "create a new item, or rerender", because "409" alone sends a client author
+   looking for a retry that cannot work. Deliberately **not** "re-enqueue and wipe downstream
+   assets": that is a change to the job model (E5-T2/T3), not to storage.
+
+### Deviations from the original ten decisions: four, all small, all stated
+
+* **Decision 6 says "控制字符"; `.` segments are refused too.** `items/./a.png` and
+  `items/a.png` are the same object under two keys, which breaks the "same key twice = one
+  object" property the idempotency test relies on.
+* **Decision 5 says "成功 200/201"; it is 201 on first write and 200 on an overwrite** — the
+  split is what makes "idempotent" observable.
+* **Decision 9's 503 is also raised by the two signed routes** when no backend is configured;
+  `POST /v1/items` still returns 202 + `upload_url: null` exactly as specified.
+* **`exp` is inclusive** (`now <= exp` valid). Either boundary is defensible; leaving it
+  unstated was the defect (C2).
+
+## 7. What I do not stand behind
+
+### 7.1 `CreateItemRequest.source_sha256` is accepted and then dropped
+
+A client can declare `source_sha256 = "aaaa…"` while sending different bytes; the upload still
+returns 201, and the declared value appears in no table and in no `AssetPack` field. So the
+equivalence E3-T4's exact layer assumes — "the digest the client declared is the digest of the
+bytes we hold" — **is still an unverified convention**. The digest that *is* trustworthy is
+`assets.meta.sha256`, measured from the bytes that were written. Reconciling them (compare at
+upload time, or persist `source_sha256` on the asset) is a separate ticket; doing it here would
+change a request body this ticket froze.
+
+### 7.2 The read path has no integrity check
+
+A `GET` of a signed URL returns whatever bytes are on disk. If an object is modified out of
+band, the response is still 200 and `x-snaplist-sha256` is the digest of *those* bytes — it
+does not match anything in `assets.meta.sha256` and is not compared against it. Storage makes
+no integrity guarantee; the header is a convenience for a client that already has a digest, not
+a check. (For Supabase this is moot: the bytes never transit this process.)
+
+### 7.3 `devtools attach-asset --path` — fixed, with a test
+
+`--path https://…` (its own docstring's example) used to write a URL into `storage_path`, after
+which `GET /v1/items/{id}` failed *while signing* (`validate_key` refuses a key with `//`), i.e.
+a 503 from a dev tool that looked like it had worked. It now validates the key before opening
+the database and prints what `--path` takes instead. `test_devtools_refuses_a_storage_path_that_is_not_an_object_key`
+and `test_devtools_accepts_a_real_object_key` cover it.
+
+### 7.4 The 409 only exists on the LocalStorage transport
+
+**`_require_unprocessed` runs inside `PUT /v1/uploads/{key}`, and that route is the
+`LocalStorage` transport.** In Supabase mode `POST /v1/items` hands the client a *Supabase*
+signed URL and the bytes go straight from the phone to the bucket — this process never sees
+that write, so the 409 is never reached and cannot stop anything. On that backend the guarantee
+has to come from a **bucket policy** (make the object immutable once the item is processed, or
+deny overwrite for an existing key) or from routing uploads back through the API instead of
+signing them. Until one of those exists, "a processed item refuses a new photo" is a statement
+about the local backend only; it is not a global invariant, and the D-tests in
+`test_storage.py` exercise the local path.
+
+### 7.5 The rest, unchanged
+
+1. **`SupabaseStorage` is unexercised against the real service.** No credentials here; the only
+   evidence is `MockTransport` asserting the request shape I *believe* Supabase wants. If the
+   endpoint moved, this fails at the first call and nothing else does.
+2. **No connection pooling when no client is injected** — `_send()` opens and closes an
+   `httpx.Client` per call. Correct, slow, wrong for production; inject one client at
+   `create_app` time.
+3. **The upload route reads the whole body into memory.** The ceiling is 20 MB and
+   `content-length` is checked first, so it is bounded — but a bound, not streaming.
+4. **Orphan objects remain possible in one narrow case**: the item is checked before the write,
+   so a delete *during* the write leaves an object with no row. Nothing cleans it up; the
+   bucket is private and the object is addressable only by a signature that expires.
+5. **`assets.meta` is text-shaped JSON in SQLite and `jsonb` in Postgres.** No test compares
+   the two backends.
+6. **The `sha256` on a `source` row is the digest of the *latest* upload** while the item is
+   unprocessed. After `done` the row no longer changes (D), so the window is closed — but a
+   re-upload before the job is claimed still means the row describes bytes the job may not
+   read. E3-T4 owns the decision about where the digest belongs.
+7. **`LocalStorage._path`'s `is_relative_to(root)` check is defence in depth, not an
+   independently testable constraint.** Removing it alone turns **zero** tests red (the key
+   rules already make it unreachable); only a mutation that removes the key rules *and* this
+   check shows anything (7 red). The comment in the code still calls it "a second lock" —
+   accurate, but it must not be read as "there is a test for this line". The test suite covers
+   the first lock; the second is a belt that has never been asked to hold anything up.
+8. **Stale prose I was not allowed to edit** — `apps/api/jobs/worker.py` still ends its
+   `PipelineUnavailable` message with "signed upload is still 501 (E5-T4)"; `apps/api/web.py`
+   still says a multipart upload "is E5-T4"; and `apps/api/requests.py:20-26` still claims
+   `source_sha256` "is the dedupe key E3-T4 will use; accepting it now means **the column** and
+   the client contract do not change" — there is no column, and §7.1 above says so. The worker
+   string reaches `jobs.error_detail` on the wire; the other two mislead the next reader.
+9. **`/readyz` still reports `migrations_applied: false`** unconditionally.
+

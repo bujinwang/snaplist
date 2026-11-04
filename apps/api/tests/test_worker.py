@@ -47,9 +47,24 @@ def make_job(
     user_id: UUID = USER_A,
     kind: JobKind = JobKind.FULL,
 ) -> JobRecord:
-    """Enqueue the way the router does: item + job + one quota unit, one transaction."""
+    """Enqueue the way the router does: source asset + item + job + one quota unit.
+
+    The `source` asset is part of the fixture because it is part of the invariant: since
+    E5-T4, `peek_next_queued_job` only returns a job whose item already has its bytes
+    (`POST /v1/items` creates the job first and the bytes arrive in a second request). A
+    fixture without a source asset would describe a state the API cannot produce, and every
+    assertion built on it would be about a job no worker would ever claim.
+    """
     item = repository.create_item(user_id=user_id)
     with repository.transaction():
+        repository.set_asset(
+            item.id,
+            user_id=user_id,
+            kind="source",
+            storage_path=f"items/{user_id}/{item.id}/source.jpg",
+            byte_size=3,
+            meta={"sha256": "0" * 64, "content_type": "image/jpeg"},
+        )
         job = repository.create_job(item_id=item.id, user_id=user_id, kind=kind)
         usage.spend_one(repository, user_id, job_id=job.id, item_id=item.id)
     return repository.get_job(job.id, user_id=user_id)  # type: ignore[return-value]

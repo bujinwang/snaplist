@@ -427,9 +427,26 @@ create trigger set_updated_at before update on public.api_keys
 -- -------------------------------------------------------------------------------------
 -- 10. Indexes
 --     (user_id, created_at desc) is the seller-facing list query in every table.
---     The jobs indexes are the ones the worker claim actually uses (E5-T3):
---       select ... from jobs where state = 'queued' order by created_at
---         for update skip locked;
+--     The jobs indexes are the ones the worker claim actually uses (E5-T3, E5-T4):
+--       select j.* from public.jobs j
+--        where j.state = 'queued'
+--          and exists (select 1 from public.assets a
+--                       where a.item_id = j.item_id and a.kind = 'source')
+--        order by j.created_at
+--          for update skip locked;
+--     The EXISTS is not an optimisation: POST /v1/items creates the job before the bytes
+--     arrive (direct upload is a second request), so without it a worker claims a job with
+--     no input and burns all three attempts on a photo that was never there. `assets_item_idx`
+--     on (item_id, kind, position) is what makes the EXISTS a lookup rather than a scan, so
+--     no additional index is needed for this predicate.
+--
+--     The mirror question is asked before a direct upload overwrites bytes (E5-T4):
+--       select 1 from public.jobs where item_id = :item_id and state = 'done' limit 1;
+--     A finished job means the cutout/prettified/on-model objects in the bucket were derived
+--     from the photo that is already there, so a later upload is refused with 409 rather than
+--     leaving a pack that renders one image and hashes another. `jobs_item_idx` on
+--     (item_id, created_at desc) serves the lookup; the same predicate is
+--     `SqliteRepository.has_finished_job`.
 -- -------------------------------------------------------------------------------------
 create index if not exists items_user_created_idx
     on public.items (user_id, created_at desc);
