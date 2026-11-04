@@ -574,6 +574,13 @@ a second behavioural assertion and a constant self-check — see the M3 list abo
 twenty-pair fixture measures the structure gate and *only* the structure gate. That is now stated
 in the module docstring instead of being implied away by "the two gates catch different failures".
 
+**A gate has to be read in both directions, and both are now on record.** M7 (digest layer removed,
+detection unchanged) must leave the fixture gate **green** — if it went red, the gate would be
+reacting to a report label rather than to a merge. QA's Q8 (both thresholds to 0.0, so everything
+merges) must make it **red** — four tests, including the fixture gate. A gate that only reacted to
+labels proves nothing; one that only reacted to degradation would let the report drift away from
+the behaviour. Checking one direction and not the other is how a gate becomes decorative.
+
 ## `make test` / `make lint`, real tails
 
 ```console
