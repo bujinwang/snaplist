@@ -63,9 +63,18 @@ would still need E0-T1's golden set to be measured.
 
 ## Exact next commands
 
-Bert chose the hosted-key route on 2026-11-04. Put the key in the repo-root `.env` — it is
-gitignored (`.gitignore:19`), so it never reaches the repo or the chat. `http._config_from_env()`
-loads it lazily with `find_dotenv(usecwd=True)`, `override=False` (an exported var still wins).
+Bert chose the hosted-key route on 2026-11-04, but the **specific provider and key are still
+outstanding** (the follow-up question was skipped). Nothing below has been run against a real
+VLM. Put the key in the repo-root `.env` — it is gitignored (`.gitignore:19`), so it never
+reaches the repo or the chat. `http._config_from_env()` loads it lazily with
+`find_dotenv(usecwd=True)`, `override=False` (an exported var still wins).
+
+The adapter is OpenAI-compatible `/chat/completions` + `image_url`, so any provider with a
+compatible endpoint works with zero code change. Image MIME is sniffed (JPEG/PNG/WebP/GIF),
+and real `prompt_tokens`/`completion_tokens` are summed across the repair retry into
+`StageMeta.notes` — these exist so the ≤ $0.03/item ceiling becomes measurable. `cost_usd`
+stays `None` until a provider and its verified rate are recorded in ADR-006 / DEPS.md;
+RUNBOOK §6 forbids inventing a price.
 
 ```bash
 # 1. Bert's decision, then create /Users/bujin/Documents/Projects/SnapList/.env:
@@ -87,7 +96,7 @@ make lint      # ruff clean
 ```
 $ make test
 1..72 / # pass 72 / # fail 0           (node)
-293 passed, 1 warning in 14.77s         (pytest)
+294 passed, 1 warning in 15.15s         (pytest)
 
 $ python -m ruff check .
 All checks passed!
