@@ -208,6 +208,21 @@ def test_bare_attributes_object_is_accepted() -> None:
     assert attrs.material == []
 
 
+# ------------------------------------------------------------- real adapter: encoding utils
+
+
+def test_image_mime_is_sniffed_not_hardcoded() -> None:
+    from packages.vision.attrs_adapters.http import _image_mime
+
+    assert _image_mime(b"\xff\xd8\xff\xe0" + b"\x00" * 8) == "image/jpeg"
+    assert _image_mime(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8) == "image/png"
+    webp = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 8
+    assert _image_mime(webp) == "image/webp"
+    assert _image_mime(b"GIF89a" + b"\x00" * 8) == "image/gif"
+    with pytest.raises(ValueError, match="unsupported image type"):
+        _image_mime(b"not-an-image")
+
+
 # ------------------------------------------------------------- real adapter: no creds path
 
 

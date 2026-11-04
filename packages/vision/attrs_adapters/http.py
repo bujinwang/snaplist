@@ -39,6 +39,19 @@ _KEY_ENV = "VLM_API_KEY"
 _TIMEOUT_S = 45.0
 
 
+def _image_mime(image: bytes) -> str:
+    """Sniff the real type. Hardcoding image/jpeg silently corrupts PNG/WebP uploads."""
+    if image.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
+        return "image/webp"
+    if image.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    raise ValueError("unsupported image type for the VLM (need JPEG/PNG/WebP/GIF)")
+
+
 @dataclass(slots=True)
 class _Config:
     base_url: str
@@ -93,7 +106,8 @@ class HttpVlmExtractor:
         import httpx
 
         encoded = base64.b64encode(image).decode("ascii")
-        data_url = f"data:image/jpeg;base64,{encoded}"
+        data_url = f"data:{_image_mime(image)};base64,{encoded}"
+        usage_totals: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
 
         def complete(prompt: str) -> str:
             payload = {
@@ -118,6 +132,13 @@ class HttpVlmExtractor:
                 )
                 response.raise_for_status()
                 body = response.json()
+            # Real usage, not an estimate: BRIEF.md's <= $0.03/item ceiling is a gate and
+            # cannot be reported without token counts. Summed across the repair retry too.
+            usage = body.get("usage") or {}
+            for key in usage_totals:
+                value = usage.get(key)
+                if isinstance(value, int | float) and value >= 0:
+                    usage_totals[key] += int(value)
             try:
                 return body["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
@@ -143,6 +164,10 @@ class HttpVlmExtractor:
                 "repaired": outcome.repaired,
                 "dropped_fields": list(outcome.dropped_fields),
                 "model_id": cfg.model,
+                "prompt_tokens": usage_totals["prompt_tokens"],
+                "completion_tokens": usage_totals["completion_tokens"],
+                # cost_usd stays None: RUNBOOK §6 forbids inventing a price. Convert tokens
+                # to dollars only after Bert picks a provider and its rate is recorded.
             },
         )
         return outcome.attributes
