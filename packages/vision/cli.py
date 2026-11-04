@@ -8,11 +8,16 @@ Wires the implemented stages into the product's core asset pack and writes three
     cutout.png       garment composited onto transparency (segment -> matte alpha)
     prettified.png   rectified flat-lay on the neutral backdrop (segment -> matte -> rectify
                      -> prettify(PASS_THROUGH))
-    attributes.json  honest "not implemented" marker — the VLM attribute extractor (E3) has
-                     not landed, so no fake JSON is emitted
+    attributes.json  the E3 VLM extractor's validated ItemAttributes, or an explicit
+                     `UNMEASURED` marker naming the missing config when no VLM is set
 
-Stages that are not implemented yet (prettify.SDXL_INPAINT, attrs) fail loudly with a
-reason rather than producing a silent pass-through that looks like a result.
+The CLI calls `get_extractor()` with NO argument on purpose: E3-T1 requires the provider be
+chosen by configuration (`SNAPLIST_ATTRS_PROVIDER`), not by a code change here or in apps/api.
+When the real provider is configured but returns bad JSON twice, the failure is
+`low_confidence` (CONTRACTS §4), not `internal`.
+
+Stages that are not implemented yet (prettify.SDXL_INPAINT) fail loudly with a reason rather
+than producing a silent pass-through that looks like a result.
 
 The acceptance command from prompts/02-vision.md must keep working verbatim once the stages
 land. `category` defaults to "top" so `--in evals/fixtures/tee.jpg --out /tmp/out` runs
@@ -32,6 +37,11 @@ import numpy as np
 from PIL import Image
 
 from packages.vision import StageNotImplemented
+from packages.vision.attrs import (
+    AttributeExtractionFailed,
+    AttributesUnavailable,
+    get_extractor,
+)
 from packages.vision.matte import matte
 from packages.vision.prettify import prettify
 from packages.vision.rectify import rectify
@@ -101,18 +111,38 @@ def main(argv: list[str] | None = None) -> int:
     # prettified = rectified flat-lay, pass-through prettify
     (dst / "prettified.png").write_bytes(pt.prettified_png)
 
-    # attributes: not implemented — emit an honest marker, never a fabricated record
-    (dst / "attributes.json").write_text(
-        json.dumps(
-            {
-                "status": "unimplemented",
-                "stage": "attrs (E3)",
-                "note": "VLM attribute extractor not landed; see docs/PLAN.md. "
-                "No attributes are guessed.",
-            },
-            indent=2,
-        )
-    )
+    # attributes: config-driven extractor. No VLM configured => explicit UNMEASURED marker,
+    # never a fabricated record and never a silent stub.
+    try:
+        extractor = get_extractor()
+        attrs = extractor.extract(photo)
+        attributes_doc: dict = {
+            "status": "measured",
+            "provider": extractor.name,
+            "attributes": json.loads(attrs.model_dump_json()),
+        }
+        meta = getattr(extractor, "last_meta", None)
+        if meta is not None:
+            attributes_doc["round_trip_seconds"] = meta.seconds
+            attributes_doc["cost_usd"] = meta.cost_usd  # None == UNMEASURED, not 0.0
+    except AttributesUnavailable as exc:
+        attributes_doc = {
+            "status": "UNMEASURED",
+            "stage": "attrs (E3)",
+            "reason": str(exc),
+            "note": "docs/RUNBOOK.md §6: the VLM provider decision is Bert's and is still "
+            "open. No attributes are guessed; accuracy is UNMEASURED.",
+        }
+    except AttributeExtractionFailed as exc:
+        attributes_doc = {
+            "status": "failed",
+            "stage": "attrs (E3)",
+            "reason_code": exc.reason_code,
+            "attempts": exc.attempts,
+            "detail": str(exc),
+        }
+
+    (dst / "attributes.json").write_text(json.dumps(attributes_doc, indent=2))
 
     cov = _coverage(seg.mask_png)
     print(
@@ -121,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         f"prettify={pt.meta.notes.get('mode')} total={elapsed:.2f}s\n"
         f"  cutout     -> {dst / 'cutout.png'}\n"
         f"  prettified -> {dst / 'prettified.png'}\n"
-        f"  attributes -> {dst / 'attributes.json'} (unimplemented marker)"
+        f"  attributes -> {dst / 'attributes.json'} ({attributes_doc['status']})"
     )
     return 0
 

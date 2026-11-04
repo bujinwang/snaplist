@@ -1,0 +1,35 @@
+{
+  "attributes": {
+    "category": "top",
+    "subcategory": "crewneck tee",
+    "colors": ["navy", "white"],
+    "pattern": "striped",
+    "material": ["cotton"],
+    "fit": "regular",
+    "brand": "North Face",
+    "size_label": "M",
+    "condition": "good",
+    "defects": [],
+    "keywords": ["tee", "striped"],
+    "confidence": {
+      "category": 0.98,
+      "subcategory": 0.81,
+      "colors": 0.95,
+      "pattern": 0.92,
+      "material": 0.74,
+      "fit": 0.70,
+      "era": 0.0,
+      "brand": 0.88,
+      "size_label": 0.77,
+      "condition": 0.66,
+      "defects": 0.80,
+      "measurements": 0.0,
+      "keywords": 0.72
+    },
+    "needs_review": []
+  },
+  "evidence": {
+    "brand": "embroidered chest logo reads 'THE NORTH FACE'",
+    "material": "care label visible, reads 100% cotton"
+  }
+}
