@@ -40,13 +40,16 @@ def test_pipeline_stage_order_is_frozen() -> None:
 def test_stubs_raise_stage_not_implemented() -> None:
     from packages.vision import StageNotImplemented
     from packages.vision.cli import main
-    from packages.vision.dedupe import find_duplicate
+    from packages.vision.vton import get_adapter
 
     # `segment` left this list when E1-T2 landed: an empty-bytes call is now a ValueError
     # (input validation) and an unavailable backend raises SegmentBackendUnavailable, which
     # is still a StageNotImplemented. Both are covered in test_segment.py.
+    # `dedupe` left this list when E3-T4 landed, for the same reason — an empty-bytes call is
+    # a ValueError, covered in test_dedupe.py::test_empty_query_bytes_raise. `vton` is still
+    # a stub, so it carries this assertion.
     with pytest.raises(StageNotImplemented):
-        find_duplicate("user", b"")
+        get_adapter("fashn")
     assert main(["--in", "x.jpg", "--out", "/tmp/snaplist-cli"]) == 2
 
 
