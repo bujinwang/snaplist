@@ -568,10 +568,11 @@ duplicate there scores ≥ 0.94 colour. It was killed only after adding the 5°-
 as Round 1 — a green suite is not coverage.
 
 **M3 is the same story in the other direction, and it was QA who found it.** Deleting the colour
-gate entirely leaves `false_merge_rate` at 0.000 and the fixture gate green; the only red is the
-synthetic `test_colour_veto_…`. So the twenty-pair fixture measures the structure gate and *only*
-the structure gate. That is now stated in the module docstring instead of being implied away by
-"the two gates catch different failures".
+gate entirely leaves `false_merge_rate` at 0.000 and the fixture gate green; the only red that is
+about the gate's *behaviour* is the synthetic `test_colour_veto_…` (the other two reds under M3 are
+a second behavioural assertion and a constant self-check — see the M3 list above). So the
+twenty-pair fixture measures the structure gate and *only* the structure gate. That is now stated
+in the module docstring instead of being implied away by "the two gates catch different failures".
 
 ## `make test` / `make lint`, real tails
 
