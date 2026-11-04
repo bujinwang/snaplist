@@ -125,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         if meta is not None:
             attributes_doc["round_trip_seconds"] = meta.seconds
             attributes_doc["cost_usd"] = meta.cost_usd  # None == UNMEASURED, not 0.0
+            # Real token counts make BRIEF.md's <= $0.03/item ceiling observable. They were
+            # summed across the repair retry in the adapter; surface them for the cost report.
+            attributes_doc["prompt_tokens"] = meta.notes.get("prompt_tokens")
+            attributes_doc["completion_tokens"] = meta.notes.get("completion_tokens")
     except AttributesUnavailable as exc:
         attributes_doc = {
             "status": "UNMEASURED",

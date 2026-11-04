@@ -18,11 +18,15 @@ the CLI calls `get_extractor()` with **no argument**. `attrs.py` imports no prov
 `attrs_adapters/http.py` imports `httpx` lazily inside `extract()`. A subprocess test proves
 `httpx` is absent from `sys.modules` after importing the package and resolving `http`.
 
-**E3-T2 (wire machinery) — landed, real provider call NOT run.** `attrs_adapters/base.py`
+**E3-T2 (wire machinery) — landed, real provider call RUN on 2026-11-04.** `attrs_adapters/base.py`
 holds the provider-independent half: `extra="forbid"` schema enforcement, exactly one repair
 retry, evidence gating for `brand`/`material`, confidence defaults of 0.0 (never a guess),
 and `needs_review` for sub-threshold fields. Failure after retry raises
 `AttributeExtractionFailed(reason_code="low_confidence")`, never `internal` (CONTRACTS §4).
+The real acceptance path produced a `measured` record against `deepseek-flash` (golden-web
+`w472.jpg`): category=top/subcategory=t-shirt/colour=white/pattern=solid, `material` dropped
+(no evidence), `brand`/`era`/`size_label`/`measurements` nulled into `needs_review`, round-trip
+**1.67s**, 1025 prompt + 192 completion tokens. See the measured section below.
 
 **E1–E2 pipeline** from the previous batch still runs end-to-end. Re-verified after the CLI
 change on all 93 web-set images: `OK=93 FAIL=0`, mean 1.54 s/image (1.31–2.27 s), u2net on
@@ -36,22 +40,30 @@ row in `docs/DEPS.md`, the updated `docs/RUNBOOK.md §6`, and `.env.example` for
 API model id is **`deepseek-flash`** (not `deepseek-v4.1-flash`), base URL
 `https://api.deepseek.com` with no `/v1`.
 
-**But no `VLM_API_KEY` is present, so no real provider call has run.** There is no local model
-(ollama installed, zero pulled). BRIEF.md forbids mocked model calls in the acceptance path.
+**A `VLM_API_KEY` is now present (Bert pasted it 2026-11-04) and the real provider call HAS run.**
+There is no local model (ollama installed, zero pulled). BRIEF.md forbids mocked model calls in
+the acceptance path, and none were used — this is a real round-trip.
 
 Consequently:
 
-* `attributes.json` from the CLI is currently an explicit `{"status": "UNMEASURED"}` marker
-  naming the missing config. It is **not** a result and must not be read as one.
-* E3-T2's real acceptance command has **not** produced a measured attribute set. Accuracy
-  (E3-T3: category ≥ 0.95, colour ≥ 0.90, pattern ≥ 0.85, material ≥ 0.80) is
-  **UNMEASURED**, and also blocked on E0-T1's 40 real photos / 20 hand masks.
-* `cost_usd` stays `None`. Real `prompt_tokens` / `completion_tokens` are summed across the
-  repair retry into `StageMeta.notes`; turning them into dollars needs a measured call.
+* `attributes.json` from the CLI is now a `{"status": "measured", "provider": "http"}` record
+  (see the measured run below). It IS a real result.
+* E3-T2's real acceptance command **has** produced a measured attribute set. Accuracy
+  (E3-T3: category ≥ 0.95, colour ≥ 0.90, pattern ≥ 0.85, material ≥ 0.80) is still
+  **UNMEASURED**, blocked on E0-T1's 40 real photos / 20 hand masks — those are needed to score
+  the accuracy, not to run the pipeline.
+* `cost_usd` stays `None` in the live output by design; the rate of truth is ADR-006, not code.
+  Real `prompt_tokens`/`completion_tokens` (1025/192 on the measured call) are surfaced in
+  `attributes.json`; at ADR-006's off-peak rate that is ≈ $0.00027/item (~110× under the
+  BRIEF ≤ $0.03/item ceiling), peak ≈ $0.00054/item.
 * **OPEN legal items before seller photos are sent** (ADR-006, owner: legal): DeepSeek's privacy
   policy says personal data is processed/stored in the PRC and the Open Platform Terms are
   PRC-governed; a third-party tracker reports no DPA. `prompts/08-legal.md` §7 requires a
   subprocessor table with region, §5 a data map. These are [COUNSEL] items, not conclusions.
+* **Rate-limit note (production batching):** an earlier attempt in this session hit a DeepSeek
+  HTTP 429 ("frequency limit exceeded"); the retry succeeded within seconds. The adapter maps a
+  429 to `low_confidence` (no automatic backoff). A production batch of 93+ images will likely
+  trip the limit — add retry-with-backoff (honouring `Retry-After`) before bulk runs.
 
 ## DeepSeek-specific wiring (all in config, no vendor name in Python)
 
@@ -69,14 +81,15 @@ exceptions that the worker would mislabel `internal` (CONTRACTS §4). Image MIME
 
 ## Escalation — what is still needed
 
-The provider decision is done (ADR-006). Two things remain:
+The provider decision is done (ADR-006) and a real `VLM_API_KEY` is now present, so E3-T2's
+acceptance has produced a measured record. Two things remain:
 
-1. **A real `VLM_API_KEY`.** Without it no provider call has run, E3-T2's acceptance is
-   UNMEASURED, and E7 (listing copy, which eats attributes) stays blocked on the critical path.
-2. **Legal sign-off on the OPEN items in ADR-006** before any seller photo is sent. The privacy
+1. **Legal sign-off on the OPEN items in ADR-006** before any seller photo is sent. The privacy
    policy places personal-data processing/storage in the PRC and the terms are PRC-governed;
    `prompts/08-legal.md` §7 needs a subprocessor table with region. This is the one place where
    "cheapest model" is not the only axis — do not treat it as settled.
+2. **E3-T3 accuracy report** is still UNMEASURED — it needs E0-T1's 40 real photos / 20 hand
+   masks as the golden set. The pipeline runs; the score does not exist yet.
 
 ## Exact next commands
 
@@ -114,6 +127,32 @@ All checks passed!
 $ python -m packages.vision.cli --in <web photo> --out /tmp/sn_ds --category top
 OK backend=u2net device=cpu ... attributes -> attributes.json (UNMEASURED)
 ```
+
+Measured run (real `VLM_API_KEY`, golden-web `w472.jpg`, 2026-11-04):
+
+```
+$ python -m packages.vision.cli --in ~/.cache/snaplist/golden-web/photos/w472.jpg --out /tmp/sn3 --category top
+attrs provider round-trip: 1.670s (attempts=1)
+OK backend=u2net device=cpu category=top mask_coverage=0.4368 prettify=pass_through total=1.18s
+  cutout     -> /tmp/sn3/cutout.png
+  prettified -> /tmp/sn3/prettified.png
+  attributes -> /tmp/sn3/attributes.json (measured)
+
+$ python -m json.tool /tmp/sn3/attributes.json
+{ "status": "measured", "provider": "http",
+  "attributes": { "category":"top","subcategory":"t-shirt","colors":["white"],"pattern":"solid",
+                  "material":[],"fit":"regular","condition":"good",
+                  "brand":null,"era":null,"size_label":null,"measurements":null,
+                  "keywords":["t-shirt","short sleeve","crew neck","plain","basic"],
+                  "confidence": {"category":0.95,"subcategory":0.9,"colors":0.95,"pattern":0.9,
+                                 "fit":0.6,"keywords":0.8, <rest 0.0>},
+                  "needs_review":["brand","condition","defects","era","fit","material",
+                                  "measurements","size_label"],
+                  "model_version":"http:deepseek-flash" },
+  "round_trip_seconds":1.67, "cost_usd":null,
+  "prompt_tokens":1025, "completion_tokens":192 }
+```
+
 
 Note: pushing required a command-scoped credential override. macOS keychain hands git the
 `bertwang32-alt` account, which cannot see the private `bujinwang/snaplist` repo, so GitHub

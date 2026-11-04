@@ -34,9 +34,14 @@ Swapping providers remains a **config change**: all DeepSeek-specific request fi
 - Cost headroom against BRIEF.md's **≤ $0.03/item** ceiling for E1+E2+E3. One garment image is
   capped at **1024 input tokens** by the provider's own resize rule, plus ~700 tokens of prompt;
   a ~350-token JSON reply. At off-peak cache-miss rates that is roughly **$0.0005–0.001/item**,
-  and a repair retry doubles it to ~$0.002 — far under the ceiling. **This is arithmetic from
-  published rates, not a measurement.** Actual `cost_usd` stays `None` until a real call records
-  token counts in `StageMeta.notes`; BRIEF.md forbids reporting unmeasured numbers.
+  and a repair retry doubles it to ~$0.002 — far under the ceiling.
+- **First measured call (2026-11-04, golden-web photo `w472.jpg`):** 1025 prompt + 192 completion
+  tokens, round-trip **1.67s**, single attempt (no repair). At the rate card above:
+  - off-peak (cache-miss input): (1025×$0.15 + 192×$0.60)/1e6 ≈ **$0.00027/item** (~110× under ceiling)
+  - peak: (1025×$0.30 + 192×$1.20)/1e6 ≈ **$0.00054/item** (~55× under ceiling)
+  The CLI surfaces `prompt_tokens` / `completion_tokens` in `attributes.json`; `cost_usd` stays
+  `None` in the live output on purpose — the rate of truth is this ADR, not code that can drift.
+  Multiply the observed tokens by a current rate to report a dollar figure.
 - E7 (listing copy) was blocked on attributes sitting on the critical path; a cheap multimodal
   model unblocks the vertical slice without a GPU or a hosted-Modal dependency.
 
