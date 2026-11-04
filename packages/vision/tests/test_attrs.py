@@ -223,6 +223,155 @@ def test_image_mime_is_sniffed_not_hardcoded() -> None:
         _image_mime(b"not-an-image")
 
 
+# ------------------------------------- real adapter: provider response + config robustness
+
+
+def test_message_content_rejects_blank_and_malformed_bodies() -> None:
+    from packages.vision.attrs_adapters.http import _message_content
+
+    good = {"choices": [{"message": {"content": '{"attributes": {}}'}}]}
+    assert _message_content(good) == '{"attributes": {}}'
+    # DeepSeek JSON mode can replace unparseable output with spaces -> must trigger repair.
+    for blank in ("", "   ", "\n", None):
+        with pytest.raises(ValueError, match="blank content"):
+            _message_content({"choices": [{"message": {"content": blank}}]})
+    with pytest.raises(AttributeExtractionFailed) as exc:
+        _message_content({"choices": [{"message": {}}]})
+    assert exc.value.reason_code == "low_confidence"
+    with pytest.raises(AttributeExtractionFailed):
+        _message_content("not an object")
+
+
+def test_blank_content_consumes_the_one_repair_retry() -> None:
+    """A whitespace-only provider reply must be retried once, then fail low_confidence."""
+    calls = 0
+
+    def blank_then_valid(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "   "  # what DeepSeek JSON mode emits for unparseable output
+        return '{"attributes": {"category": "top", "colors": ["black"]}, "evidence": {}}'
+
+    outcome = extract_from_response(blank_then_valid, model_version=MODEL_VERSION)
+    assert calls == 2
+    assert outcome.repaired is True
+    assert outcome.attributes.category == "top"
+
+    def always_blank(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "  "
+
+    calls = 0
+    with pytest.raises(AttributeExtractionFailed) as exc:
+        extract_from_response(always_blank, model_version=MODEL_VERSION)
+    assert calls == 2
+    assert exc.value.reason_code == "low_confidence"
+
+
+def test_complete_raising_value_error_still_gets_one_repair() -> None:
+    """The real adapter raises ValueError on blank content from inside complete(); that MUST be
+    caught inside the try or the repair retry is lost. Distinct from _parse failing on blanks."""
+    calls = 0
+
+    def raises_then_valid(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("provider returned blank content")
+        return '{"attributes": {"category": "dress", "colors": ["red"]}, "evidence": {}}'
+
+    outcome = extract_from_response(raises_then_valid, model_version=MODEL_VERSION)
+    assert calls == 2
+    assert outcome.repaired is True
+
+
+def test_hard_provider_failure_is_not_retried() -> None:
+    """AttributeExtractionFailed (RuntimeError) must propagate, not consume a repair."""
+    calls = 0
+
+    def hard_fail(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AttributeExtractionFailed("provider HTTP 503", attempts=1)
+
+    with pytest.raises(AttributeExtractionFailed) as exc:
+        extract_from_response(hard_fail, model_version=MODEL_VERSION)
+    assert calls == 1
+    assert exc.value.reason_code == "low_confidence"
+
+
+def test_extra_body_is_merged_into_the_actual_payload() -> None:
+    """Guards the merge itself, not just config parsing: thinking/response_format must reach
+    the request body, or DeepSeek's default CoT mode silently breaks structured output."""
+    from packages.vision.attrs_adapters.http import _Config, build_payload
+
+    cfg = _Config(
+        base_url="https://api.deepseek.com",
+        model="deepseek-flash",
+        key="fixture-key",
+        extra_body={
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+            "max_tokens": 1024,
+        },
+    )
+    payload = build_payload(cfg, "system prompt", "data:image/jpeg;base64,AAAA")
+    assert payload["model"] == "deepseek-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 1024
+    assert payload["messages"][0] == {"role": "system", "content": "system prompt"}
+    image_block = payload["messages"][1]["content"][1]
+    assert image_block["type"] == "image_url"
+    assert image_block["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+    # config wins over defaults (a provider that rejects temperature can override it)
+    override = _Config(
+        base_url="https://api.deepseek.com",
+        model="deepseek-flash",
+        key="k",
+        extra_body={"temperature": 1},
+    )
+    assert build_payload(override, "p", "data:image/png;base64,AAAA")["temperature"] == 1
+
+
+def test_json_mode_prompt_requirements() -> None:
+    """DeepSeek JSON Output needs the word 'json' and an example in the prompt."""
+    from packages.vision.attrs_adapters.base import build_prompt
+
+    prompt = build_prompt()
+    assert "json" in prompt.lower()
+    assert "Shape example" in prompt
+    assert "NOT values to copy" in prompt
+
+
+def test_extra_body_is_parsed_and_merged_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provider knobs live in config, so swapping vendors is not a code change."""
+    from packages.vision.attrs_adapters.http import _EXTRA_BODY_ENV, _config_from_env
+
+    monkeypatch.setenv("SNAPLIST_VLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("SNAPLIST_VLM_MODEL", "deepseek-flash")
+    monkeypatch.setenv("VLM_API_KEY", "fixture-key")
+    monkeypatch.setenv(
+        _EXTRA_BODY_ENV,
+        '{"thinking":{"type":"disabled"},"response_format":{"type":"json_object"}}',
+    )
+    cfg = _config_from_env()
+    assert cfg.model == "deepseek-flash"
+    assert cfg.base_url == "https://api.deepseek.com"
+    assert cfg.extra_body["thinking"] == {"type": "disabled"}
+    assert cfg.extra_body["response_format"] == {"type": "json_object"}
+
+    monkeypatch.setenv(_EXTRA_BODY_ENV, "{not json")
+    with pytest.raises(AttributesUnavailable, match="must be a JSON object"):
+        _config_from_env()
+    monkeypatch.setenv(_EXTRA_BODY_ENV, "[1,2]")
+    with pytest.raises(AttributesUnavailable, match="must be a JSON object"):
+        _config_from_env()
+
+
 # ------------------------------------------------------------- real adapter: no creds path
 
 

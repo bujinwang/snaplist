@@ -23,6 +23,12 @@ Python resolves through `uv` (`pyproject.toml` + `uv.lock`). JS resolves through
 | numpy | 2.4.6 | BSD-3-Clause | mask/alpha array math in `matte()` (E1-T3): interior-opaque clamp, Chebyshev band guard. The pixel format `rectify`/`prettify` (E2) will consume |
 | onnxruntime | 1.31.1 | MIT | runs `u2net.onnx` for `segment()` (E1-T2) on the CPU execution provider — the reason torch is *not* required for the cheap backend. Transitives: `flatbuffers` 25.12.19 (Apache-2.0), `protobuf` 7.36.2 (BSD-3-Clause) |
 
+## Hosted services (no package installed)
+
+| name | version / rate | licence / terms | reason |
+|---|---|---|---|
+| DeepSeek V4.1 Flash (`deepseek-flash`) | `DeepSeek-V4.1-Flash-1017`; off-peak $0.15/M input (cache miss), $0.60/M output; peak 2× (ADR-006) | hosted API under the DeepSeek Open Platform Terms of Service + Privacy Policy; no redistributed weights, so no model-weights licence | the E3 attributes VLM. Chosen by Bert 2026-11-04. Called through the existing lazy `httpx` client; no SDK added. Personal data is processed/stored in the PRC per the privacy policy — legal items OPEN in ADR-006 must be closed before seller photos are sent. **Measured `$/item` is not yet available**: token counts are recorded in `StageMeta.notes` on the first real call; until then `cost_usd` is `None`. |
+
 ## Model weights (not packages)
 
 | name | size / pin | licence | reason |

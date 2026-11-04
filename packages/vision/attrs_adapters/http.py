@@ -24,6 +24,7 @@ Constraints from BRIEF.md / CONTRACTS.md §4 honoured here:
 from __future__ import annotations
 
 import base64
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -36,7 +37,61 @@ from packages.vision.types import StageMeta
 _BASE_URL_ENV = "SNAPLIST_VLM_BASE_URL"
 _MODEL_ENV = "SNAPLIST_VLM_MODEL"
 _KEY_ENV = "VLM_API_KEY"
+# Optional JSON object merged verbatim into the request body. This is the vendor-neutral
+# escape hatch for provider-specific knobs (thinking toggles, response_format, max_tokens).
+# Keeping them in config is what makes swapping providers a config change, not a code change.
+_EXTRA_BODY_ENV = "SNAPLIST_VLM_EXTRA_BODY"
 _TIMEOUT_S = 45.0
+
+
+def _message_content(body: object) -> str:
+    """Pull the assistant text out of a response body, failing loudly on malformed shapes.
+
+    Pure function, so it is testable with literal dicts rather than a stubbed network call
+    (BRIEF.md forbids stubbed network responses in the acceptance path). Blank content raises
+    ValueError so `extract_from_response` spends its ONE repair retry on it — DeepSeek's JSON
+    mode replaces unparseable output with spaces, so whitespace-only text is a real failure
+    mode that a prompt repair can fix.
+    """
+    if not isinstance(body, dict):
+        raise AttributeExtractionFailed("provider response body is not an object", attempts=1)
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise AttributeExtractionFailed(
+            f"provider returned no message content: {type(exc).__name__}: {exc}",
+            attempts=1,
+        ) from exc
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(
+            "provider returned blank content (JSON mode may replace non-JSON output with "
+            "spaces); retry with a corrected prompt"
+        )
+    return content
+
+
+def build_payload(cfg: _Config, prompt: str, data_url: str) -> dict:
+    """Build the chat-completions body. Pure, so vendor knobs are testable without a socket.
+
+    `cfg.extra_body` is merged LAST and wins over the defaults: a provider that rejects
+    `temperature` must be able to override it, and provider-specific fields (thinking toggle,
+    response_format, max_tokens) belong in config rather than in this function.
+    """
+    return {
+        "model": cfg.model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract the attributes of this garment."},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        **cfg.extra_body,
+    }
 
 
 def _image_mime(image: bytes) -> str:
@@ -57,6 +112,7 @@ class _Config:
     base_url: str
     model: str
     key: str
+    extra_body: dict
     timeout: float = _TIMEOUT_S
 
 
@@ -79,13 +135,24 @@ def _config_from_env() -> _Config:
         raise AttributesUnavailable(
             "no VLM configured; missing environment variables: "
             + ", ".join(missing)
-            + ". docs/RUNBOOK.md §6: the provider choice is still undecided and Bert's. "
-            "Set all three to run the real acceptance path; do not substitute the stub."
+            + ". See .env.example for the DeepSeek V4.1 Flash values chosen on 2026-11-04 "
+            "(ADR-006). Set all three to run the real acceptance path; do not substitute "
+            "the stub."
         )
+    raw_extra = os.environ.get(_EXTRA_BODY_ENV, "").strip()
+    try:
+        extra = json.loads(raw_extra) if raw_extra else {}
+    except json.JSONDecodeError as exc:
+        raise AttributesUnavailable(
+            f"{_EXTRA_BODY_ENV} must be a JSON object: {exc}"
+        ) from exc
+    if not isinstance(extra, dict):
+        raise AttributesUnavailable(f"{_EXTRA_BODY_ENV} must be a JSON object, not a list/scalar")
     return _Config(
         base_url=os.environ[_BASE_URL_ENV].rstrip("/"),
         model=os.environ[_MODEL_ENV],
         key=os.environ[_KEY_ENV],
+        extra_body=extra,
     )
 
 
@@ -110,28 +177,27 @@ class HttpVlmExtractor:
         usage_totals: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
 
         def complete(prompt: str) -> str:
-            payload = {
-                "model": cfg.model,
-                "temperature": 0,
-                "messages": [
-                    {"role": "system", "content": prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Extract the attributes of this garment."},
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                        ],
-                    },
-                ],
-            }
-            with httpx.Client(timeout=cfg.timeout) as client:
-                response = client.post(
-                    f"{cfg.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {cfg.key}"},
-                    json=payload,
-                )
-                response.raise_for_status()
-                body = response.json()
+            payload = build_payload(cfg, prompt, data_url)
+            try:
+                with httpx.Client(timeout=cfg.timeout) as client:
+                    response = client.post(
+                        f"{cfg.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {cfg.key}"},
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+            except httpx.HTTPStatusError as exc:
+                # CONTRACTS §4: a provider outage must be low_confidence with the provider
+                # status in error_detail, never `internal` (which would page us for their bug).
+                raise AttributeExtractionFailed(
+                    f"provider HTTP {exc.response.status_code}: {exc.response.text[:300]}",
+                    attempts=1,
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise AttributeExtractionFailed(
+                    f"provider transport error: {type(exc).__name__}: {exc}", attempts=1
+                ) from exc
             # Real usage, not an estimate: BRIEF.md's <= $0.03/item ceiling is a gate and
             # cannot be reported without token counts. Summed across the repair retry too.
             usage = body.get("usage") or {}
@@ -139,13 +205,7 @@ class HttpVlmExtractor:
                 value = usage.get(key)
                 if isinstance(value, int | float) and value >= 0:
                     usage_totals[key] += int(value)
-            try:
-                return body["choices"][0]["message"]["content"]
-            except (KeyError, IndexError, TypeError) as exc:
-                raise AttributeExtractionFailed(
-                    f"provider returned no message content: {type(exc).__name__}: {exc}",
-                    attempts=1,
-                ) from exc
+            return _message_content(body)
 
         started = time.perf_counter()
         outcome = extract_from_response(complete, model_version=f"http:{cfg.model}")

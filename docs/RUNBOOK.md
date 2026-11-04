@@ -137,12 +137,18 @@ Postgres) — do that first so the epic is not serialised on a token.
 
 ## 6. Attributes VLM provider — `VLM_API_KEY` (name pending)
 
-**Status: undecided.** BRIEF.md fixes "one VLM behind an adapter interface" but not which
-provider. The CV role picks one in E3-T1 and records it, with its price and licence, in a new ADR
-in `docs/` (next free number — 002–005 are taken) and in `docs/DEPS.md`. Until then, E3 cannot be
-measured and the attribute accuracy numbers stay `UNMEASURED`.
+**Status: DECIDED 2026-11-04 — DeepSeek V4.1 Flash** (Bert's call). Full decision, official
+rate card, terms and the OPEN legal items are in **`docs/ADR-006-attributes-vlm-provider.md`**;
+the hosted-service row is in `docs/DEPS.md`. Exact config is in `.env.example`. API model id is
+`deepseek-flash`, base URL `https://api.deepseek.com`.
 
-**Do not** invent a provider name, a price or an accuracy figure here.
+Accuracy numbers stay `UNMEASURED` until E0-T1's 40 real photos / 20 hand masks exist (E3-T3),
+and no provider call has been made yet. **OPEN before seller photos are sent:** the DeepSeek
+privacy policy puts personal-data processing and storage in the PRC and the terms are PRC-governed;
+`prompts/08-legal.md` §7 needs a subprocessor table with region and §5 a data map. Those are
+[COUNSEL] items owned by legal, listed in ADR-006 — not resolved here.
+
+**Do not** invent an accuracy figure or a measured `$/item` here.
 
 ## 7. Blocking matrix
 

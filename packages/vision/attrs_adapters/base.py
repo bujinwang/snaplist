@@ -48,9 +48,15 @@ _TRACKED_FIELDS = (
 
 SYSTEM_PROMPT = """You extract resale-listing attributes from ONE garment photo.
 
-Return ONLY a JSON object with exactly two keys and no markdown fence:
+Respond in strict json. Return ONLY a json object with exactly two keys and no markdown fence:
   "attributes": an object matching the ItemAttributes schema
   "evidence": an object with optional string keys "brand" and "material"
+
+Shape example — keys and types only, NOT values to copy, and no brand/material guessed:
+{"attributes": {"category": "top", "colors": ["navy"], "pattern": "solid",
+  "confidence": {"category": 0.95}, "needs_review": [], "model_version": "unset"},
+ "evidence": {}}
+Omit a field entirely when you did not observe it; never fill it from this example.
 
 Hard rules:
 - "brand": set attributes.brand ONLY when a logo/label is legible in the photo. When you do,
@@ -191,10 +197,14 @@ def extract_from_response(
         prompt = build_prompt(None if attempt == 1 else (last_error, original))
         if image_prompt_hint:
             prompt = f"{prompt}\n\nPhoto context: {image_prompt_hint}"
-        raw_text = complete(prompt)
-        if not original:
-            original = raw_text
         try:
+            # complete() is inside the try on purpose: a provider can raise ValueError for a
+            # blank/whitespace response (DeepSeek JSON mode does exactly that), and that must
+            # consume the ONE repair retry. AttributeExtractionFailed is a RuntimeError, so a
+            # hard provider failure still propagates immediately instead of being retried.
+            raw_text = complete(prompt)
+            if not original:
+                original = raw_text
             envelope = VlmEnvelope.model_validate(_parse(raw_text))
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
             last_error = f"{type(exc).__name__}: {exc}"
