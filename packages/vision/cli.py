@@ -16,11 +16,19 @@ chosen by configuration (`SNAPLIST_ATTRS_PROVIDER`), not by a code change here o
 When the real provider is configured but returns bad JSON twice, the failure is
 `low_confidence` (CONTRACTS §4), not `internal`.
 
-`--prettify` defaults to `classical` because that is the only mode with pixels behind it in
-this build (E2-T2 round 1: white balance + wrinkle mask + feathered shadow attenuation). The
-name printed in the summary is the mode that actually ran, and `--prettify sdxl_inpaint`
-fails loudly with the fix inside the error rather than producing a classical result under a
-generative label. `--prettify pass_through` is available and returns the flat-lay untouched.
+`--prettify` defaults to `classical` because that is the mode that runs on any machine without
+a 7 GB download (E2-T2 round 1: white balance + wrinkle mask + feathered shadow attenuation).
+`--prettify sdxl_inpaint` runs the round-2 generative step and needs `make fetch-sdxl`; when
+the weights are absent it fails loudly with the fix inside the error rather than producing a
+classical result under a generative label. `--prettify pass_through` returns the flat-lay
+untouched. The name printed in the summary is the mode that actually ran, and for
+`sdxl_inpaint` the summary also prints the seed, steps, canvas and device — the four numbers
+without which a generative latency or a visual regression cannot be reproduced.
+
+`--sdxl-steps` / `--sdxl-seed` / `--sdxl-side` exist so the cost curve in
+`docs/HANDOFF-vision.md` can be re-measured without editing constants in the module. They are
+refused under any other `--prettify` value instead of being silently ignored: a flag that does
+nothing is a flag that lies about what ran.
 
 Per-stage wall clock is printed for every stage and keyed by its backend, because PLAN E2-T2's
 acceptance asks for seconds per backend rather than one total that hides which stage costs.
@@ -49,7 +57,7 @@ from packages.vision.attrs import (
     get_extractor,
 )
 from packages.vision.matte import matte
-from packages.vision.prettify import prettify
+from packages.vision.prettify import prettify, prettify_sdxl
 from packages.vision.rectify import rectify
 from packages.vision.segment import SegmentResult, segment
 from packages.vision.types import PrettifyMode, SegmentBackend
@@ -79,9 +87,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_PRETTIFY,
         help=(
             "prettify mode: classical (white balance + wrinkle mask + shadow attenuation, "
-            "no model) | pass_through (bytes untouched) | sdxl_inpaint (E2-T2 round 2, "
-            "refuses with instructions)"
+            "no model) | pass_through (bytes untouched) | sdxl_inpaint (generative inpaint; "
+            "needs `make fetch-sdxl`)"
         ),
+    )
+    p.add_argument(
+        "--sdxl-steps",
+        type=int,
+        metavar="N",
+        default=None,
+        help="sdxl_inpaint: diffusion steps (default SDXL_STEPS in prettify.py)",
+    )
+    p.add_argument(
+        "--sdxl-seed",
+        type=int,
+        metavar="N",
+        default=None,
+        help="sdxl_inpaint: generator seed, for reproducing one exact output",
+    )
+    p.add_argument(
+        "--sdxl-side",
+        type=int,
+        metavar="PX",
+        default=None,
+        help="sdxl_inpaint: working long edge, multiple of 64 (default SDXL_WORK_SIDE)",
     )
     return p
 
@@ -144,8 +173,26 @@ def main(argv: list[str] | None = None) -> int:
     mt = matte(photo, seg.mask_png)
     rect = rectify(photo, mt.alpha_png, args.category)
     alpha_for_flat = _alpha_on_flat_canvas(mt.alpha_png, rect.flat_png)
+
+    sdxl_tuning = {
+        "steps": args.sdxl_steps,
+        "seed": args.sdxl_seed,
+        "side": args.sdxl_side,
+    }
+    if mode is not PrettifyMode.SDXL_INPAINT:
+        supplied = [name for name, value in sdxl_tuning.items() if value is not None]
+        if supplied:
+            print(
+                f"--sdxl-* only applies to --prettify sdxl_inpaint, not {mode.value}; "
+                f"refusing to accept {supplied} and ignore them",
+                file=sys.stderr,
+            )
+            return 2
     try:
-        pt = prettify(rect.flat_png, alpha_for_flat, mode=mode)
+        if mode is PrettifyMode.SDXL_INPAINT:
+            pt = prettify_sdxl(rect.flat_png, alpha_for_flat, **sdxl_tuning)
+        else:
+            pt = prettify(rect.flat_png, alpha_for_flat, mode=mode)
     except StageNotImplemented as exc:
         # A mode that this build cannot run is a terminal, deterministic failure. Printing the
         # refusal (which carries the fix) is the whole point of raising it.
@@ -201,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     (dst / "attributes.json").write_text(json.dumps(attributes_doc, indent=2))
 
     cov = _coverage(seg.mask_png)
+    generative = pt.meta.notes.get("generative") or {}
     print(
         f"OK  backend={seg.meta.backend} device={seg.meta.device} "
         f"category={args.category} mask_coverage={cov} "
@@ -212,6 +260,17 @@ def main(argv: list[str] | None = None) -> int:
                 _fmt_seconds("rectify", rect.meta.backend, rect.meta.seconds),
                 _fmt_seconds("prettify", pt.meta.backend, pt.meta.seconds),
             ]
+        )
+        + (
+            "\n  generative         "
+            f"device={pt.meta.device} steps={generative.get('num_inference_steps')} "
+            f"strength={generative.get('strength')} seed={pt.meta.notes.get('seed')} "
+            f"canvas={generative.get('work_canvas')} "
+            f"load={generative.get('model_load_s')}s "
+            f"generate={generative.get('generate_s')}s "
+            f"repaint_px={generative.get('repaint_px')}"
+            if generative.get("model_loaded")
+            else ""
         )
         + f"\n  cutout     -> {dst / 'cutout.png'}\n"
         f"  prettified -> {dst / 'prettified.png'}\n"

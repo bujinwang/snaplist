@@ -1,4 +1,11 @@
-"""Tests for E2-T2 `prettify()` (packages/vision/prettify.py) — round 1, no model.
+"""Tests for E2-T2 `prettify()` (packages/vision/prettify.py) — round 1 (no model) + round 2.
+
+Round 1 (white balance / mask / protection / shadow attenuation) is covered first. Round 2
+adds `mode=SDXL_INPAINT`; its tests are in the `SDXL` section at the bottom and they obey one
+rule above all: **`make test` must stay fast and must not need the 6.9 GB of weights.** So the
+generative assertions are behind `requires_sdxl_weights` (module-scope skip), while the
+*refusal* path — the thing every machine without the weights will actually hit — is tested
+everywhere, in a subprocess with `torch` blocked from importing.
 
 The ticket's DoD lines and how each one is proven here:
 
@@ -25,7 +32,14 @@ The ticket's DoD lines and how each one is proven here:
   report.
 * **determinism** — `test_two_runs_produce_identical_bytes`.
 * **zero network** — the autouse socket trap, same shape as `test_dedupe.py`.
-* **SDXL round 2 refuses with the fix inside the error** — `test_sdxl_inpaint_refusal_...`.
+* **SDXL round 2 refuses with the fix inside the error, without importing torch** —
+  `test_sdxl_inpaint_refuses_with_the_fix_inside_the_error` and
+  `test_importing_prettify_does_not_import_torch`.
+* **round 2 writes nothing outside the feathered mask** —
+  `test_sdxl_output_equals_the_white_balanced_input_where_the_weight_is_zero`, plus
+  `test_repaint_weight_never_enters_the_protection_region_or_the_boundary_band` which runs
+  without the weights because it is arithmetic on the mask, not a model call.
+* **round 2 is deterministic** — `test_sdxl_is_byte_identical_for_the_same_seed`.
 
 The fixtures are licensed photos with **synthetic** labels and folds drawn on them
 (`evals/fixtures/prettify/README.md`). Nothing here is a claim that the detector recalls real
@@ -37,6 +51,9 @@ from __future__ import annotations
 import io
 import json
 import socket
+import subprocess
+import sys
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -48,10 +65,26 @@ import packages.vision.prettify as prettify_module
 from packages.vision.prettify import (
     BACKDROP_RGB,
     BALANCE_MIN_BACKGROUND_PX,
+    SDXL_FEATHER_MIN_PX,
+    SDXL_REQUIRED_FILES,
+    SDXL_SEED,
+    SDXL_STEPS,
+    SDXL_STRENGTH,
+    SDXL_WORK_SIDE,
     WRINKLE_COVERAGE_CAP,
     PrettifyBackendUnavailable,
     _attenuate,
+    _feathered_repaint_weight,
+    _outward_feather,
+    _quantise,
+    _sdxl_work_size,
+    fetch_sdxl_weights,
     prettify,
+    prettify_sdxl,
+    sdxl_backend_available,
+    sdxl_missing_deps,
+    sdxl_missing_files,
+    sdxl_weights_available,
     sdxl_weights_dir,
     wrinkle_mask_for,
 )
@@ -658,16 +691,37 @@ def test_outside_the_mask_only_the_white_balance_gain_moves() -> None:
 
 
 # ----------------------------------------------------------------------------------- SDXL
+#
+# Two kinds of test live here and they must not be confused:
+#
+#   * the ones that need the 6.9 GB of weights (marked `requires_sdxl_weights`). On a machine
+#     without them they SKIP — a CI box must not pull 7 GB to run the test suite;
+#   * the ones that need nothing but numpy: the refusal text, the feather arithmetic, and the
+#     "no torch at import time" rule. Those run everywhere, because they are what a machine
+#     without the weights experiences.
+
+requires_sdxl_backend = pytest.mark.skipif(
+    not sdxl_backend_available()[0],
+    reason=(
+        "mode=SDXL_INPAINT needs both the `sdxl` dependency group (0.72 GB, `make "
+        "install-sdxl`) and the pinned 6.9 GB of weights (`make fetch-sdxl`). `make test` "
+        "must run on a checkout with neither — the refusal path is what gets tested there. "
+        "The check uses importlib.util.find_spec, so torch is not imported even here"
+    ),
+)
+# Kept as an alias so the round-2 test names stay readable in old reports.
+requires_sdxl_weights = requires_sdxl_backend
 
 
 def test_sdxl_inpaint_refuses_with_the_fix_inside_the_error(monkeypatch, tmp_path) -> None:
-    """Round 2 is not implemented: the error must carry the fix, and nothing may be fetched."""
+    """Without the weights the stage says what is missing, how big it is, and what to run."""
+    monkeypatch.delenv("SNAPLIST_SDXL_DIR", raising=False)  # the more specific override wins
     monkeypatch.setenv("SNAPLIST_MODEL_DIR", str(tmp_path))
     flat, alpha = fixture_bytes(cases("logo")[0])
     with pytest.raises(PrettifyBackendUnavailable) as excinfo:
         prettify(flat, alpha, mode=PrettifyMode.SDXL_INPAINT)
     message = str(excinfo.value)
-    assert "make fetch-models" in message
+    assert "make fetch-sdxl" in message
     assert str(sdxl_weights_dir()) in message
     assert str(tmp_path) in message
     assert "E2-T2" in message
@@ -681,6 +735,7 @@ def test_sdxl_inpaint_refuses_with_the_fix_inside_the_error(monkeypatch, tmp_pat
 
 
 def test_sdxl_refusal_quotes_size_and_licence(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("SNAPLIST_SDXL_DIR", raising=False)  # the more specific override wins
     monkeypatch.setenv("SNAPLIST_MODEL_DIR", str(tmp_path))
     flat, alpha = fixture_bytes(cases("logo")[0])
     with pytest.raises(PrettifyBackendUnavailable) as excinfo:
@@ -689,6 +744,350 @@ def test_sdxl_refusal_quotes_size_and_licence(monkeypatch, tmp_path) -> None:
     assert "GB" in message
     assert "CreativeML Open RAIL++-M" in message
     assert "sdxl-inpaint-0.1" in message
+    assert "restrictions" in message, "a restricted licence must be named as restricted"
+
+
+def test_missing_dependency_group_is_named_as_a_group(monkeypatch, tmp_path) -> None:
+    """A missing `sdxl` group must not be reported as "missing weights".
+
+    The two gaps have different fixes costing 0.72 GB and 6.9 GB. Sending an operator to
+    `make fetch-sdxl` when what is missing is torch would have them re-download weights they
+    already have; this test is what keeps the refusal pointing at the right one.
+    """
+    monkeypatch.delenv("SNAPLIST_SDXL_DIR", raising=False)
+    monkeypatch.setenv("SNAPLIST_MODEL_DIR", str(tmp_path))
+    assert isinstance(sdxl_missing_deps(), list), "the real check returns module names"
+    monkeypatch.setattr(prettify_module, "sdxl_missing_deps", lambda: ["torch", "diffusers"])
+    flat, alpha = fixture_bytes(cases("logo")[0])
+    with pytest.raises(PrettifyBackendUnavailable) as excinfo:
+        prettify(flat, alpha, mode=PrettifyMode.SDXL_INPAINT)
+    message = str(excinfo.value)
+    assert "`sdxl` dependency group is not installed" in message
+    assert "torch, diffusers" in message
+    assert "make install-sdxl" in message
+    assert "make fetch-sdxl" in message, "the reader may need both, so name both"
+    assert "zero network calls" in message
+
+
+@pytest.mark.skipif(
+    not sdxl_weights_available(),
+    reason="needs the weights on disk to construct the 'only the group is missing' case",
+)
+def test_only_a_missing_group_does_not_send_anyone_to_a_6_9_gb_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Fix sentence must close the *actual* gap, or the operator loops.
+
+    This is the state this very machine was in: 18 weight files present and verified, the
+    optional `sdxl` group absent. The refusal used to append `fetch_hint()` unconditionally, so
+    it said "run `make fetch-sdxl` (… 6.9 GB …)" — which is idempotent, prints "already present
+    and verified", exits 0, and leaves the operator on the same error. A refusal that names a
+    command that cannot help is a refusal that wastes a round trip.
+    """
+    monkeypatch.setattr(prettify_module, "sdxl_missing_deps", lambda: ["torch"])
+    flat, alpha = fixture_bytes(cases("logo")[0])
+    with pytest.raises(PrettifyBackendUnavailable) as excinfo:
+        prettify(flat, alpha, mode=PrettifyMode.SDXL_INPAINT)
+    message = str(excinfo.value)
+    fix = message[message.index("Fix:") : message.index(". The base install")]
+    assert "make install-sdxl" in fix
+    assert "fetch-sdxl" not in fix, fix
+    # Say why nothing will be downloaded, or the sentence reads as a 6.9 GB ask anyway.
+    assert "already on disk" in fix, fix
+
+
+def test_both_gaps_are_reported_and_the_fetch_target_alone_is_called_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Neither, alone, is the fix — and the message says so instead of picking one at random."""
+    monkeypatch.delenv("SNAPLIST_SDXL_DIR", raising=False)
+    monkeypatch.setenv("SNAPLIST_MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(prettify_module, "sdxl_missing_deps", lambda: ["torch"])
+    flat, alpha = fixture_bytes(cases("logo")[0])
+    with pytest.raises(PrettifyBackendUnavailable) as excinfo:
+        prettify(flat, alpha, mode=PrettifyMode.SDXL_INPAINT)
+    message = str(excinfo.value)
+    fix = message[message.index("Fix:") : message.index(". The base install")]
+    assert "make install-sdxl" in fix
+    assert "make fetch-sdxl" in fix
+    assert "same error would come back" in fix, fix
+
+
+def test_sdxl_dir_env_overrides_the_shared_model_dir(monkeypatch, tmp_path) -> None:
+    """`SNAPLIST_SDXL_DIR` is checked first, so a second model dir does not fight u2net."""
+    monkeypatch.setenv("SNAPLIST_MODEL_DIR", str(tmp_path / "shared"))
+    monkeypatch.setenv("SNAPLIST_SDXL_DIR", str(tmp_path / "direct"))
+    assert sdxl_weights_dir() == tmp_path / "direct"
+    monkeypatch.delenv("SNAPLIST_SDXL_DIR")
+    assert sdxl_weights_dir() == tmp_path / "shared" / "sdxl-inpaint-0.1"
+
+
+def test_importing_prettify_does_not_import_torch() -> None:
+    """The module-level import must stay model-free, or `make test` needs 581 MB of torch.
+
+    Checked in a fresh interpreter (`sys.modules` is the evidence), because by the time the
+    rest of this file has run, torch is loaded and an in-process assertion would be measuring
+    the wrong thing. This is a slow-machine-first rule, not a nicety: the cheap segmentation
+    backend runs on onnxruntime precisely so a checkout without torch works — and since
+    round 2 the stack is an optional dependency group, so a base install has no torch at all.
+
+    The same test covers `sdxl_missing_deps()`: it runs during pytest **collection** (the skip
+    marker) and on every refusal, so it has to answer by finding modules, never by importing
+    them. If it ever imported, this test would go red and `make test` would start paying it.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+
+        import packages.vision.prettify as p
+
+        # No import blocker here on purpose: the availability check *legitimately* looks torch
+        # up by name (`importlib.util.find_spec`), so a hook that raises on any mention of
+        # torch would break the thing it is meant to test. What must not happen is torch being
+        # **executed** and landing in `sys.modules`, and that is what this asserts — in a fresh
+        # interpreter, so it measures this import and not the rest of the suite's.
+        assert "torch" not in sys.modules, sorted(sys.modules)
+        assert "diffusers" not in sys.modules, sorted(sys.modules)
+
+        missing = p.sdxl_missing_deps()
+        assert isinstance(missing, list), missing
+        assert set(missing) <= set(p.SDXL_DEP_MODULES), missing
+        assert p.sdxl_backend_available()[0] in (True, False)
+
+        assert "torch" not in sys.modules, "find_spec must not import its target"
+        assert "diffusers" not in sys.modules, sorted(sys.modules)
+        print(p.SDXL_STEPS)
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(SDXL_STEPS)
+
+
+def test_weights_manifest_pins_a_commit_not_a_branch() -> None:
+    """A revision that can move is not a pin, and 18 named files is not a directory glob."""
+    import re
+
+    revision = prettify_module.SDXL_REVISION
+    assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
+    assert len(SDXL_REQUIRED_FILES) == 18, sorted(SDXL_REQUIRED_FILES)
+    # Only the fp16 variant: the fp32 files are ~3x the size and produce identical output.
+    safetensors = [name for name in SDXL_REQUIRED_FILES if name.endswith(".safetensors")]
+    assert len(safetensors) == 4, safetensors
+    for name in safetensors:
+        assert name.endswith(".fp16.safetensors"), name
+    for name, size in SDXL_REQUIRED_FILES.items():
+        assert size > 0, name
+
+
+def test_missing_files_are_named_per_file(monkeypatch, tmp_path) -> None:
+    """A truncated file is as unusable as an absent one, and the error must say which."""
+    monkeypatch.setenv("SNAPLIST_SDXL_DIR", str(tmp_path))
+    (tmp_path / "model_index.json").write_bytes(b"{}")
+    missing = sdxl_missing_files()
+    assert any(name.startswith("model_index.json (") for name in missing), missing
+    assert "unet/diffusion_pytorch_model.fp16.safetensors (missing)" in missing
+    assert not sdxl_weights_available()
+
+
+def test_fetch_deletes_a_half_download_and_never_promotes_it(monkeypatch, tmp_path) -> None:
+    """`make fetch-sdxl` on a flaky network must leave the loader with *nothing*, not a stub.
+
+    A half tree that a loader accepts is worse than no tree: it produces pixels, so it does not
+    look broken. Both failure shapes are covered — the download raising, and the download
+    "succeeding" with the wrong bytes.
+    """
+    monkeypatch.setenv("SNAPLIST_SDXL_DIR", str(tmp_path / "sdxl"))
+    # huggingface_hub ships in the `sdxl` group, so on a base install this test skips rather
+    # than failing: the download path is not something `make test` may depend on.
+    huggingface_hub = pytest.importorskip("huggingface_hub")
+
+    def _explode(**kwargs: object) -> str:
+        partial = Path(str(kwargs["local_dir"]))
+        (partial / "unet").mkdir(parents=True, exist_ok=True)
+        (partial / "unet" / "diffusion_pytorch_model.fp16.safetensors").write_bytes(b"\0" * 64)
+        raise OSError("connection reset by peer")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _explode)
+    with pytest.raises(OSError):
+        fetch_sdxl_weights(verbose=False)
+    assert not (tmp_path / "sdxl").exists()
+    assert not (tmp_path / "sdxl.partial").exists()
+
+    def _truncate(**kwargs: object) -> str:
+        partial = Path(str(kwargs["local_dir"]))
+        (partial / "unet").mkdir(parents=True, exist_ok=True)
+        (partial / "unet" / "diffusion_pytorch_model.fp16.safetensors").write_bytes(b"\0" * 64)
+        return str(partial)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _truncate)
+    with pytest.raises(RuntimeError) as excinfo:
+        fetch_sdxl_weights(verbose=False)
+    assert "does not match the pin" in str(excinfo.value)
+    assert not (tmp_path / "sdxl").exists()
+    assert not (tmp_path / "sdxl.partial").exists()
+
+
+def test_outward_feather_is_full_inside_and_decays_outside() -> None:
+    """The feather's shape, as arithmetic: 1 on the mask, monotone, exactly 0 past the radius.
+
+    This is the property the Gaussian form failed: a 2 px-wide mask blurred with sigma 2 has a
+    centre value below 0.5, so "repaint strength 1 inside the mask" is not something a blur can
+    promise for a thin-line mask.
+    """
+    mask = np.zeros((40, 40), dtype=bool)
+    mask[18:20, 8:32] = True  # a 2 px-wide line, like a crease core
+    radius = 4
+    weight = _outward_feather(mask, radius=radius)
+    assert float(weight[mask].min()) == 1.0, "the mask core must be fully repainted"
+    assert float(weight.max()) == 1.0
+    # Ring by ring inside the radius: strictly decreasing and strictly between 0 and 1.
+    ring_values = []
+    for ring in range(1, radius + 1):
+        grown = prettify_module._binary_dilate(mask, ring)
+        inner = prettify_module._binary_dilate(mask, ring - 1)
+        band = grown & ~inner
+        if band.any():
+            ring_values.append(float(weight[band].mean()))
+    assert len(ring_values) == radius, ring_values
+    assert ring_values == sorted(ring_values, reverse=True), ring_values
+    assert all(0.0 < value < 1.0 for value in ring_values)
+    # …and exactly zero one ring further out: the ramp is bounded, not asymptotic.
+    beyond = ~prettify_module._binary_dilate(mask, radius)
+    assert float(weight[beyond].max()) == 0.0
+    assert _outward_feather(mask, radius=0).max() == 1.0
+
+
+def test_repaint_weight_never_enters_the_protection_region_or_the_boundary_band() -> None:
+    """Round 2 inherits round 1's two exclusions, and the *feather* must inherit them too.
+
+    Without the `support` clip the outward ring would grow straight over printed ink: the mask
+    stops at the label, but the ring does not know that. Asserted on the same mask object
+    `prettify()` consumes, so this audits the real thing.
+    """
+    for entry in cases("logo"):
+        flat, alpha = fixture_bytes(entry)
+        audit = wrinkle_mask_for(flat, alpha, protect=[tuple(entry["protect_box"])])
+        weight, radius = _feathered_repaint_weight(audit)
+        assert radius >= SDXL_FEATHER_MIN_PX, radius
+        assert int((weight > 0.0)[audit.protect_mask].sum()) == 0, entry["id"]
+        assert int((weight > 0.0)[~audit.interior].sum()) == 0, entry["id"]
+        assert float(weight[audit.final_mask].min()) == 1.0, entry["id"]
+
+
+def test_sdxl_work_size_keeps_aspect_and_is_64_aligned() -> None:
+    for height, width in ((480, 360), (480, 480), (1200, 960), (300, 2000)):
+        work_h, work_w = _sdxl_work_size(height, width, SDXL_WORK_SIDE)
+        assert work_h % 64 == 0 and work_w % 64 == 0, (height, width, work_h, work_w)
+        assert max(work_h, work_w) <= SDXL_WORK_SIDE + 64, (height, width, work_h, work_w)
+        assert abs((work_h / work_w) - (height / width)) < 0.12, (height, width, work_h, work_w)
+
+
+def test_sdxl_rejects_impossible_parameters_before_loading_anything(monkeypatch, tmp_path) -> None:
+    """Bad numbers must fail on the numbers, not inside a 7 GB model load."""
+    flat, alpha = fixture_bytes(cases("crease")[0])
+    for kwargs in ({"steps": 0}, {"strength": 0.0}, {"strength": 1.5}, {"guidance": 0.0}):
+        with pytest.raises(ValueError):
+            prettify_sdxl(flat, alpha, **kwargs)
+    with pytest.raises(ValueError) as excinfo:
+        prettify_sdxl(flat, alpha, side=256)
+    assert "SDXL below that duplicates hems" in str(excinfo.value)
+
+
+def test_empty_mask_skips_the_model_and_says_so(monkeypatch, tmp_path) -> None:
+    """No creases selected => no inpaint. Loading 7 GB to paint zero pixels would be a lie.
+
+    The weights directory here is empty, so if the code reached for the model it would raise
+    instead of returning — which is exactly the assertion. The cast matters: without it the
+    white balance is an identity and "the output is the input" would be true for the wrong
+    reason.
+    """
+    monkeypatch.setenv("SNAPLIST_SDXL_DIR", str(tmp_path / "absent"))
+    flat, alpha, _garment = synthetic_garment(cast=(1.060, 1.000, 0.950))
+    result = prettify_sdxl(flat, alpha, steps=2, side=512)
+    notes = result.meta.notes
+    assert notes["generative_step"].startswith("skipped"), notes["generative_step"]
+    assert notes["generative"]["model_loaded"] is False
+    assert notes["generative"]["repaint_px"] == 0
+    assert notes["mode"] == PrettifyMode.SDXL_INPAINT.value
+    assert result.meta.device == "cpu", "no model ran, so no device did either"
+    # The white balance still ran, and *only* it: every pixel is the balanced input.
+    audit = wrinkle_mask_for(flat, alpha)
+    assert np.array_equal(decode(result.prettified_png), _quantise(audit.balanced).astype(float))
+    assert result.prettified_png != flat
+    with Image.open(io.BytesIO(result.prettified_png)) as opened:
+        assert opened.mode == "RGB"
+
+
+@pytest.fixture(scope="module")
+def sdxl_run() -> tuple[dict, bytes, bytes, list[tuple[int, int, int, int]], object, object]:
+    """Two identical SDXL runs on one logo fixture, computed once for the whole module.
+
+    `steps=4, side=512` on purpose: these tests are about *contracts* (determinism, zero change
+    outside the weight, canvas), not about image quality, and the contract does not change with
+    the step count. The measured default is 30 steps at 1024 — see
+    `docs/HANDOFF-vision.md`.
+    """
+    available, why_not = sdxl_backend_available()
+    if not available:
+        pytest.skip(f"mode=SDXL_INPAINT is not runnable here: {why_not}")
+    entry = cases("logo")[0]
+    flat, alpha = fixture_bytes(entry)
+    protect = [tuple(entry["protect_box"])]
+    first = prettify_sdxl(flat, alpha, protect=protect, steps=4, side=512)
+    second = prettify_sdxl(flat, alpha, protect=protect, steps=4, side=512)
+    return entry, flat, alpha, protect, first, second
+
+
+@requires_sdxl_weights
+def test_sdxl_is_byte_identical_for_the_same_seed(sdxl_run) -> None:
+    """Same input, same seed, same bytes — the reason `SEED` is a module constant."""
+    _entry, _flat, _alpha, _protect, first, second = sdxl_run
+    assert first.prettified_png == second.prettified_png
+    assert first.meta.notes["seed"] == SDXL_SEED == second.meta.notes["seed"]
+    assert first.meta.notes["generative"]["num_inference_steps"] == 4
+    assert first.meta.notes["generative"]["strength"] == SDXL_STRENGTH
+    assert first.meta.notes["generative_step"] == "sdxl-inpainting-0.1"
+    assert first.meta.backend == "sdxl_inpaint"
+    assert first.meta.device in ("mps", "cpu"), first.meta.device
+    assert first.meta.seconds is not None and first.meta.seconds > 0.0
+
+
+@requires_sdxl_weights
+def test_sdxl_output_equals_the_white_balanced_input_where_the_weight_is_zero(sdxl_run) -> None:
+    """The generative step's write boundary, exactly: `w == 0` ⇒ output is the *input*.
+
+    Not "close to": bit-identical. That is what makes the logo/text protection and the boundary
+    band real guarantees in this mode rather than strong preferences, and it is why the
+    composite is written in `prettify_sdxl` instead of inside the pipeline.
+    """
+    entry, flat, alpha, protect, first, _second = sdxl_run
+    audit = wrinkle_mask_for(flat, alpha, protect=protect)
+    weight, _radius = _feathered_repaint_weight(audit)
+    reference = _quantise(audit.balanced)
+    with Image.open(io.BytesIO(first.prettified_png)) as opened:
+        produced = np.asarray(opened.convert("RGB"))
+    unchanged = weight == 0.0
+    assert int(unchanged.sum()) > 1000, "not enough untouched pixels to make the claim"
+    assert np.array_equal(produced[unchanged], reference[unchanged]), entry["id"]
+    # The protection rectangle is a subset of "weight == 0", but assert it on its own so a
+    # regression that zeroes the wrong region cannot hide behind the union.
+    assert np.array_equal(produced[audit.protect_mask], reference[audit.protect_mask]), entry["id"]
+
+
+@requires_sdxl_weights
+def test_sdxl_output_is_a_png_of_the_same_canvas(sdxl_run) -> None:
+    _entry, _flat, _alpha, _protect, first, _second = sdxl_run
+    with Image.open(io.BytesIO(first.prettified_png)) as opened:
+        assert opened.format == "PNG"
+        assert opened.mode == "RGB"
+        assert max(opened.size) == 480, opened.size
 
 
 # ------------------------------------------------------------------------------ validation

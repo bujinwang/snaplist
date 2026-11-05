@@ -315,7 +315,7 @@ def test_verify_weights_accepts_the_pinned_digest(
     ("backend", "expected"),
     [
         (SegmentBackend.SAM2_HOSTED, "MODAL_TOKEN_ID"),
-        (SegmentBackend.BIREFNET, "torch"),
+        (SegmentBackend.BIREFNET, "no BiRefNet implementation"),
         (SegmentBackend.UNMEASURED, "not a runnable backend"),
     ],
 )
@@ -324,6 +324,27 @@ def test_backends_this_build_cannot_run_say_what_is_missing(
 ) -> None:
     with pytest.raises(SegmentBackendUnavailable, match=expected):
         segment(photo(), backend)
+
+
+def test_birefnet_refusal_does_not_blame_a_missing_torch() -> None:
+    """The reason must be a fact the code can be asked about, not a sentence that expires.
+
+    Until E2-T2 round 2 the refusal said *"birefnet backend needs torch, which is not
+    installed"*. That was true, then torch was installed for the SDXL work and the sentence
+    became a lie — which in turn misled `runtime.probe()`. `"not installed" not in message` is
+    the assertion that reddens if anyone reintroduces an environment claim as a reason.
+    """
+    from packages.vision.segment import birefnet_available
+
+    runnable, why_not = birefnet_available()
+    assert runnable is False, "if BiRefNet ever lands, this test and the policy must both change"
+    assert "not installed" not in why_not.lower()
+    with pytest.raises(SegmentBackendUnavailable) as excinfo:
+        segment(photo(), SegmentBackend.BIREFNET)
+    message = str(excinfo.value)
+    assert "not installed" not in message
+    assert why_not in message, "the message must be built from the shared reason, not retyped"
+    assert "runtime.probe()" in message, "the fix has to be inside the error"
 
 
 def test_unavailable_backend_is_terminal_for_the_worker() -> None:

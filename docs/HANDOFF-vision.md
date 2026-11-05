@@ -1060,3 +1060,330 @@ to zero out crease detection. So:
 
 I did not edit `docs/PLAN.md` to match the implementation: the acceptance text stays as written,
 and the interpretation plus its evidence lives here.
+
+## 9. E2-T2 round 2 — SDXL inpainting: the machine works, the picture does not
+
+Round 1 shipped the mask machinery and refused `mode=SDXL_INPAINT` with the fix inside the
+error. Round 2 implements it and runs it on this machine. **Headline: the mode is now real,
+deterministic, protected and timed — and its output is not shippable.** That sentence is the
+deliverable; the rest of this section is the evidence for it.
+
+### 9.0 Three measured failures, before anything else
+
+Anyone reading this to decide "can we just switch SDXL on" needs these three lines and nothing
+else. They are also at the top of `prettify_sdxl()`'s docstring, so the answer travels with the
+code.
+
+| # | gate | E0-T5 / E2-T2 requires | measured | verdict |
+|---|---|---|---|---|
+| 1 | `prettify SSIM (inside mask)` | **≥ 0.80** | **0.6920** (crease-01), **0.7415** (logo-01) | **fails** — classical scores 0.9856 / 0.9792 on the same two |
+| 2 | prettify latency | **p50 ≤ 20 s, p90 ≤ 35 s** | **38.3 s** warm (crease-01), **42.5 s** warm (logo-01); +10 s cold load | **fails ~2×** — both samples are above *p90*, so p50 ≈ 40 s |
+| 3 | "did it remove the crease" | the thing the mode exists for | the fold comes back as a thin hard blue-grey **scratch line** | **fails** — on a real photo the garment **looks like someone drew on it with a fine pen** |
+
+Number 3 is not a matter of taste and it is not a step-count artefact (§9.5 has the sweeps).
+The wrinkle mask is a 1–3 px hairline/speckle field; SDXL's VAE downsamples 8×, so the mask is
+**0.25–0.75 latent pixels wide** and the UNet is asked to fill a feature it cannot represent.
+Widening it until it is representable means replacing 58–86 % of the garment (measured).
+**SDXL inpainting wants a region, not a network of creases.**
+
+Nothing here says to keep it off in *code* — it is implemented, tested, deterministic and
+protected. It says do not put it on the product path.
+
+### 9.1 What was installed
+
+`uv add torch diffusers transformers accelerate safetensors huggingface-hub`, recorded in
+`pyproject.toml` + `uv.lock` and in `docs/DEPS.md` with licence and reason per row.
+
+| package | version | licence | installed |
+|---|---|---|---|
+| torch | 2.15.0 | BSD-3-Clause | 581 MB |
+| transformers | 5.22.1 | Apache-2.0 | 55 MB |
+| diffusers | 0.42.1 | Apache-2.0 | 29 MB |
+| sympy (torch transitive) | 1.14.0 | BSD-3-Clause | 29 MB |
+| tokenizers (transformers transitive) | 0.23.3 | Apache-2.0 | 9.4 MB |
+| networkx (torch transitive) | 3.6.1 | BSD-3-Clause | 7.8 MB |
+| hf-xet (hub transitive) | 1.8.0 | Apache-2.0 | 7.1 MB |
+| huggingface_hub | 2.4.0 | Apache-2.0 | 3.5 MB |
+| accelerate | 1.15.0 | Apache-2.0 | 1.6 MB |
+| safetensors | 0.8.0 | Apache-2.0 | 1.1 MB |
+
+≈ **0.72 GB of site-packages** on top of the previous 190 MB venv. `torch.backends.mps.is_available()`
+→ **`True`** (torch 2.15.0, `is_built()` also True, macOS arm64). Nothing else in the venv moved:
+`onnxruntime`, `numpy`, `pillow` versions are unchanged, so `segment()`/`matte()` numbers from
+earlier sections still stand.
+
+`torch` and `diffusers` are imported **lazily, inside the generative branch**.
+`test_importing_prettify_does_not_import_torch` runs a subprocess with a meta-path hook that
+raises on `torch`, imports `packages.vision.prettify`, and asserts `torch` and `diffusers` are
+absent from `sys.modules`. Without that rule a checkout with no round-2 extras could not even
+run `make test` — which is the reason the cheap segmentation backend runs on onnxruntime at all.
+
+### 9.2 The weights
+
+| | |
+|---|---|
+| model | `diffusers/stable-diffusion-xl-1.0-inpainting-0.1` |
+| revision | **`115134f363124c53c7d878647567d04daf26e41e`** (a commit sha, not `main`) |
+| variant | `fp16` only — 18 files, **6 941 218 469 bytes (6.94 GB)**; the fp32 set is another ~13 GB and produces the same pixels |
+| path | `~/.cache/snaplist/models/sdxl-inpaint-0.1/` (`SNAPLIST_SDXL_DIR`, else `SNAPLIST_MODEL_DIR`/`sdxl-inpaint-0.1`) |
+| fetched by | `make fetch-sdxl` — **not** part of `install`, **not** reachable from `prettify()` |
+| measured download | **65 s** on this connection, 4 workers (`hf-xet` was used) |
+| licence | **CreativeML Open RAIL++-M** — commercial use allowed, **use-restricted**, and the restrictions travel: no unlawful/defamatory/harassing/deliberately-harmful use, and redistributing the model or a derivative must carry the same restrictions. Outputs are not encumbered the same way. Recorded in `docs/DEPS.md`. |
+
+Integrity is **per-file byte counts pinned against the revision** (`SDXL_REQUIRED_FILES`, 18
+entries), not a `.complete` sentinel: a truncated UNet file is caught before load, and a
+sentinel is the easiest thing in the world to copy next to the wrong files. `make fetch-sdxl`
+downloads into a sibling `*.partial` tree, verifies, then `os.replace`s into place; any failure
+deletes the partial tree. Two tests cover it — download raising, and download "succeeding" with
+the wrong bytes — both assert nothing is left on disk.
+
+Run-time is **zero network**: `from_pretrained(..., local_files_only=True)`, and the whole
+`test_prettify.py` module still runs under the autouse socket trap.
+
+### 9.3 What it costs, cold and warm
+
+`packages/vision/cli.py --prettify sdxl_inpaint`, i.e. the module defaults: **30 steps,
+strength 0.85, guidance 5.0, seed 20261104**, working canvas = long edge 1024 (multiples of 64),
+MPS fp16, attention slicing on, VAE slicing on. Two runs per fixture in one process.
+
+| fixture | canvas in | canvas out | cold | warm | model load | generate | effective denoise steps |
+|---|---|---|---|---|---|---|---|
+| `crease-01-breeches-leg` | 360×480 | 704×1024 | **50.9 s** | **38.3 s** | 10.3 s | 38.9 s | 25.5 |
+| `logo-01-tee-chest` | 480×360 | 1024×768 | **55.1 s** | **42.5 s** | 10.5 s | 42.9 s | 25.5 |
+
+Roughly **1.9 s per effective denoise step** at 0.72–0.79 MP on M4 Pro MPS. No OOM at 24 GB
+with attention slicing; peak footprint was not measured with a profiler, only "it ran". The
+pipeline is `lru_cache`d per (dir, device, dtype), so "warm" means "weights already in RAM",
+which is what a worker doing a second item would see.
+
+**Against the product gate (E0-T5: prettify p50 ≤ 20 s, p90 ≤ 35 s): this fails, by roughly 2×.**
+Warm is 38.3 s and 42.5 s — both above the p90 ceiling, so these two numbers alone would put
+p50 ≈ 40 s. The ticket's acceptance ("implement and measure on this machine") is met; the
+product gate is not, and step-trimming does not close a 2× gap: the §9.5 sweeps ran 20 steps
+on a 768 canvas at **15.8 s per image** of generation time, which is still the whole p50 budget
+before the ~10 s load, and the artefacts do not improve with fewer steps — they get worse.
+
+### 9.4 SSIM, and what it is and is not
+
+Same definition as `evals/metrics/prettify.py` (luminance SSIM, 11×11 window, over the garment
+mask). `in mask` = over the final wrinkle mask.
+
+| fixture | SSIM garment SDXL | SSIM garment classical | SSIM in mask SDXL | SSIM in mask classical |
+|---|---|---|---|---|
+| `crease-01-breeches-leg` | 0.8504 | 0.9945 | **0.6920** | **0.9856** |
+| `logo-01-tee-chest` | 0.8253 | 0.9916 | **0.7415** | **0.9792** |
+
+Read this as a **destruction budget**, as the metric docstring insists: the generative step
+moves far more pixels, far further, than the classical fill — 0.69 vs 0.99 *inside the mask it
+was allowed to touch*. It is not evidence that the creases went away. The 0.85 on the garment is
+mostly the white balance (a global gain) plus the masked region.
+
+Mask audit, from the same mask object `prettify()` consumed:
+
+| fixture | mask coverage | mask px | repaint px | feather α>0 px | feather radius | `protect_overlap` | protect region px |
+|---|---|---|---|---|---|---|---|
+| `crease-01-breeches-leg` | 0.0772 | 4 412 | 4 412 | 41 872 (73 % of interior) | 3 px | **0** | 2 332 |
+| `logo-01-tee-chest` | 0.0939 | 8 647 | 8 647 | 62 989 (68 % of interior) | 3 px | **0** | 10 809 |
+
+`protect_overlap = 0` in both cases (caller box passed for the logo case): the printed label is
+untouched, and the composite guarantees it structurally — `out = balanced·(1−w) + generated·w`
+with `w == 0` everywhere in the protection region, so the output there is the white-balanced
+input **bit for bit** (`test_sdxl_output_equals_the_white_balanced_input_where_the_weight_is_zero`).
+
+### 9.5 What my eyes see (the part the numbers do not show)
+
+I looked at each output next to its input, cropped on the ground-truth crease/label box, at 2–3×.
+
+* **`crease-01-breeches-leg` — the folds are still there, and worse.** Each soft dark horizontal
+  fold comes back as a **thin, hard, blue-grey speckled line**, like a scratch or a stray
+  pinstripe. The fold is not removed; it is *traced*. The fabric between the folds is preserved,
+  which is the one thing that went right. If someone handed me this as a "cleaned" listing photo
+  I would ask what scratched the trousers.
+* **`logo-01-tee-chest` — the label is perfect and the cloth around it is scratched.** `SPRING
+  / 1948` and the red dot are pixel-identical; the diff heatmap is black over the whole label
+  rectangle. That is the protection working. But the tee's body is covered in long white/blue
+  **streak marks**, and the drawn fold crossing under the label is traced rather than filled.
+* **So: yes, it looks repainted.** Not "slightly retouched" — it looks like the image was drawn
+  on with a fine brush.
+
+**Why, and this is the useful part.** The wrinkle mask is a **hairline/speckle field**: lines
+1–3 px wide with a lot of isolated pixels. SDXL's VAE downsamples 8×, so at a 704×1024 canvas
+the mask is **0.25–0.75 latent pixels wide**. The UNet is being asked to fill a feature it
+cannot represent, and the decoder resolves it as a high-frequency ridge along the contour — the
+scratch. I tested the obvious fixes rather than guessing:
+
+| experiment | mask coverage of interior | what it looked like |
+|---|---|---|
+| shipped: thin mask, 30 steps, strength 0.85 | 7.7 % | soft folds → hard blue-grey scratch lines |
+| thin mask, strength **0.45** | 7.7 % | same scratch lines, 12.6 s — *not* a noise effect |
+| thin mask, strength **0.65** | 7.7 % | same, slightly stronger |
+| mask dilated **+2 px** | **57.7 %** | flat grey blobs with hard latent-grid contours — clearly broken |
+| mask dilated **+4 px** | **85.7 %** | the garment is gone, replaced by grey rectangles |
+| mask dilated **+8 px** | **103 %** (bands merge) | same, worse |
+
+Dilation does not scale linearly because the mask is mostly isolated pixels, not bands: area
+grows with the *square* of the radius. Widening it into something the latent grid can represent
+means repainting 58–86 % of the garment, which is a different and much worse product than a
+de-wrinkler. **Conclusion: SDXL inpainting is the wrong tool for a crease *network*. It wants a
+region — a stain, a hole, a removed object — not a hairline.** That is a modelling decision for
+Bert, not a tuning knob, and I did not silently pick a different model or quietly drop steps to
+manufacture a prettier number.
+
+### 9.6 Where this leaves the ticket, honestly
+
+* **Passed**: the mode exists; the 6.9 GB is pinned, verified and fetched only by `make
+  fetch-sdxl`; the run-time path has zero network calls; it is deterministic (same seed ⇒
+  byte-identical PNG, asserted on MPS); it never writes outside the feathered mask; the logo
+  region is untouched; the timing is real and the steps/strength/seed/canvas are recorded in
+  `meta.notes` on every run.
+* **Failed**: it is not a de-wrinkler. It is a scratch-line generator on this mask, ~2× over the
+  E0-T5 latency gate, and the fix is not in this ticket's scope.
+* **Recommended next step**: make the mask a *band* — which needs a crease detector that emits
+  regions, not edges, plus a coverage budget that survives the latent grid. That is a separate
+  ticket, and it is the only path on which this mode becomes useful.
+* **A recommendation I got wrong, recorded because the correction matters more than the
+  suggestion.** I first proposed re-pointing `mode=SDXL_INPAINT` at **defect** inpainting —
+  stains, holes, an object to remove — because those are region-shaped and would suit the
+  model. That is technically true and **product-wrong**: `ItemAttributes` carries a `defects`
+  field because a listing has to *disclose* imperfections. Using a generative model to erase a
+  stain is helping a seller lie to a buyer about the item's condition, in the one field the
+  schema added to prevent it. So: generative inpainting is technically usable on region-shaped
+  defects and **ethically unusable in this product**. Creases are the only legitimate target
+  here, and creases are exactly what this method cannot do. That is the whole finding.
+
+### 9.7 Still not standing (round 2 additions)
+
+1. **The output is not shippable** (§9.5). This is the first item on purpose.
+2. **~40 s warm / image** vs the 20 s p50 gate — 2× over, and the time is dominated by UNet
+   passes, not by anything I can trim.
+3. **No memory measurement.** "It did not OOM at 24 GB with attention slicing" is not a number;
+   I did not profile peak footprint, so I cannot say how much headroom a 4096 px flat-lay would
+   need. Attention slicing is on and recorded, but its cost in seconds is not isolated.
+4. **The feather boundary at the protection region is a step.** The outward ring is clipped to
+   `interior & ~protect_mask`, so where a crease runs into the label the repaint alpha drops
+   from ~0.85 to 0 over one pixel. On these fixtures it does not show, because the painted fold
+   under the label is inside the label. On a real photo it might. Not measured.
+5. **The 0.8 %-of-short-edge feather radius** is calibrated by eye on two outputs, and my eye
+   was looking at outputs that are broken anyway. Revisit if the mask ever becomes a band.
+6. **`transformers` is pinned at 5.22.1** because that is what resolved; diffusers 0.42 works
+   with it here, but the two moving major versions together is a hazard nobody has bounded.
+   Recorded, not solved.
+7. Unchanged from round 1: the label *rectangle* still has a 382 px residual without a caller
+   box, small type is still the detector's weak spot, and over-protection still costs
+   de-wrinkling on patterned fabric.
+
+## 10. E2-T2 round 2b — the regression my own install caused, and the 6.9 GB on disk
+
+Round 2 shipped the generative mode and left two things behind that had to be fixed before the
+work could be called done. Both were found by the lead reading the diff, not by me, and both
+are worth writing down because they are the same failure in two shapes: **a fact about the
+environment that the code kept in prose instead of keeping in a check.**
+
+### 10.1 `runtime.probe()` selected a backend that cannot run
+
+```
+$ python -c "from packages.vision.runtime import probe; r=probe(); print(r.device, r.backend)"
+mps birefnet          # before the fix — and segment() refuses birefnet
+```
+
+Rule 3 of the policy read *"torch sees cuda or mps ⇒ BiRefNet"*, which is only sound if BiRefNet
+is runnable. It is not: `segment.py` implements the u2net path only, and there are no BiRefNet
+weights anywhere. While torch was absent the rule never fired, so the bug was invisible; the
+moment 0.72 GB of torch landed for the SDXL work, **the default vision path stopped working on
+a machine where nothing about vision had changed.** `evals/tools/seg_iou.py` calls
+`probe().backend` and hands it straight to `segment()`, so that tool was broken too.
+
+I also reported the wrong cause for it: I saw the CLI print
+`SEGMENT UNVAILABLE: … needs torch, which is not installed … (SNAPLIST_SEGMENT_BACKEND=birefnet)`
+and concluded `SNAPLIST_SEGMENT_BACKEND` was set in `.env`. It is not, and never was — I read a
+stale sentence as evidence. Which is exactly what the stale sentence deserved.
+
+The fix, in three parts:
+
+* **`segment.birefnet_available() -> (bool, why-not)`** is now the single place that knows
+  whether this build can run BiRefNet, and it is a *function*, so the policy can ask before
+  selecting and the refusal message is built from the same string. `probe()` calls it through
+  `runtime._birefnet_available()` before choosing.
+* **Rule 3 asks first.** Accelerator present **and** backend runnable ⇒ BiRefNet; otherwise the
+  cheap backend, with the accelerator named in `notes`:
+  *"mps is present but BiRefNet cannot run in this build: no BiRefNet implementation and no
+  BiRefNet weights exist … Falling back to the cheap backend (u2net), which runs on the CPU —
+  stated here, not silent"*. `RuntimeInfo.device` is `"cpu"` in that case, because u2net runs on
+  onnxruntime's CPU EP and a cost report claiming "mps" for a CPU-bound session is the same
+  class of lie as the message that started this.
+* **The refusal no longer blames torch.** `segment(BIREFNET)` now says BiRefNet does not exist
+  in this build and points at `probe()`; `test_birefnet_refusal_does_not_blame_a_missing_torch`
+  asserts `"not installed" not in message`, so the next time a sentence like that goes stale
+  the suite reddens instead of the runtime policy going quietly wrong.
+
+New tests: probe **never** selects a backend that cannot run (with `_birefnet_available` faked
+both ways), the fallback names both the accelerator and the reason, an explicit
+`SNAPLIST_SEGMENT_BACKEND=birefnet` override is still honoured but carries a note predicting the
+refusal, and the real machine's default path is asserted to be runnable.
+
+**A weakness in this fix, stated rather than hidden.** `birefnet_available()` is a
+**written-down dead switch**: it returns `False` with a reason, and the only thing that keeps
+the policy honest is that nothing overrides it. A `return False` is a fact the code can be
+asked about, which is a real improvement on a sentence in an error message — but it is still one
+place to forget. The root fix is a single `_IMPLEMENTED_BACKENDS` set in `segment.py` from which
+the policy, the refusal text and the CLI's choices all derive; that is a ticket, not a patch.
+
+**If BiRefNet is implemented, three things must change together or the messages become lies
+again:** (1) the return value of `segment.birefnet_available()` (the refusal text derives from
+it, so it needs no edit — that is the point of the indirection), (2) the weights/implementation
+in `segment.py`, and (3) the two tests that pin the current truth,
+`test_birefnet_refusal_does_not_blame_a_missing_torch` and
+`test_probe_asks_segment_py_instead_of_keeping_its_own_answer`. Miss the third and the suite
+stays green while the policy goes back to guessing.
+
+```
+$ python -c "from packages.vision.runtime import probe; r=probe(); print(r.device, r.backend)"
+cpu u2net             # after the fix
+```
+
+### 10.2 0.72 GB that nobody chose — now an optional dependency group
+
+The generative stack moved from `dependencies` to **`[dependency-groups] sdxl`** (PEP 735, the
+same section as `dev`; this root is a virtual project so `optional-dependencies` would be the
+wrong mechanism). `make install` is lean again; `make install-sdxl` does `uv sync --group sdxl`
+and then `fetch-sdxl`.
+
+| target | does | size |
+|---|---|---|
+| `make install` | `uv sync` + `pnpm install` | **no torch, no SDXL** |
+| `make install-sdxl` | `uv sync --group sdxl` + `make fetch-sdxl` | 0.72 GB + 6.9 GB |
+| `make fetch-sdxl` | weights only | 6.9 GB |
+
+A plain `uv sync` now **prunes** the stack from an existing venv, which is the intended
+behaviour and worth knowing before you run `make install` on a machine where you were using the
+generative mode.
+
+Two different gaps, two different fixes, so the refusal reports them separately. Both are
+checked with `importlib.util.find_spec` (which does not import) and per-file byte counts:
+
+* missing group ⇒ *"the `sdxl` dependency group is not installed (missing: torch, …) — run
+  `make install-sdxl`"*;
+* missing weights ⇒ *"N of 18 pinned weight files are absent or the wrong size in … — run `make
+  fetch-sdxl`"*;
+* missing `huggingface_hub` at fetch time ⇒ a `RuntimeError` naming the group, not an
+  `ImportError` traceback from a `python -c` one-liner.
+
+`make test` is green with **neither** the group nor the weights: three tests skip
+(`skipif not sdxl_backend_available()`), the fetch tests `importorskip("huggingface_hub")`, and
+the subprocess purity test proves the availability check answers by *finding* torch rather than
+importing it — so `pytest` collection does not pay torch's import either.
+
+### 10.3 The 6.5 GB on disk is Bert's decision, not mine
+
+`~/.cache/snaplist/models/sdxl-inpaint-0.1/` still holds **6.5 GiB on disk (6.94 GB, 18 files)**
+of pinned weights. I did not delete it.
+
+* Keep it if anyone wants to re-run the §9 measurements: they need it, and it is the only way
+  to check that the numbers in this document are real.
+* Delete it to reclaim 6.5 GiB; the cost is one **65 s** re-download (`make fetch-sdxl`,
+  measured on this connection) and nothing else. No code path depends on the weights being
+  present — `mode=SDXL_INPAINT` refuses cleanly without them, and that refusal is what the
+  test suite exercises on every run without them.
+
+`evals/metrics/prettify.py` still measures **`mode=CLASSICAL` only** and is unchanged: the
+headline number in `evals/reports/vision.md` must come from the path that passes the gate.

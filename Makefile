@@ -13,7 +13,7 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 .DEFAULT_GOAL := help
 
 .PHONY: help install test lint fmt evals evals-strict golden golden-provisional masks-provisional \
-        seg-iou fetch-models dev dev-web dev-mobile contract clean
+        seg-iou fetch-models fetch-sdxl install-sdxl dev dev-web dev-mobile contract clean
 
 MODEL_DIR ?= $(if $(SNAPLIST_MODEL_DIR),$(SNAPLIST_MODEL_DIR),$(HOME)/.cache/snaplist/models)
 U2NET_SHA256 := 8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491
@@ -21,7 +21,9 @@ U2NET_URL := https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net
 
 help:
 	@echo "SnapList targets:"
-	@echo "  make install    uv sync + pnpm install  (no credentials required)"
+	@echo "  make install    uv sync + pnpm install  (no credentials; no torch, no SDXL)"
+	@echo "                  note: uv sync prunes, so this UNINSTALLS the sdxl group if present"
+	@echo "  make install-sdxl  uv sync --group sdxl + fetch-sdxl (0.72 GB + 6.9 GB, only for mode=sdxl_inpaint)"
 	@echo "  make test       pnpm -w test, then pytest"
 	@echo "  make lint       ruff check + tsc --noEmit in every TS package"
 	@echo "  make evals      report only; prints UNMEASURED until E1..E4, always exit 0"
@@ -31,15 +33,26 @@ help:
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
 	@echo "  make seg-iou    segment the provisional set and report IoU (evals/reports/seglab.md)"
 	@echo "  make fetch-models  download the u2net weights (176 MB) into $(MODEL_DIR)"
+	@echo "  make fetch-sdxl download the SDXL inpainting weights (6.9 GB, fp16) for mode=sdxl_inpaint"
 	@echo "  make dev        FastAPI on :8000 (uvicorn --reload)"
 	@echo "  make dev-web    static marketing placeholder on :3000"
 	@echo "  make dev-mobile expo dev server"
 	@echo "  make contract   print the frozen ItemAttributes field list"
 	@echo "  make clean      remove .venv, node_modules, dist, caches"
 
+# Lean on purpose: the generative stack lives in the `sdxl` dependency group and is NOT
+# installed here. 0.72 GB of site-packages that only `mode=SDXL_INPAINT` needs must be an
+# explicit act — see the comment above `[dependency-groups]` in pyproject.toml for the
+# regression that making it mandatory caused.
 install:
 	$(UV) sync
 	$(PNPM) install
+
+# Everything `mode=SDXL_INPAINT` needs: the dependency group, then the pinned weights.
+# Two separate downloads because they are two separate things to decide about.
+install-sdxl:
+	$(UV) sync --group sdxl
+	$(PY) -c "from packages.vision.prettify import fetch_sdxl_weights as f; f()"
 
 # JS first: packages/shared/build must exist before the python parity test can read it.
 test:
@@ -95,6 +108,16 @@ fetch-models:
 		mv "$(MODEL_DIR)/u2net.onnx.part" "$(MODEL_DIR)/u2net.onnx"; \
 		echo "verified sha256 $$got"; \
 	fi
+
+# SDXL inpainting weights (docs/PLAN.md E2-T2 round 2). 6.9 GB, and for the same reason a
+# separate target from fetch-models: nobody should pull 7 GB because they typed the target
+# for the 176 MB segmentation file. Same refusal contract — `prettify(mode=SDXL_INPAINT)`
+# raises with this target named rather than downloading — and the same "never a side effect
+# of `make install`" rule. The version, revision, per-file byte counts and licence live in
+# packages/vision/prettify.py (SDXL_REQUIRED_FILES) and docs/DEPS.md; the checks are there,
+# not here, because the loader has to be able to make the same judgement.
+fetch-sdxl:
+	$(PY) -c "from packages.vision.prettify import fetch_sdxl_weights as f; f()"
 
 # Release gate (docs/PLAN.md E0-T5). Deliberately fails until E0-T5 is implemented: a release
 # must not be cut on a pipeline nobody has measured. `make evals` exits 0 but prints

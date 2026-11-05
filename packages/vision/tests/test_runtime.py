@@ -40,11 +40,17 @@ def _force_hosted(monkeypatch: pytest.MonkeyPatch, present: bool) -> None:
     monkeypatch.setattr(runtime, "_hosted_available", lambda: present)
 
 
+def _force_birefnet(
+    monkeypatch: pytest.MonkeyPatch, runnable: bool, why_not: str = "pinned by test"
+) -> None:
+    monkeypatch.setattr(runtime, "_birefnet_available", lambda: (runnable, why_not))
+
+
 # ------------------------------------------------------------------ the real machine
 
 
 def test_probe_is_total_and_returns_known_values() -> None:
-    """On this repo's venv torch is absent, so this exercises the honest-cpu path."""
+    """Whatever this machine is, `probe()` answers and answers with a real backend."""
     info = probe()
     assert info.device in {"cuda", "mps", "cpu"}
     assert info.backend.value in KNOWN_BACKENDS
@@ -52,6 +58,24 @@ def test_probe_is_total_and_returns_known_values() -> None:
     if not info.torch_available:
         assert info.device == "cpu"
         assert any("torch" in n for n in info.notes)
+
+
+def test_this_machines_default_path_is_a_backend_that_can_run() -> None:
+    """The regression this file now pins: state of the world, not a faked branch.
+
+    E2-T2 round 2 installed torch, and rule 3 ("accelerator ⇒ BiRefNet") then selected a
+    backend that `segment()` refuses — on this machine, with no vision change behind it. The
+    assertion is deliberately about the *outcome*: whatever `probe()` picks must be runnable.
+    """
+    info = probe()
+    if info.backend is SegmentBackend.BIREFNET:
+        from packages.vision.segment import birefnet_available
+
+        runnable, why_not = birefnet_available()
+        assert runnable, f"probe() selected birefnet but the stage refuses it: {why_not}"
+    if info.device == "cpu" and info.torch_available:
+        # An accelerator may well be present; if device says cpu, a note has to say why.
+        assert any("accelerator" in n or "CPU" in n for n in info.notes), info.notes
 
 
 def test_probe_performs_no_network_calls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,13 +101,74 @@ def test_hosted_credentials_select_sam2_hosted_even_on_cpu(
     assert "SAM 2.1 hosted" in info.reason
 
 
-def test_accelerated_local_device_selects_birefnet(
+def test_accelerated_local_device_selects_birefnet_when_it_can_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Rule 3 keeps its intent: acceleration wins *when the backend exists*."""
     _force_torch(monkeypatch, present=True, device="mps")
+    _force_birefnet(monkeypatch, runnable=True)
     info = probe()
     assert info.device == "mps"
     assert info.backend is SegmentBackend.BIREFNET
+    assert "runnable" in info.reason
+
+
+def test_probe_asks_segment_py_instead_of_keeping_its_own_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real delegation: `_birefnet_available` must forward to `segment.birefnet_available()`.
+
+    Every other policy test in this file monkeypatches `_birefnet_available`, which means the
+    wiring between the policy and `segment.py` — the thing this round's regression was about —
+    had no test at all. Measured: make `_birefnet_available` return `(True, "")`
+    unconditionally with the accelerator faked to mps and the whole suite stayed green
+    (193 passed, 0 failed), even though `probe()` then returns `mps birefnet`, i.e. the original
+    bug reproducing line for line.
+
+    So this test fakes only the *accelerator* and lets the real delegation run. It can only
+    pass while `segment.birefnet_available()` says BiRefNet is not runnable — which is the
+    point: implementing BiRefNet means changing this test and the policy together.
+    """
+    _force_torch(monkeypatch, present=True, device="mps")  # deliberately no _force_birefnet
+    info = probe()
+    assert info.backend is SegmentBackend.U2NET
+    assert info.device == "cpu"
+    assert any("BiRefNet cannot run" in note for note in info.notes), info.notes
+
+
+def test_acceleration_without_a_runnable_birefnet_falls_back_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The E2-T2 round-2 regression: torch present, BiRefNet absent ⇒ never birefnet.
+
+    Three separate assertions, because each one alone is satisfiable while the bug survives:
+    the backend must not be birefnet, the device must not claim the unused accelerator, and
+    the note must name both the accelerator and the reason. Flip `_birefnet_available` back to
+    "always True" and the first one goes red.
+    """
+    _force_torch(monkeypatch, present=True, device="mps")
+    _force_birefnet(monkeypatch, runnable=False, why_not="no implementation and no weights")
+    info = probe()
+    assert info.backend is SegmentBackend.U2NET
+    assert info.backend is not SegmentBackend.BIREFNET
+    assert info.device == "cpu", "u2net runs on the CPU EP; claiming mps would be a lie"
+    assert info.torch_available is True, "torch is present; it just does not help here"
+    joined = " ".join(info.notes)
+    assert "mps is present" in joined
+    assert "no implementation and no weights" in joined
+    assert "cheap backend" in joined
+
+
+def test_override_to_an_unrunnable_backend_is_honoured_but_flagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An override must not be silently swapped — but the note must predict the refusal."""
+    _force_torch(monkeypatch, present=True, device="mps")
+    _force_birefnet(monkeypatch, runnable=False, why_not="no implementation and no weights")
+    monkeypatch.setenv(OVERRIDE_ENV, "birefnet")
+    info = probe()
+    assert info.backend is SegmentBackend.BIREFNET
+    assert any("will be refused" in n for n in info.notes), info.notes
 
 
 def test_cpu_only_selects_u2net_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:

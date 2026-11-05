@@ -217,6 +217,29 @@ def _encode(mask: np.ndarray) -> bytes:
 # --------------------------------------------------------------------------------- stage
 
 
+def birefnet_available() -> tuple[bool, str]:
+    """Can this build run BiRefNet? `(runnable, why-not)`, and this is the only copy of it.
+
+    The answer is `False` because **only the u2net path exists in this file**: there is no
+    BiRefNet implementation and no BiRefNet weights anywhere in the repo, and BRIEF.md's model
+    order (SAM 2.1 hosted → BiRefNet → U²-Net) lists it as second without that implying it runs.
+
+    Why this is a function and not a sentence inside the refusal: E2-T2 round 2 installed
+    torch, and the refusal at the time said *"birefnet backend needs torch, which is not
+    installed in this environment"* — a true sentence that became false the same day and then
+    misled the runtime policy into selecting a backend that cannot run. The reason for a
+    refusal must be a fact the code can be asked about, so the policy can ask before selecting
+    and the message can never be the only place the fact lives.
+
+    Returns a reason string even when `True` (empty), so callers can format one message.
+    """
+    return False, (
+        "no BiRefNet implementation and no BiRefNet weights exist in this build "
+        "(packages/vision/segment.py implements only the u2net path), and an accelerator "
+        "being present does not make a backend exist"
+    )
+
+
 def segment(image: bytes, backend: SegmentBackend = SegmentBackend.SAM2_HOSTED) -> SegmentResult:
     """Segment one garment photo. Offline, deterministic, no network call.
 
@@ -229,9 +252,10 @@ def segment(image: bytes, backend: SegmentBackend = SegmentBackend.SAM2_HOSTED) 
     if backend is SegmentBackend.U2NET:
         pass
     elif backend is SegmentBackend.BIREFNET:
+        _runnable, why_not = birefnet_available()
         raise SegmentBackendUnavailable(
-            "birefnet backend needs torch, which is not installed in this environment "
-            "(SNAPLIST_SEGMENT_BACKEND=birefnet); the cheap u2net path is available "
+            f"birefnet backend cannot run here: {why_not}. Pass SegmentBackend.U2NET, or "
+            "runtime.probe(), which checks this before selecting a backend "
             "(docs/PLAN.md ticket E1-T2)"
         )
     elif backend is SegmentBackend.SAM2_HOSTED:

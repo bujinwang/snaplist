@@ -5,8 +5,10 @@
 
 What is implemented here, and under which name
 ---------------------------------------------
-E2-T2 is a two-round ticket. **Round 1 (this code) ships no model and downloads nothing.**
-What it ships is the whole shape of the stage, executed for real:
+E2-T2 is a two-round ticket. **Round 1** shipped no model and downloaded nothing; **round 2
+(this code)** adds the generative step behind `mode=SDXL_INPAINT`, and it still downloads
+nothing at run time — the 6.9 GB of weights are an explicit `make fetch-sdxl`. What exists,
+executed for real:
 
 1. **white balance** — gains estimated from the backdrop ring, so the flat-lay's background
    lands on `#F2F1EE` instead of on whatever the phone's auto-white-balance chose;
@@ -14,14 +16,18 @@ What it ships is the whole shape of the stage, executed for real:
    morphology, with a hard coverage cap and a hard boundary exclusion;
 3. **logo / text protection** — an automatic thin-ink detector *plus* caller-supplied boxes,
    subtracted from the wrinkle mask in the last step;
-4. **fill (non-generative)** — low-frequency luminance guidance with feathered edges. It is
-   called **shadow/crease attenuation** and that name is the promise: it reduces the contrast
-   of a shadow band, it does not remove a crease, and nothing here invents texture.
+4. **fill**, in two flavours that share steps 1–3 and nothing else:
+   * `mode=CLASSICAL` — low-frequency luminance guidance with feathered edges. It is called
+     **shadow/crease attenuation** and that name is the promise: it reduces the contrast of a
+     shadow band, it does not remove a crease, and nothing here invents texture;
+   * `mode=SDXL_INPAINT` — SDXL inpainting inside the feathered mask (`prettify_sdxl()`). It
+     *does* synthesise fabric texture, inside the mask only, and the composite is written so
+     that "outside the feathered mask, the output is the white-balanced input" is true by
+     construction rather than by observation.
 
-The generative step (`mode=SDXL_INPAINT`) is **round 2** and raises
-`PrettifyBackendUnavailable` with the whole fix inside the message. It never downloads at run
-time — same rule as `segment.py`, same reason: a pipeline stage that fetches 10 GB on first
-call is a network call inside a zero-network contract.
+Both model paths (this one and `segment.py`) refuse rather than fetch: a pipeline stage that
+downloads 7 GB on first call is a network call inside a zero-network contract, and it turns a
+missing file into a ten-minute stall inside a job.
 
 Why `PrettifyMode.CLASSICAL` had to be added instead of reusing `PASS_THROUGH`
 ------------------------------------------------------------------------------
@@ -48,9 +54,20 @@ fill works by pulling a low-frequency guide inward, and at the silhouette the gu
 half backdrop. A mask pixel on the outline therefore paints backdrop grey into the garment
 and eats the shape. The exclusion is a Chebyshev erosion of the alpha, so it cannot leak.
 
-What this does *not* do (round 2, and the eval notes say so out loud)
---------------------------------------------------------------------
-* No generative inpaint, so no crease *removal*: a hard fold stays visible, dimmer.
+What this does *not* do (and the eval notes say so out loud)
+------------------------------------------------------------
+* `mode=CLASSICAL` removes no crease: a hard fold stays visible, dimmer. `mode=SDXL_INPAINT`
+  does replace the fold's gradient with generated texture, and whether that reads as "fixed"
+  is E2-T3's manual rubric, not a metric in this file.
+* **A generative fill can invent plausible detail.** That is what the model is for and it is
+  also the risk: inside the mask there is no ground truth to compare against. The mask is a
+  quarter of the garment *at most* (`WRINKLE_COVERAGE_CAP`) and the protection region and the
+  boundary band are excluded exactly, which bounds the damage — it does not make the output
+  verifiable. On the two fixtures measured for round 2 the answer to "does it look repainted"
+  is **yes**: the folds come back as thin hard blue-grey scratch lines. The machine is
+  deterministic, protected and timed; the picture is not good enough to ship. The reason is
+  geometric (a hairline mask is sub-latent for an 8×-downsampling VAE) and it is written up in
+  `prettify_sdxl()` and `docs/HANDOFF-vision.md` §"E2-T2 round 2", not smoothed over here.
 * The automatic logo detector is a **hand-tuned, multi-scale ink filter** — measured on
   synthetic overlays and synthetic type, never on real packaging. Recall is
   **scale-relative** and depends on the glyph string, so it is quoted per probe rather than as
@@ -92,12 +109,15 @@ default-`None` keyword so no existing caller changes.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import math
 import os
+import shutil
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -192,15 +212,118 @@ FILL_SCALE_MAX = 1.25
 
 _CLASSICAL_BACKEND = "local_shadow_attenuation_v1"
 _PASS_THROUGH_BACKEND = "pass_through"
+_SDXL_BACKEND = "sdxl_inpaint"
 
-# The round-2 target. Named, sized and licensed here so the refusal can quote it; **not**
-# pinned by sha256, because the file has never been on this machine and a made-up digest is
-# exactly the kind of number this repo forbids.
+# --- the round-2 generative step: SDXL inpainting -------------------------------------------
+#
+# Model, revision and licence. The revision is a **commit sha**, not a branch: `main` moves,
+# and "we ran whatever diffusers/stable-diffusion-xl-1.0-inpainting-0.1 pointed at on the day"
+# is not a reproducible measurement. The sha and the per-file byte sizes below were read off
+# the Hub on 2026-11-04 and are what `make fetch-sdxl` pins.
 SDXL_MODEL_ID = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
+SDXL_REVISION = "115134f363124c53c7d878647567d04daf26e41e"
 SDXL_DIRNAME = "sdxl-inpaint-0.1"
-SDXL_APPROX_BYTES = 10_000_000_000
+SDXL_VARIANT = "fp16"
+# CreativeML Open RAIL++-M: commercial use **is** permitted, and the licence carries use
+# restrictions that travel with the weights — no use for unlawful, defamatory, harassing or
+# deliberately harmful content, and redistribution of the model or a derivative must pass the
+# same restrictions on. The pipeline here only ever *runs* the weights locally; nothing is
+# redistributed. Recorded in docs/DEPS.md, not just here.
 SDXL_LICENCE = "CreativeML Open RAIL++-M"
+# Exactly the fp16 variant plus the configs and tokenizers needed to load it. Deliberately not
+# a directory glob: `allow_patterns=["unet/*"]` pulls the fp32 weights as well, which would
+# double the download (6.9 GB -> 20 GB) to produce an identical result at more RAM.
+SDXL_REQUIRED_FILES: dict[str, int] = {
+    "model_index.json": 690,
+    "scheduler/scheduler_config.json": 479,
+    "text_encoder/config.json": 746,
+    "text_encoder/model.fp16.safetensors": 246_144_867,
+    "text_encoder_2/config.json": 758,
+    "text_encoder_2/model.fp16.safetensors": 1_389_382_884,
+    "tokenizer/merges.txt": 524_619,
+    "tokenizer/special_tokens_map.json": 472,
+    "tokenizer/tokenizer_config.json": 737,
+    "tokenizer/vocab.json": 1_059_962,
+    "tokenizer_2/merges.txt": 524_619,
+    "tokenizer_2/special_tokens_map.json": 460,
+    "tokenizer_2/tokenizer_config.json": 725,
+    "tokenizer_2/vocab.json": 1_059_962,
+    "unet/config.json": 1_932,
+    "unet/diffusion_pytorch_model.fp16.safetensors": 5_135_178_560,
+    "vae/config.json": 659,
+    "vae/diffusion_pytorch_model.fp16.safetensors": 167_335_338,
+}
+SDXL_APPROX_BYTES = sum(SDXL_REQUIRED_FILES.values())  # 6.94 GB as measured, not "~10 GB"
+
+# --- generation parameters, and why these numbers ------------------------------------------
+#
+# **Seed.** Fixed at module level so the stage is reproducible: same input, same seed, same
+# bytes. `notes["seed"]` records it on every run, and `prettify_sdxl(seed=...)` overrides it.
+SDXL_SEED = 20261104
+# **Steps = 30.** SDXL's inpainting pipeline is distilled enough that 30 steps is the point
+# where the masked region stops visibly changing on fabric: measured on the two fixtures at
+# 20 / 30 / 50 steps, 20 shows blotchy low-frequency drift inside the mask and 50 is
+# indistinguishable from 30 to the eye. 30 is the cheapest step count that is not visibly
+# under-baked. The *effective* denoise steps are `strength × steps`, so at strength 0.85 that
+# is ~26.
+SDXL_STEPS = 30
+# **Strength = 0.85.** This is the one parameter with a product-shaped argument. Low strength
+# (≤ 0.5) keeps the original pixels and only nudges the shadow — it cannot remove a crease,
+# which is the whole point of using a generative model. High strength (1.0) re-noises the
+# masked region completely and starts inventing fabric *channels* that were never there. 0.85
+# leaves enough of the original low frequencies to keep the fold's location credible while
+# allowing the model to replace the fold's gradient. It is a compromise, not an optimum, and
+# the handoff says so.
+SDXL_STRENGTH = 0.85
+# **Guidance 5.0** is SDXL's own default and is deliberately *not* raised. A higher guidance
+# makes the model obey "no wrinkles" harder and drift further from the actual garment — the
+# failure mode here is a garment that looks like a different garment, not one that still has a
+# fold.
+SDXL_GUIDANCE = 5.0
+SDXL_PROMPT = (
+    "a professional e-commerce product photo of a garment laid flat, pressed smooth fabric, "
+    "no wrinkles, no creases, even soft studio lighting, sharp fabric texture, neutral colour"
+)
+SDXL_NEGATIVE_PROMPT = (
+    "wrinkles, creases, folds, crumpled, shadow bands, blurry, out of focus, low quality, "
+    "text, letters, logo, watermark, logo distortion, seams, extra fabric, warped pattern"
+)
+# **Working resolution.** SDXL was trained at 1024²; running it far below that produces
+# duplicated hems and doubled seams, and the artefacts land *inside* the mask, which is the one
+# place we cannot hide them. So the generative step works at the long edge below and the result
+# is resampled back to the input canvas. 1024 is the quality default; `prettify_sdxl(side=...)`
+# exists because measuring the cost curve is the only way to answer "does this fit a gate".
+SDXL_WORK_SIDE = 1024
+SDXL_WORK_SIDE_MIN = 512
+# Feather width as a fraction of the short edge (min 3 px). See `_outward_feather` for why
+# this is an outward ring ramp and not a Gaussian of the mask.
+SDXL_FEATHER_FRACTION = 0.008
+SDXL_FEATHER_MIN_PX = 3
+# Multiple of 64: SDXL's VAE downsamples by 8 and the UNet's attention blocks by 64, and an
+# off-by-8 canvas shows up as a tiling seam.
+SDXL_SIZE_MULTIPLE = 64
+
 WEIGHTS_DIR_ENV = "SNAPLIST_MODEL_DIR"
+SDXL_DIR_ENV = "SNAPLIST_SDXL_DIR"
+SDXL_FETCH_TARGET = "fetch-sdxl"
+# The generative stack is a **PEP 735 dependency group**, not a main dependency: a plain
+# `uv sync` / `make install` must not pull 0.72 GB for a mode nobody runs by default. Both
+# names live here so the refusal can tell the operator exactly which command to run instead of
+# discovering the requirement from an ImportError traceback 40 lines deep.
+SDXL_DEP_GROUP = "sdxl"
+SDXL_INSTALL_TARGET = "install-sdxl"
+# Modules `mode=SDXL_INPAINT` needs at load time. Checked with `importlib.util.find_spec`, which
+# reports presence **without importing** — the check runs during pytest collection and inside
+# the refusal path, and neither may pay torch's 2 s import (or fail on a machine that could
+# otherwise run the whole suite).
+SDXL_DEP_MODULES: tuple[str, ...] = (
+    "torch",
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "huggingface_hub",
+)
 
 Box = tuple[int, int, int, int]  # x, y, width, height in flat-lay pixel coordinates
 
@@ -249,33 +372,238 @@ class WrinkleMaskAudit:
 
 
 def sdxl_weights_dir() -> Path:
-    """Where the round-2 SDXL weights are looked for. Never creates it, never downloads."""
+    """Where the SDXL inpainting weights are looked for. Never creates it, never downloads.
+
+    Two overrides, checked in this order: `SNAPLIST_SDXL_DIR` (this model only, which is what
+    a test or a second model directory wants) and `SNAPLIST_MODEL_DIR` (the shared base that
+    `segment.py` already uses for `u2net.onnx`). Default:
+    `~/.cache/snaplist/models/sdxl-inpaint-0.1/`.
+    """
+    direct = os.environ.get(SDXL_DIR_ENV, "").strip()
+    if direct:
+        return Path(direct).expanduser()
     override = os.environ.get(WEIGHTS_DIR_ENV, "").strip()
     base = Path(override).expanduser() if override else Path.home() / ".cache/snaplist/models"
     return base / SDXL_DIRNAME
+
+
+def sdxl_missing_files(root: Path | None = None) -> list[str]:
+    """Which of the pinned files are absent or the wrong size. Empty list == a usable tree.
+
+    Size, not a marker file: the byte counts are pinned per file at a pinned revision, so a
+    truncated download or a different model fails here instead of loading into a UNet that
+    quietly produces worse pixels. A `.complete` sentinel would also have to be trusted, and
+    a sentinel is the easiest thing in the world to copy next to the wrong files.
+    """
+    directory = root if root is not None else sdxl_weights_dir()
+    problems: list[str] = []
+    for relative, expected in SDXL_REQUIRED_FILES.items():
+        candidate = directory / relative
+        try:
+            actual = candidate.stat().st_size
+        except OSError:
+            problems.append(f"{relative} (missing)")
+            continue
+        if actual != expected:
+            problems.append(f"{relative} ({actual} bytes, expected {expected})")
+    return problems
+
+
+def sdxl_weights_available() -> bool:
+    """True only when the full pinned tree is on disk. No subprocess, no import, no network."""
+    return not sdxl_missing_files()
+
+
+def sdxl_missing_deps() -> list[str]:
+    """Which generative-stack modules are not installed. `find_spec`, so nothing is imported.
+
+    Two reasons this must not `import torch`: it is called from `pytest`'s collection phase via
+    the test skip marker (importing torch there would add ~2 s per session and would defeat the
+    point of keeping the stack optional), and it is called from the refusal path, which exists
+    precisely for environments that do not have the stack.
+    """
+    missing: list[str] = []
+    for module in SDXL_DEP_MODULES:
+        try:
+            present = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError, AttributeError):  # pragma: no cover - broken install
+            present = False
+        if not present:
+            missing.append(module)
+    return missing
+
+
+def sdxl_backend_available() -> tuple[bool, str]:
+    """`(runnable, why-not)` for `mode=SDXL_INPAINT`. No imports, no model load, no network.
+
+    Two independent things have to be true and they fail for different reasons with different
+    fixes, so they are reported separately: the `sdxl` **dependency group** (0.72 GB of
+    site-packages) and the pinned **weights** (6.9 GB). Telling an operator "run make
+    fetch-sdxl" when what is missing is torch would send them to download 6.9 GB they already
+    have — the refusal has to name the actual gap.
+    """
+    missing_deps = sdxl_missing_deps()
+    missing_files = sdxl_missing_files()
+    if not missing_deps and not missing_files:
+        return True, ""
+    parts: list[str] = []
+    if missing_deps:
+        parts.append(
+            f"the `{SDXL_DEP_GROUP}` dependency group is not installed (missing: "
+            f"{', '.join(missing_deps)}) — run `make {SDXL_INSTALL_TARGET}`"
+        )
+    if missing_files:
+        parts.append(
+            f"{len(missing_files)} of {len(SDXL_REQUIRED_FILES)} pinned weight files are "
+            f"absent or the wrong size in {sdxl_weights_dir()} — run `make "
+            f"{SDXL_FETCH_TARGET}` (or `make {SDXL_INSTALL_TARGET}`, which does both)"
+        )
+    return False, "; ".join(parts)
 
 
 def fetch_hint() -> str:
     """The sentence a missing-weights refusal carries, so the fix is inside the error."""
     size_gb = SDXL_APPROX_BYTES / 1e9
     return (
-        f"run `make fetch-models` (fetches {SDXL_MODEL_ID}, ~{size_gb:.0f} GB, licence "
-        f"{SDXL_LICENCE}, into {sdxl_weights_dir()})"
+        f"run `make {SDXL_FETCH_TARGET}` (fetches {SDXL_MODEL_ID} at revision "
+        f"{SDXL_REVISION[:12]}…, {size_gb:.1f} GB, licence {SDXL_LICENCE}, into "
+        f"{sdxl_weights_dir()})"
     )
 
 
-def _sdxl_refusal() -> str:
+def _fix_sentence() -> str:
+    """The **one** command that closes the actual gap. Chosen from the gap, never guessed.
+
+    A refusal that names the wrong command is worse than no refusal: the operator runs it,
+    it succeeds, they re-run the stage, and they land on the same error with no new
+    information. That is exactly what happened when this sentence unconditionally said "run
+    `make fetch-sdxl`" — on a machine whose 18 weight files were all present and whose only
+    gap was the optional `sdxl` dependency group, `fetch_sdxl_weights()` is idempotent, so it
+    printed "already present and verified" and exited 0 having fixed nothing.
+
+    Three cases, three sentences:
+    * **both missing** — `make install-sdxl`, which does both, and say why the fetch target
+      alone is not enough;
+    * **only the group** — `make install-sdxl` again (same command, different reason: nothing
+      will be downloaded because the fetcher verifies instead of re-downloading), and
+      deliberately **no mention of `make fetch-sdxl`** as a fix, because it is not one;
+    * **only the weights** — `fetch_hint()`, which is what it was written for.
+    """
+    missing_deps = sdxl_missing_deps()
+    missing_files = sdxl_missing_files()
+    if missing_deps and missing_files:
+        return (
+            f"run `make {SDXL_INSTALL_TARGET}` — it installs the `{SDXL_DEP_GROUP}` "
+            "dependency group and then fetches the weights; "
+            f"`make {SDXL_FETCH_TARGET}` on its own would leave the group missing and the "
+            "same error would come back"
+        )
+    if missing_deps:
+        return (
+            f"run `make {SDXL_INSTALL_TARGET}` — it installs the `{SDXL_DEP_GROUP}` "
+            "dependency group (0.72 GB of site-packages). The pinned weights are already on "
+            "disk and verified, so the fetch step inside it downloads nothing"
+        )
+    return fetch_hint()
+
+
+def _sdxl_refusal(detail: str = "") -> str:
     """The full refusal text: what is missing, how big, where it goes, and what to run."""
+    size_gb = SDXL_APPROX_BYTES / 1e9
+    runnable, why_not = sdxl_backend_available()
+    missing = sdxl_missing_files()
+    state = why_not if not runnable else "everything is present but the model failed to load"
     return (
-        "mode=SDXL_INPAINT is not implemented in this build (docs/PLAN.md ticket E2-T2, "
-        "round 2). It needs the ~10 GB SDXL inpainting weights "
-        f"({SDXL_MODEL_ID}, licence {SDXL_LICENCE}) unpacked into "
-        f"{sdxl_weights_dir()}, plus torch and diffusers — none of which this environment "
-        f"has. Fix: {fetch_hint()} and install the round-2 extras. This stage never "
-        "downloads them itself: the pipeline contract is zero network calls, and a stage "
-        "that fetches 10 GB on first call turns a missing file into a ten-minute stall "
-        "inside a job"
+        f"mode=SDXL_INPAINT (docs/PLAN.md ticket E2-T2) cannot run in this environment: "
+        f"{state}. The model is {SDXL_MODEL_ID} at revision {SDXL_REVISION} "
+        f"({SDXL_VARIANT} variant), {size_gb:.1f} GB, licence {SDXL_LICENCE} "
+        "(commercial use allowed; use restrictions travel with the weights — see "
+        f"docs/DEPS.md). Fix: {_fix_sentence()}. "
+        "The base install deliberately excludes this stack: `mode=CLASSICAL` and every other "
+        "stage work without it"
+        + (f". Missing or wrong: {', '.join(missing[:4])}" + ("…" if len(missing) > 4 else "")
+           if missing else "")
+        + (f". Loader said: {detail}" if detail else "")
+        + ". This stage never downloads or installs anything itself: the pipeline contract is "
+        "zero network calls, and a stage that fetches 7 GB on first call turns a missing file "
+        "into a ten-minute stall inside a job"
     )
+
+
+def _require_sdxl_backend() -> Path:
+    """The weights directory, or `PrettifyBackendUnavailable` naming the actual gap."""
+    runnable, _why_not = sdxl_backend_available()
+    if not runnable:
+        raise PrettifyBackendUnavailable(_sdxl_refusal())
+    return sdxl_weights_dir()
+
+
+def fetch_sdxl_weights(*, force: bool = False, verbose: bool = True) -> Path:
+    """Download the pinned fp16 tree into `sdxl_weights_dir()`. **Only** called by `make`.
+
+    Never reachable from `prettify()`: the download is an explicit operator act, exactly like
+    `make fetch-models` for the 176 MB u2net file. Same shape as that target, one level up:
+
+    * download into a sibling `<dir>.partial`, never into the live directory, so a killed
+      download cannot leave a half-populated tree where a loader will find it;
+    * verify every file's byte count against `SDXL_REQUIRED_FILES` before promoting;
+    * on any failure, delete the partial tree and re-raise — a half download is worthless and
+      keeping it only makes the next attempt look like it made progress.
+
+    Returns the live directory. Idempotent: a verified tree is left alone unless `force`.
+    """
+    try:
+        # Lazy, and not only for the run-time path: this module must stay importable without
+        # the sdxl group, so the Hub client is only reached from `make fetch-sdxl`.
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError(
+            f"huggingface_hub is not installed — it lives in the `{SDXL_DEP_GROUP}` "
+            f"dependency group, which the base `make install` deliberately excludes. Run "
+            f"`uv sync --group {SDXL_DEP_GROUP}` (or `make {SDXL_INSTALL_TARGET}`, which does "
+            "that and then fetches the weights)"
+        ) from exc
+
+    target = sdxl_weights_dir()
+    if not force and sdxl_weights_available():
+        if verbose:
+            print(f"SDXL weights already present and verified: {target}")
+        return target
+
+    partial = target.with_name(target.name + ".partial")
+    if partial.exists():
+        shutil.rmtree(partial)
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    if verbose:
+        print(
+            f"downloading {SDXL_MODEL_ID} @ {SDXL_REVISION[:12]} ({SDXL_VARIANT}) -> "
+            f"{target} ({SDXL_APPROX_BYTES / 1e9:.1f} GB, once)"
+        )
+    try:
+        snapshot_download(
+            repo_id=SDXL_MODEL_ID,
+            revision=SDXL_REVISION,
+            allow_patterns=sorted(SDXL_REQUIRED_FILES),
+            local_dir=str(partial),
+            max_workers=4,
+        )
+        problems = sdxl_missing_files(partial)
+        if problems:
+            raise RuntimeError(
+                "download finished but the tree does not match the pin: "
+                + ", ".join(problems[:6])
+            )
+        # Promote only a complete tree. `os.replace` is atomic within a filesystem, so a
+        # reader either sees the old directory or the new one, never a mixture.
+        if target.exists():
+            shutil.rmtree(target)
+        os.replace(partial, target)
+    except BaseException:
+        shutil.rmtree(partial, ignore_errors=True)
+        raise
+    if verbose:
+        print(f"verified {len(SDXL_REQUIRED_FILES)} files, {SDXL_APPROX_BYTES} bytes: {target}")
+    return target
 
 
 # ---------------------------------------------------------------------------- blur helpers
@@ -764,6 +1092,435 @@ def _attenuate(
     return out, note
 
 
+# ------------------------------------------------------------------- the generative step
+#
+# Everything below this line is the round-2 SDXL inpainting path. It is imported lazily, inside
+# the branch that needs it, and that is a hard rule rather than tidiness: torch is 581 MB of
+# site-packages, and a module-level `import torch` here would make `make test` — and the API
+# process — fail to start on any machine that has not pulled the round-2 extras. The cheapest
+# backend (`u2net` through onnxruntime) deliberately does not need torch, and nothing in this
+# file may take that away.
+
+_SDXL_HONEST_SCOPE = (
+    "generative inpaint of the wrinkle mask only: inside the feathered mask, SDXL inpainting "
+    "synthesises fabric texture. Pixels inside the logo/text protection region, inside the "
+    "boundary band, or outside the feathered mask are not generated — they are the "
+    "white-balanced input. Because it synthesises texture, this mode CAN invent plausible "
+    "detail that was not in the photograph, which is exactly why the logo protection is a "
+    "hard subtraction and not a hint. MEASURED ON THE FIXTURES, THAT IS WHAT IT DOES: the "
+    "folds return as thin hard scratch lines, so this mode is implemented and honest but not "
+    "yet a product-quality de-wrinkler — see the known-failure paragraph in prettify_sdxl()"
+)
+
+
+def _sdxl_device_and_dtype() -> tuple[str, str]:
+    """`(device, dtype-name)` for the generative step. Imported torch is local to this call.
+
+    MPS when available, CPU otherwise. `float16` on MPS because the weights are shipped fp16
+    and a fp32 copy would double 7 GB of RAM for nothing measurable; `float32` on CPU because
+    Apple's CPU kernels for fp16 are slower than fp32 and MPS-only ops make fp16 CPU paths
+    fragile.
+    """
+    import torch
+
+    if torch.backends.mps.is_available():
+        return "mps", "float16"
+    return "cpu", "float32"
+
+
+@lru_cache(maxsize=1)
+def _load_sdxl_pipeline(weights_dir: str, device: str, dtype_name: str) -> object:
+    """Load the pipeline once per process. `local_files_only=True` — **never** a download.
+
+    Cached because the alternative makes the second call in a worker pay 7 GB of disk read
+    again, and because a "warm" latency number is only meaningful if the model is warm. The
+    cache key includes device and dtype so a test can force CPU without poisoning the MPS
+    entry.
+    """
+    import torch
+    from diffusers import StableDiffusionXLInpaintPipeline
+
+    dtype = getattr(torch, dtype_name)
+    pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+        weights_dir,
+        dtype=dtype,
+        variant=SDXL_VARIANT,
+        use_safetensors=True,
+        local_files_only=True,  # the whole point: a missing file raises, it does not fetch
+    )
+    pipe.set_progress_bar_config(disable=True)
+    if device == "mps":
+        # 24 GB of unified memory is shared with the OS. Attention slicing trades a little
+        # speed for a peak activation cost that fits; it is a memory decision, recorded in
+        # `notes["generative"]["attention_slicing"]` so nobody has to guess why it is on.
+        pipe.enable_attention_slicing()
+    # `pipe.enable_vae_slicing()` was removed from the pipeline class in diffusers 0.42 (it
+    # forwards nothing now); the method lives on the VAE. Guarded rather than version-sniffed,
+    # because the point is "slice when the VAE can", not "diffusers is at least version X".
+    if hasattr(pipe.vae, "enable_slicing"):
+        pipe.vae.enable_slicing()
+    pipe = pipe.to(device)
+    pipe.unet.eval()
+    pipe.vae.eval()
+    return pipe
+
+
+def _make_generator(torch_module: object, device: str, seed: int) -> object:
+    """A seeded generator, on the device when the backend supports one.
+
+    `torch.Generator(device="mps")` is not available on every torch build, and the CPU
+    generator is what diffusers' `randn_tensor` moves across anyway; so the fallback is not a
+    degradation, it is the portable path.
+    """
+    torch = torch_module
+    try:
+        return torch.Generator(device=device).manual_seed(seed)
+    except (RuntimeError, TypeError):  # pragma: no cover - depends on the torch build
+        return torch.Generator(device="cpu").manual_seed(seed)
+
+
+def _sdxl_work_size(height: int, width: int, side: int) -> tuple[int, int]:
+    """`(work_height, work_width)` — aspect preserved, both sides multiples of 64.
+
+    SDXL is trained at 1024² and duplicates hems and seams well below ~512, so the long edge is
+    put at `side` (default `SDXL_WORK_SIDE`) and the short edge follows the aspect. Never zero,
+    because a degenerate canvas is a crash inside the UNet rather than an error message.
+    """
+    multiple = SDXL_SIZE_MULTIPLE
+    long_edge = max(height, width)
+    scale = float(side) / float(long_edge)
+    work_h = max(multiple, int(round(height * scale / multiple)) * multiple)
+    work_w = max(multiple, int(round(width * scale / multiple)) * multiple)
+    return work_h, work_w
+
+
+def _outward_feather(mask: np.ndarray, radius: int) -> np.ndarray:
+    """1.0 on `mask`, a raised-cosine ramp to 0.0 over `radius` px *outside* it, 0 further out.
+
+    Why not a Gaussian blur of the mask, which is what `_attenuate` uses: the wrinkle mask is a
+    network of **thin lines**. Blurring a 2 px-wide line with sigma ≈ 2 drops its centre value
+    below 0.5, so a blurred-mask alpha repaints almost nothing — measured on
+    `crease-01-breeches-leg`, `weight > 0.5` covered **22** pixels of a 4412 px mask. The
+    classical fill never noticed because a weight of 0.3 still attenuates a shadow; a
+    generative step needs the *core* of the mask to be fully regenerated.
+
+    So the ramp is built outward, by exact Chebyshev rings (`_binary_dilate`), with a raised
+    cosine profile: full strength inside, `0.5·(1+cos(π·d/(R+1)))` at ring `d`, zero at
+    `R+1`. Deterministic (integer geometry, no float convolution), it cannot leak past
+    `radius`, and the value decays monotonically — which is the "repaint strength decays with
+    the feather" requirement, expressed as the thing itself rather than as a hope.
+    """
+    weight = mask.astype(np.float64)
+    if radius <= 0:
+        return weight
+    previous = mask
+    for ring in range(1, int(radius) + 1):
+        grown = _binary_dilate(mask, ring)
+        value = 0.5 * (1.0 + math.cos(math.pi * ring / (radius + 1.0)))
+        weight[grown & ~previous] = value
+        previous = grown
+    return weight
+
+
+def _sdxl_feather_radius(height: int, width: int) -> int:
+    """Feather width in pixels: 0.8 % of the short edge, at least 3 px.
+
+    Resolution-relative for the same reason every other window in this file is: 4 px on a
+    480 px fixture and 4 px on a 1600 px flat-lay are not the same feather. 0.8 % is where the
+    seam stops being visible on fabric texture — measured by eye on the two fixture outputs,
+    see `docs/HANDOFF-vision.md`.
+    """
+    return max(SDXL_FEATHER_MIN_PX, int(round(SDXL_FEATHER_FRACTION * min(height, width))))
+
+
+def _feathered_repaint_weight(audit: WrinkleMaskAudit) -> tuple[np.ndarray, int]:
+    """Inpaint strength per pixel, in [0, 1], plus the radius that produced it.
+
+    Three properties, and each one is load-bearing:
+
+    * **only the final wrinkle mask** — the mask that already had the protection region and
+      the boundary band subtracted, so this function cannot re-introduce either;
+    * **feathered outward**, because a hard mask edge in a generative fill reads as a sticker:
+      the generated texture stops dead on a contour;
+    * **strength decays with the feather** — the value *is* the composite alpha, so a pixel on
+      the outermost ring is 10 % generated and 90 % original. This is why the soft edge is
+      applied here and not by the pipeline: `StableDiffusionXLInpaintPipeline` binarises
+      `mask_image` at 0.5 before building its 9-channel UNet input, so a soft mask handed to
+      the model is a hard mask with a differently-placed contour. The feather has to be ours.
+
+    The returned weight is clipped to `interior & ~protect_mask`, so the ring can never bleed
+    into the boundary band or over printed ink — the same two exclusions the mask itself
+    obeys, applied to the feather as well.
+    """
+    height, width = audit.final_mask.shape
+    radius = _sdxl_feather_radius(height, width)
+    support = audit.interior & ~audit.protect_mask
+    return _outward_feather(audit.final_mask, radius) * support, radius
+
+
+def _quantise(rgb: np.ndarray) -> np.ndarray:
+    return np.rint(np.clip(rgb, 0.0, 255.0)).astype(np.uint8)
+
+
+def prettify_sdxl(
+    flat_png: bytes,
+    alpha_png: bytes,
+    *,
+    protect: Sequence[Box] | None = None,
+    steps: int | None = None,
+    strength: float | None = None,
+    guidance: float | None = None,
+    seed: int | None = None,
+    side: int | None = None,
+) -> PrettifyResult:
+    """`mode=SDXL_INPAINT`: the same mask pipeline, then SDXL inpainting inside it.
+
+    READ THIS FIRST — THREE MEASURED FAILURES, NOT CAVEATS
+    -----------------------------------------------------
+    This mode is implemented, deterministic, protected and timed. It does **not** meet the
+    product bar, and the three numbers below are why. They are at the top of the docstring,
+    before the design, because the next person to read this file will be someone wondering
+    whether they can "just switch SDXL on".
+
+    1. **SSIM inside the mask is 0.6920 / 0.7415 against a 0.80 floor** — E0-T5's
+       `prettify SSIM (inside mask) >= 0.80`. Two fixtures, same definition as
+       `evals/metrics/prettify.py`. The classical path scores 0.9856 / 0.9792 on the same two.
+       The generative step moves pixels inside the region it was allowed to touch roughly
+       twenty times as far.
+    2. **It is ~2× over the latency gate.** E0-T5 asks p50 ≤ 20 s / p90 ≤ 35 s. Measured warm:
+       **38.3 s** (`crease-01-breeches-leg`) and **42.5 s** (`logo-01-tee-chest`), MPS fp16,
+       30 steps, strength 0.85, canvas 704×1024 and 1024×768. Both are above *p90*, so these
+       two samples alone put p50 at ~40 s. Cold adds a ~10 s model load on top.
+    3. **The output is traced, not removed — it looks repainted.** A soft fold comes back as a
+       thin, hard, blue-grey **scratch line**; on a real photo (`--in .../top-01.jpg` through
+       the full CLI) the garment looks like someone drew on it with a fine pen. Not "slightly
+       retouched": drawn on.
+
+    **Why, because this is the useful part and it is not a tuning miss.** The wrinkle mask is a
+    hairline/speckle field — 1–3 px lines plus isolated pixels. SDXL's VAE downsamples 8×, so
+    on a 704×1024 canvas the mask is **0.25–0.75 latent pixels wide**: the UNet is asked to
+    fill a feature it cannot represent, and the decoder resolves that as a high-frequency ridge
+    along the contour. Measured attempts to escape it: widening the mask by 2 / 4 / 8 px takes
+    mask coverage from 7.7 % to **57.7 % / 85.7 % / 103 %** of the garment interior (the mask is
+    scattered, so area grows with the *square* of the radius) and produces flat grey blocks;
+    lowering strength to 0.45 leaves the scratch lines and only keeps more of the original
+    cloth. **SDXL inpainting wants a region, not a network of creases.** Making this work needs
+    a crease detector that emits bands, which is a different ticket — and see
+    `docs/HANDOFF-vision.md` §9.6 for why "use it for stains instead" is not a product direction
+    here: `ItemAttributes.defects` exists because listings must disclose defects.
+
+    The rest of this docstring describes a correctly built machine whose output is not shippable.
+
+    Knobs
+    -----
+    This function is the one place the round-2 knobs are reachable from. `prettify()` keeps
+    its frozen four-parameter signature (`test_public_signatures_are_stable`) and calls this
+    with the module defaults; the CLI passes `--sdxl-steps` / `--sdxl-seed` / `--sdxl-side`
+    through here so a cost curve can be measured without editing constants.
+
+    **What is reused, not re-implemented.** White balance, the wrinkle score, the coverage
+    cap, the boundary band, morphology and the protection subtraction all come from
+    `_build_wrinkle_mask` — the same function `mode=CLASSICAL` consumes and the same one the
+    eval harness audits. A second mask implementation for the generative path would be a
+    second thing to keep honest.
+
+    **What is new.** The mask is turned into a feathered per-pixel repaint strength
+    (`_feathered_repaint_weight`), the model is run at a 64-aligned working resolution, and
+    the result is composited back with `out = balanced·(1 − w) + generated·w` at the *input*
+    resolution. The composite is what makes the two guarantees checkable rather than hopeful:
+    where `w == 0`, the output is the white-balanced input bit for bit, so nothing the model
+    invented can leak into the logo, the boundary band, or the backdrop. Those two guarantees
+    hold and are asserted:
+    `test_sdxl_output_equals_the_white_balanced_input_where_the_weight_is_zero` and
+    `test_repaint_weight_never_enters_the_protection_region_or_the_boundary_band`.
+
+    **Dependencies are optional.** This needs the `sdxl` dependency group (0.72 GB) and 6.9 GB
+    of pinned weights; a plain `make install` has neither. Both are checked with
+    `importlib.util.find_spec` + per-file byte counts before anything is imported, so a missing
+    group is a one-sentence refusal naming `make install-sdxl`, not an `ImportError` traceback.
+    It never downloads or installs anything itself.
+
+    Raises `PrettifyBackendUnavailable` (a `StageNotImplemented`, so the worker treats it as
+    terminal) when the dependency group or the pinned weights are missing. See
+    `docs/HANDOFF-vision.md` §"E2-T2 round 2" for the full table and the cost curve.
+    """
+    if not flat_png:
+        raise ValueError("prettify(): flat_png bytes are empty")
+    if not alpha_png:
+        raise ValueError("prettify(): alpha_png bytes are empty")
+
+    started = time.perf_counter()
+    rgb = _decode_rgb(flat_png, "flat_png")
+    alpha = _decode_l(alpha_png, "alpha_png")
+    if alpha.shape != rgb.shape[:2]:
+        raise ValueError(
+            f"prettify(): alpha shape {alpha.shape} does not match flat shape {rgb.shape[:2]}"
+            "; rectified flat-lay and alpha must be the same canvas (rectify does not return "
+            "the warped alpha — resize it to the flat-lay before calling prettify)"
+        )
+    if not (alpha >= 128).any():
+        raise ValueError("prettify(): alpha contains no garment pixels (no_garment)")
+
+    height, width = rgb.shape[:2]
+    audit = _build_wrinkle_mask(rgb, alpha, protect=protect)
+    weight, feather_radius = _feathered_repaint_weight(audit)
+    balanced = _quantise(audit.balanced)
+
+    resolved_steps = SDXL_STEPS if steps is None else int(steps)
+    resolved_strength = SDXL_STRENGTH if strength is None else float(strength)
+    resolved_guidance = SDXL_GUIDANCE if guidance is None else float(guidance)
+    resolved_seed = SDXL_SEED if seed is None else int(seed)
+    resolved_side = SDXL_WORK_SIDE if side is None else int(side)
+    if resolved_steps < 1:
+        raise ValueError(f"prettify_sdxl(): steps={resolved_steps} must be >= 1")
+    if not 0.0 < resolved_strength <= 1.0:
+        raise ValueError(f"prettify_sdxl(): strength={resolved_strength} must be in (0, 1]")
+    if resolved_guidance <= 0.0:
+        raise ValueError(f"prettify_sdxl(): guidance={resolved_guidance} must be > 0")
+    if resolved_side < SDXL_WORK_SIDE_MIN:
+        raise ValueError(
+            f"prettify_sdxl(): side={resolved_side} is below {SDXL_WORK_SIDE_MIN}; SDXL below "
+            "that duplicates hems and seams, so a smaller canvas would be a different stage"
+        )
+
+    notes: dict = dict(audit.notes)
+    notes.update(
+        {
+            "mode": PrettifyMode.SDXL_INPAINT.value,
+            "seed": resolved_seed,
+            "network_calls": 0,
+            "canvas": [int(width), int(height)],
+            "honest_scope": _SDXL_HONEST_SCOPE,
+            "ssim_note": (
+                "SSIM here is output vs input over the garment, i.e. a destruction budget: "
+                "it says how far the pixels moved, not whether the crease went away. A "
+                "generative inpaint necessarily scores far below the classical fill on this "
+                "metric and that is not by itself evidence of a better or worse result"
+            ),
+        }
+    )
+
+    repaint_px = int(audit.final_mask.sum())
+    if repaint_px == 0:
+        # Nothing was selected, so there is nothing to inpaint. Loading 7 GB to paint zero
+        # pixels would be a lie about what ran, so the model is not loaded and the notes say
+        # exactly that. The output is still the white-balanced image, so the label is honest:
+        # `generative_step` reports the skip.
+        notes["generative_step"] = "skipped: empty wrinkle mask"
+        notes["generative"] = {"repaint_px": 0, "model_loaded": False}
+        return PrettifyResult(
+            prettified_png=_encode_rgb(balanced),
+            meta=StageMeta(
+                stage="prettify",
+                backend=_SDXL_BACKEND,
+                device="cpu",
+                seconds=time.perf_counter() - started,
+                notes=notes,
+            ),
+        )
+
+    weights_dir = _require_sdxl_backend()
+    device, dtype_name = _sdxl_device_and_dtype()
+
+    load_started = time.perf_counter()
+    cache_info_before = _load_sdxl_pipeline.cache_info()
+    try:
+        pipe = _load_sdxl_pipeline(str(weights_dir), device, dtype_name)
+    except PrettifyBackendUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a loader can fail a dozen ways; name the fix
+        raise PrettifyBackendUnavailable(_sdxl_refusal(f"{type(exc).__name__}: {exc}")) from exc
+    model_load_s = time.perf_counter() - load_started
+    cold = _load_sdxl_pipeline.cache_info().misses > cache_info_before.misses
+
+    import torch
+
+    work_h, work_w = _sdxl_work_size(height, width, resolved_side)
+    image_pil = Image.fromarray(balanced).resize(
+        (work_w, work_h), Image.LANCZOS
+    )
+    # The **binary** final mask, not the feathered weight: the model's job is to regenerate
+    # the crease and nothing else, and the coverage cap is a promise about the region the
+    # model may touch. The pipeline binarises `mask_image` at 0.5 anyway, so handing it a soft
+    # mask would only move the contour without making it soft. The soft edge lives in the
+    # composite below, where it is exact (`_outward_feather`) and where a weight of 0 provably
+    # means "not generated".
+    mask_pil = Image.fromarray(np.where(audit.final_mask, 255, 0).astype(np.uint8)).resize(
+        (work_w, work_h), Image.BILINEAR
+    )
+
+    generate_started = time.perf_counter()
+    generator = _make_generator(torch, device, resolved_seed)
+    result = pipe(
+        prompt=SDXL_PROMPT,
+        negative_prompt=SDXL_NEGATIVE_PROMPT,
+        image=image_pil,
+        mask_image=mask_pil,
+        height=work_h,
+        width=work_w,
+        strength=resolved_strength,
+        num_inference_steps=resolved_steps,
+        guidance_scale=resolved_guidance,
+        generator=generator,
+        num_images_per_prompt=1,
+    )
+    generate_s = time.perf_counter() - generate_started
+
+    generated_image = result.images[0].convert("RGB")
+    if generated_image.size != (width, height):
+        generated_image = generated_image.resize((width, height), Image.LANCZOS)
+    generated = np.asarray(generated_image, dtype=np.float64)
+
+    # The composite, and the reason it is here rather than inside the pipeline: it is the only
+    # formulation in which "w == 0 => output == white-balanced input, bit for bit" is true by
+    # construction instead of by observation.
+    alpha_weight = weight[:, :, None]
+    composited = audit.balanced * (1.0 - alpha_weight) + generated * alpha_weight
+    prettified_png = _encode_rgb(_quantise(composited))
+    seconds = time.perf_counter() - started
+
+    if device == "mps":  # pragma: no cover - depends on the host
+        torch.mps.empty_cache()
+
+    notes["generative_step"] = "sdxl-inpainting-0.1"
+    notes["generative"] = {
+        "model_id": SDXL_MODEL_ID,
+        "revision": SDXL_REVISION,
+        "variant": SDXL_VARIANT,
+        "model_loaded": True,
+        "cold": bool(cold),
+        "model_load_s": round(model_load_s, 3),
+        "generate_s": round(generate_s, 3),
+        "num_inference_steps": resolved_steps,
+        "strength": resolved_strength,
+        "effective_denoise_steps": round(resolved_steps * resolved_strength, 2),
+        "guidance_scale": resolved_guidance,
+        "prompt": SDXL_PROMPT,
+        "negative_prompt": SDXL_NEGATIVE_PROMPT,
+        "work_canvas": [int(work_w), int(work_h)],
+        "attention_slicing": bool(device == "mps"),
+        "repaint_px": repaint_px,
+        "repaint_area_px": int((weight > 0.0).sum()),
+        "feather_radius_px": int(feather_radius),
+        "repaint_coverage_of_interior": round(
+            repaint_px / max(1, int(audit.interior.sum())), 4
+        ),
+        "feather_profile": "outward Chebyshev rings, raised cosine 1 -> 0 over feather_radius_px",
+        "composite": "out = balanced*(1-w) + generated*w, w=0 outside the feathered mask",
+        "texture_synthesis": True,
+    }
+    return PrettifyResult(
+        prettified_png=prettified_png,
+        meta=StageMeta(
+            stage="prettify",
+            backend=_SDXL_BACKEND,
+            device=device,
+            seconds=seconds,  # measured wall-clock; None would mean UNMEASURED
+            notes=notes,
+        ),
+    )
+
+
 # --------------------------------------------------------------------------------- stage
 
 
@@ -779,7 +1536,13 @@ def prettify(
     `mode=CLASSICAL` runs the non-generative pipeline: white balance -> wrinkle mask ->
     protection subtraction -> feathered shadow attenuation. `mode=PASS_THROUGH` validates the
     inputs and returns the bytes **untouched**, saying so in `meta.notes`. `mode=SDXL_INPAINT`
-    is round 2 and raises `PrettifyBackendUnavailable` with the fix inside the message.
+    runs the same mask pipeline and then SDXL inpainting inside the feathered mask — see
+    `prettify_sdxl()` for the knobs (steps, strength, seed, canvas) and for what it costs. It
+    raises `PrettifyBackendUnavailable`, with the fix inside the message, when the pinned
+    weights are not on disk **or when the optional `sdxl` dependency group is not
+    installed** (a base `make install` has neither) — the sentence names whichever gap
+    is actually open, because naming the wrong one costs the reader a round trip. It
+    never downloads or installs anything itself.
 
     `protect` is an optional sequence of `(x, y, w, h)` boxes in flat-lay pixel coordinates —
     e.g. a caller that already knows where the care label is. It is added to the automatic
@@ -798,9 +1561,10 @@ def prettify(
         ) from exc
 
     if requested is PrettifyMode.SDXL_INPAINT:
-        # Refused *before* any pixel work: the honest answer is "this build cannot", not
-        # "here is a classical result labelled sdxl".
-        raise PrettifyBackendUnavailable(_sdxl_refusal())
+        # Delegated rather than handled inline: the generative path has its own knobs and its
+        # own (much longer) docstring, and `prettify()`'s signature is frozen at four
+        # parameters. The mode label reaching the report is still whatever actually ran.
+        return prettify_sdxl(flat_png, alpha_png, protect=protect)
 
     started = time.perf_counter()
     rgb = _decode_rgb(flat_png, "flat_png")
