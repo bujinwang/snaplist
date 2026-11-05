@@ -8,7 +8,8 @@
  *
  * Hard rules (docs/METRICS.md §3, §4):
  *  1. Seven event names. Frozen. Adding one is a version bump here, not an improvisation in a
- *     screen component.
+ *     screen component. `1.3.0` added a field, not an event: `event_id`, the idempotency key
+ *     for `POST /v1/events` (ADR-007).
  *  2. No PII, ever. No free text, no attribute values, no image content, no email, no
  *     device advertising id. Field *names* are allowed, field *values* are not.
  *  3. Emitted in the same PR as the feature that produces the step. An unmeasured feature is
@@ -17,7 +18,7 @@
 
 import { z } from "zod";
 
-export const EVENTS_VERSION = "1.2.0";
+export const EVENTS_VERSION = "1.3.0";
 
 /**
  * Three different threes live in this product. Naming them apart is the whole point: a
@@ -57,6 +58,14 @@ export const MARKETPLACE_IDS = ["ebay", "poshmark", "vinted"] as const;
 
 const Envelope = z
   .object({
+    /**
+     * Client-generated uuid, one per event, reused only when retrying that same event.
+     * It is the idempotency key for `POST /v1/events`: a retry with the same id is a no-op,
+     * while a reused id carrying different content is a 409, not a silent overwrite.
+     * Added in `EVENTS_VERSION = 1.3.0` (ADR-007) — the API needed an id and the envelope did
+     * not have one, so a client validating with this schema could not have built a sendable body.
+     */
+    event_id: z.string().uuid(),
     event: z.enum(ANALYTICS_EVENTS),
     /** ISO 8601, client clock, UTC. Server also stamps received_at; the skew is expected. */
     client_ts: z.string().datetime(),

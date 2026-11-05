@@ -25,6 +25,7 @@ import {
 } from "../src/index";
 
 const envelope = {
+  event_id: "0f8fad5b-d9cb-469f-a165-70867728950e",
   client_ts: "2026-10-28T12:00:00Z",
   session_id: "sess_1",
   subject: "anon_9f1b0c62",
@@ -33,7 +34,7 @@ const envelope = {
 };
 
 test("exactly seven frozen event names, in frozen order", () => {
-  assert.equal(EVENTS_VERSION, "1.2.0");
+  assert.equal(EVENTS_VERSION, "1.3.0");
   assert.deepEqual([...ANALYTICS_EVENTS], [
     "upload_started",
     "prettify_approved",
@@ -43,6 +44,31 @@ test("exactly seven frozen event names, in frozen order", () => {
     "paywall_impression",
     "export_delivered",
   ]);
+});
+
+test("the envelope carries event_id, and it must be a uuid", () => {
+  // ADR-007: `POST /v1/events` is idempotent on a client-generated id. Before 1.3.0 the
+  // envelope had no such field, so a client validating with this schema could not build a
+  // sendable body at all — the API would 422 it for the key it required and this schema
+  // would 422 it for the key it forbade.
+  const parsed = UploadStarted.parse({ ...envelope, event: "upload_started", source: "camera", capture_mode: "single" });
+  assert.equal(parsed.event_id, envelope.event_id);
+
+  const { event_id: _omitted, ...withoutId } = envelope;
+  assert.equal(
+    UploadStarted.safeParse({ ...withoutId, event: "upload_started", source: "camera", capture_mode: "single" }).success,
+    false,
+  );
+  assert.equal(
+    UploadStarted.safeParse({
+      ...envelope,
+      event_id: "not-a-uuid",
+      event: "upload_started",
+      source: "camera",
+      capture_mode: "single",
+    }).success,
+    false,
+  );
 });
 
 test("export_delivered exists as a real event, not just a version number", () => {

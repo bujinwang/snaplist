@@ -324,14 +324,15 @@ Rules: never blame the seller for an `internal` failure; always say whether a cr
 
 ---
 
-## 7. Analytics event vocabulary — frozen, own version (`EVENTS_VERSION = 1.1.0`)
+## 7. Analytics event vocabulary — frozen, own version (`EVENTS_VERSION = 1.3.0`)
 
 Typed source of truth: `packages/shared/src/analytics.ts`. This is deliberately **not** under
 `CONTRACT_VERSION`: the mobile client ships on its own schedule and an event rename must not
 force an API version bump. It is still frozen, and still requires an ADR to change.
 
 **Seven events.** Adding an eighth is a version bump here, not an improvisation in a screen.
-Current: `EVENTS_VERSION = 1.2.0` (`1.1.0` = six events; `1.2.0` adds `export_delivered`, H below).
+Current: `EVENTS_VERSION = 1.3.0` (`1.1.0` = six events; `1.2.0` adds `export_delivered`, H below;
+`1.3.0` adds `event_id` to the envelope — a field, not an event, ADR-007).
 
 **Owner of event *definitions* and their thresholds:** `docs/METRICS.md` (product). This section
 owns the *shape* and the frozen names; product owns what the numbers have to be. The five funnel
@@ -476,6 +477,7 @@ number from `GET /v1/usage` (`Usage.items_included`) and must never hardcode 3, 
 | events 1.1.0 | 2026-10-28 | analytics vocabulary: 6 frozen events, `fields_touched`, latency proxies, three distinct limits, research-data rule | ADR-002 |
 | 1.0.0 (note) | 2026-10-28 | `subscriptions.overage_enabled` / `overage_unit_price_cents` reserved, v1 hard-blocks; no wire shape change | ADR-005 §3 |
 | events 1.2.0 | 2026-10-28 | 7th event `export_delivered`; activation re-bound to delivered (not attempted); v2 `listing_confirmations` placeholder | ADR-002 |
+| events 1.3.0 | 2026-11-04 | envelope gains `event_id` — the client-generated idempotency key `POST /v1/events` is built on; no new event, no new payload field | ADR-007 |
 
 **Drift, resolved (kept for the record):** `packages/shared/src/analytics.ts` was briefly at
 `EVENTS_VERSION = 1.1.0` with six events while this table already listed seven — the contract ran
@@ -486,4 +488,4 @@ a `ExportDelivered` zod schema, and `packages/shared/test/analytics.test.ts` pin
 event back). The statement "typed source of truth" at the top of this section is true again.
 
 `CONTRACT_VERSION` stays `1.0.0`: neither the wire shape nor an enum changed. The events
-vocabulary is versioned separately on purpose — `EVENTS_VERSION = 1.1.0` (see §7).
+vocabulary is versioned separately on purpose — `EVENTS_VERSION = 1.3.0` (see §7).

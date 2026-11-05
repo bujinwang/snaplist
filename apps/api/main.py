@@ -6,6 +6,8 @@ Scope of this build (see docs/HANDOFF-engineer.md for the honest list):
 * `/v1/items`, `/v1/jobs`, `/v1/exports`, `/v1/usage` — real, backed by a `Repository`
   (SQLite in this build, Supabase/Postgres when E5-T4/T5 land) and proof-tested for
   cross-user isolation and quota behaviour
+* `POST /v1/events` — real: the analytics funnel ingest (`apps/api/routers/events.py`),
+  idempotent on the client-generated `event_id`. There is no read side on purpose.
 * `/v1/checkout`, `/v1/webhooks/stripe`, `/v1/items/{id}/rerender`, `/v1/items/{id}/on-model`
   — **501**, because they need Stripe / a worker / FASHN. No fake success anywhere.
 
@@ -24,6 +26,7 @@ from apps.api import errors
 from apps.api.auth import AUTH_MODE_HEADER, resolve_auth_mode
 from apps.api.repository import Repository, build_repository
 from apps.api.routers import billing as billing_router
+from apps.api.routers import events as events_router
 from apps.api.routers import exports as exports_router
 from apps.api.routers import items as items_router
 from apps.api.routers import jobs as jobs_router
@@ -114,6 +117,7 @@ def create_app(
     app.include_router(exports_router.router)
     app.include_router(usage_router.router)
     app.include_router(billing_router.router)
+    app.include_router(events_router.router)
     return app
 
 

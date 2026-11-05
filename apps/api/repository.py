@@ -199,6 +199,65 @@ class UsageEventRecord:
     metadata: Mapping[str, Any] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class EventRecord:
+    """One row of `public.events` — the analytics funnel, not the quota ledger.
+
+    Deliberately **not** `UsageEventRecord` and deliberately not merged with it:
+    `usage_events` carries signed `units` and moves a quota counter, this table carries no
+    money at all and is idempotent on a client-supplied `event_id`. One type holding both
+    concepts would invite a funnel write to spend quota. The method names keep them apart
+    too (`append_usage_event` / `append_analytics_event`).
+
+    Every payload field is optional here even though the database CHECKs make it mandatory
+    *for its own event*. The reason is the same one `ItemAttributes` has: the constraint is
+    the authority, and a dataclass that also enforced the per-event matrix would be a second
+    copy of it, in a third language, with no test forcing agreement.
+
+    `platform`, `event` and the payload enums are `str`, not the router's `StrEnum`s: this
+    module may not import `apps.api.routers.events` (the router imports this module), and a
+    circular import to win a type is a bad trade. The router validates before it builds an
+    `EventRecord`, and the CHECK constraints validate again.
+    """
+
+    event_id: UUID
+    event: str
+    client_ts: datetime
+    received_at: datetime
+    session_id: str
+    subject: str
+    app_version: str
+    platform: str
+    payload_sha256: str
+    # 1. upload_started
+    source: str | None = None
+    capture_mode: str | None = None
+    batch_index: int | None = None
+    # 2. prettify_approved
+    decision: str | None = None
+    job_latency_ms: int | None = None
+    prettify_latency_ms: int | None = None
+    attrs_latency_ms: int | None = None
+    # 3. attributes_edited
+    edited_field_count: int | None = None
+    fields_touched: int | None = None
+    field_names: tuple[str, ...] | None = None
+    # 4. export_clicked / 7. export_delivered
+    marketplace: str | None = None
+    row_count: int | None = None
+    export_latency_ms: int | None = None
+    bytes: int | None = None
+    delivery_latency_ms: int | None = None
+    # 5. subscription_started
+    plan: str | None = None
+    paywall_variant: str | None = None
+    amount_cents: int | None = None
+    currency: str | None = None
+    # 6. paywall_impression
+    paywall_trigger: str | None = None
+    plan_offered: str | None = None
+
+
 class RepositoryError(RuntimeError):
     """Base class for storage-level refusals."""
 
@@ -208,7 +267,7 @@ class RepositoryError(RuntimeError):
 # ---------------------------------------------------------------------------------------
 @runtime_checkable
 class Repository(Protocol):
-    """The whole storage surface the API needs. Eleven methods, all owned by the caller."""
+    """The whole storage surface the API needs. Every method is owned by the caller."""
 
     def create_item(self, *, user_id: UUID, status: str = "draft") -> ItemRecord: ...
 
@@ -271,6 +330,14 @@ class Repository(Protocol):
     def store_idempotent_item(
         self, key: str, *, user_id: UUID, endpoint: str, item_id: UUID, job_id: UUID
     ) -> None: ...
+
+    # -- analytics funnel (`public.events`) -------------------------------------------
+    # Not to be confused with `append_usage_event` above: that one writes the quota ledger,
+    # this one writes the funnel. `count_events` also counts `usage_events` and is unrelated
+    # to these two, which is why the new names say `analytics_event` out loud.
+    def append_analytics_event(self, event: EventRecord) -> bool: ...
+
+    def get_analytics_event(self, event_id: UUID) -> EventRecord | None: ...
 
     @contextmanager
     def transaction(self) -> Iterator[None]: ...
@@ -386,6 +453,120 @@ create table if not exists idempotency_keys (
     created_at text not null,
     primary key (user_id, endpoint, key)
 );
+
+-- Analytics funnel. Mirror of `public.events` in infra/migrations/0002_events.sql, and the
+-- table every request in this build actually writes to. Differences from Postgres, all forced
+-- by SQLite and all narrower, never looser:
+--   * `field_names` is JSON text instead of `text[]` (see `append_analytics_event`); the
+--     per-element regex CHECK cannot be expressed here — it is enforced by the router
+--     (pydantic `pattern`) and by `events_field_names_are_name_list()` on Postgres.
+--   * No RLS: SQLite has no roles. Nothing in this process reads `events` except
+--     `get_analytics_event`, which is called only by `POST /v1/events`.
+-- Everything that *can* be enforced here is: the seven-name CHECK, the per-event required
+-- columns, the "this column belongs to that event only" reverse CHECKs, and the shapes of the
+-- four identifier columns (prefix + length + alphabet, which is GLOB's limit — it has no
+-- bounded repetition). The one rule that genuinely cannot live here is `field_names`'
+-- per-element regex, because it needs a subquery; that one is the router's pydantic pattern
+-- plus `events_field_names_are_name_list()` on Postgres, and a length cap stands in for it
+-- here. This comment used to claim the mirror was complete; QA inserted a subject of
+-- `seller@example.com` and an `["color:red"]` name list straight through the repository to
+-- show it was not.
+create table if not exists events (
+    event_id             text    primary key,
+    event                text    not null check (event in (
+        'upload_started', 'prettify_approved', 'attributes_edited', 'export_clicked',
+        'subscription_started', 'paywall_impression', 'export_delivered'
+    )),
+    client_ts            text    not null,
+    received_at          text    not null,
+    -- shapes: prefix + length + alphabet. GLOB has no `{36}`, so the length is a separate
+    -- clause; together they bound the column to the two subject forms the contract allows.
+    session_id           text    not null
+        check (length(session_id) between 1 and 64
+               and session_id not glob '*[^A-Za-z0-9_-]*'),
+    subject              text    not null
+        -- The alphabet applies to the uuid part only: the prefix itself is letters outside
+        -- [0-9a-f], so a whole-string GLOB would reject every legal subject.
+        check ((length(subject) = 40 and substr(subject, 1, 4) = 'usr_'
+                and substr(subject, 5) not glob '*[^0-9a-f-]*')
+            or (length(subject) = 41 and substr(subject, 1, 5) = 'anon_'
+                and substr(subject, 6) not glob '*[^0-9a-f-]*')),
+    app_version          text    not null
+        check (length(app_version) between 1 and 32
+               and app_version not glob '*[^0-9A-Za-z.+-]*'),
+    platform             text    not null check (platform in ('ios', 'android', 'web')),
+    source               text    check (source is null or source in ('camera', 'library')),
+    capture_mode         text    check (capture_mode is null
+                                        or capture_mode in ('single', 'batch')),
+    batch_index          integer check (batch_index is null or batch_index >= 0),
+    decision             text    check (decision is null
+                                        or decision in ('approve', 'retry', 'remove_bg_waitlist')),
+    job_latency_ms       integer check (job_latency_ms is null or job_latency_ms >= 0),
+    prettify_latency_ms  integer check (prettify_latency_ms is null or prettify_latency_ms >= 0),
+    attrs_latency_ms     integer check (attrs_latency_ms is null or attrs_latency_ms >= 0),
+    edited_field_count   integer check (edited_field_count is null or edited_field_count >= 0),
+    fields_touched       integer check (fields_touched is null or fields_touched >= 0),
+    -- JSON array of names, e.g. '["colors","size_label"]'. Element-wise validation needs a
+    -- subquery (see the header); the length cap is what stops this becoming a free-text channel:
+    -- 20 names of 64 characters fit comfortably, a 7 KB base64 blob does not.
+    field_names          text    check (field_names is null or length(field_names) <= 2000),
+    marketplace          text    check (marketplace is null
+                                        or marketplace in ('ebay', 'poshmark', 'vinted')),
+    row_count            integer check (row_count is null or row_count >= 1),
+    export_latency_ms    integer check (export_latency_ms is null or export_latency_ms >= 0),
+    bytes                integer check (bytes is null or bytes >= 0),
+    delivery_latency_ms  integer check (delivery_latency_ms is null
+                                        or delivery_latency_ms >= 0),
+    plan                 text    check (plan is null or plan in ('starter', 'pro')),
+    paywall_variant      text    check (paywall_variant is null
+                                        or paywall_variant in ('a', 'b', 'c')),
+    amount_cents         integer check (amount_cents is null or amount_cents >= 0),
+    currency             text    check (currency is null or length(currency) = 3),
+    paywall_trigger      text    check (paywall_trigger is null
+                                        or paywall_trigger in ('upload_4th', 'on_model',
+                                                               'export_limit')),
+    plan_offered         text    check (plan_offered is null or plan_offered in ('starter', 'pro')),
+    payload_sha256       text    not null check (length(payload_sha256) = 64),
+    -- forward: this event carries these columns
+    check (event <> 'upload_started'
+           or (source is not null and capture_mode is not null)),
+    check (event <> 'prettify_approved'
+           or (decision is not null and job_latency_ms is not null
+               and prettify_latency_ms is not null and attrs_latency_ms is not null)),
+    check (event <> 'attributes_edited'
+           or (edited_field_count is not null and fields_touched is not null)),
+    check (event <> 'export_clicked'
+           or (marketplace is not null and row_count is not null
+               and export_latency_ms is not null)),
+    check (event <> 'subscription_started'
+           or (plan is not null and paywall_variant is not null
+               and amount_cents is not null and currency is not null)),
+    check (event <> 'paywall_impression'
+           or (paywall_variant is not null and paywall_trigger is not null
+               and plan_offered is not null)),
+    check (event <> 'export_delivered'
+           or (marketplace is not null and row_count is not null
+               and bytes is not null and delivery_latency_ms is not null)),
+    -- reverse: and no other event carries them
+    check (event = 'upload_started'
+           or (source is null and capture_mode is null and batch_index is null)),
+    check (event = 'prettify_approved'
+           or (decision is null and job_latency_ms is null
+               and prettify_latency_ms is null and attrs_latency_ms is null)),
+    check (event = 'attributes_edited'
+           or (edited_field_count is null and fields_touched is null and field_names is null)),
+    check (marketplace is null or event in ('export_clicked', 'export_delivered')),
+    check (row_count is null or event in ('export_clicked', 'export_delivered')),
+    check (export_latency_ms is null or event = 'export_clicked'),
+    check ((bytes is null and delivery_latency_ms is null) or event = 'export_delivered'),
+    check ((plan is null and amount_cents is null and currency is null)
+           or event = 'subscription_started'),
+    check (paywall_variant is null or event in ('subscription_started', 'paywall_impression')),
+    check (paywall_trigger is null or event = 'paywall_impression'),
+    check (plan_offered is null or event = 'paywall_impression')
+);
+create index if not exists events_event_received on events (event, received_at desc);
+create index if not exists events_subject_received on events (subject, received_at desc);
 """
 
 
@@ -774,6 +955,120 @@ class SqliteRepository:
             (str(job_id), event),
         )
         return bool(rows)
+
+    # -- analytics funnel (public.events) ----------------------------------------------
+    def append_analytics_event(self, event: EventRecord) -> bool:
+        """Insert one funnel row. True if written, False if that `event_id` already exists.
+
+        `on conflict (event_id) do nothing` is the idempotency guarantee, and it is expressed
+        here rather than in the router because a read-then-write check has a window: two
+        retries of the same offline-queued event can arrive at the same time, and "did you
+        already have it?" answered a millisecond ago is not an answer. `cursor.rowcount` is 0
+        when the conflict was skipped, which is the only signal SQLite gives; Postgres would
+        use `insert ... returning` and read zero rows for the same fact.
+
+        A False here means **the row was not written** — it says nothing about *why*. The
+        caller already read the existing row (`get_analytics_event`) to decide between 202
+        duplicate and 409, and must re-read it after a False to cover the race above.
+
+        `field_names` is stored as JSON text (SQLite has no array type). The order the client
+        sent is preserved: it is not a set, and a report that wants "first three fields the
+        seller touched" cannot recover it from a sorted copy.
+        """
+        with self._lock:
+            cursor = self._conn.execute(
+                "insert into events (event_id, event, client_ts, received_at, session_id, "
+                "subject, app_version, platform, source, capture_mode, batch_index, decision, "
+                "job_latency_ms, prettify_latency_ms, attrs_latency_ms, edited_field_count, "
+                "fields_touched, field_names, marketplace, row_count, export_latency_ms, "
+                "bytes, delivery_latency_ms, plan, paywall_variant, amount_cents, currency, "
+                "paywall_trigger, plan_offered, payload_sha256) "
+                "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?, ?) "
+                "on conflict (event_id) do nothing",
+                (
+                    str(event.event_id),
+                    event.event,
+                    to_wire(event.client_ts),
+                    to_wire(event.received_at),
+                    event.session_id,
+                    event.subject,
+                    event.app_version,
+                    event.platform,
+                    event.source,
+                    event.capture_mode,
+                    event.batch_index,
+                    event.decision,
+                    event.job_latency_ms,
+                    event.prettify_latency_ms,
+                    event.attrs_latency_ms,
+                    event.edited_field_count,
+                    event.fields_touched,
+                    None if event.field_names is None else json.dumps(list(event.field_names)),
+                    event.marketplace,
+                    event.row_count,
+                    event.export_latency_ms,
+                    event.bytes,
+                    event.delivery_latency_ms,
+                    event.plan,
+                    event.paywall_variant,
+                    event.amount_cents,
+                    event.currency,
+                    event.paywall_trigger,
+                    event.plan_offered,
+                    event.payload_sha256,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def get_analytics_event(self, event_id: UUID) -> EventRecord | None:
+        """The row for `event_id`, or None. No `user_id` predicate, on purpose.
+
+        This is not a seller-facing read: it is the idempotency check inside a POST, where the
+        caller has already proven it owns `subject` and the id is the client's own uuid. There
+        is no `GET /v1/events`, so a foreign id cannot be probed for existence through any
+        route (a 409 vs 202 on somebody else's id leaks nothing an attacker can use without
+        already knowing the id *and* the exact payload digest — and they would have to be
+        authenticated as the same subject anyway).
+        """
+        rows = self._query("select * from events where event_id = ?", (str(event_id),))
+        return self._analytics_event_from_row(rows[0]) if rows else None
+
+    @staticmethod
+    def _analytics_event_from_row(row: sqlite3.Row) -> EventRecord:
+        raw_names = row["field_names"]
+        return EventRecord(
+            event_id=UUID(row["event_id"]),
+            event=row["event"],
+            client_ts=from_wire(row["client_ts"]) or utcnow(),
+            received_at=from_wire(row["received_at"]) or utcnow(),
+            session_id=row["session_id"],
+            subject=row["subject"],
+            app_version=row["app_version"],
+            platform=row["platform"],
+            payload_sha256=row["payload_sha256"],
+            source=row["source"],
+            capture_mode=row["capture_mode"],
+            batch_index=row["batch_index"],
+            decision=row["decision"],
+            job_latency_ms=row["job_latency_ms"],
+            prettify_latency_ms=row["prettify_latency_ms"],
+            attrs_latency_ms=row["attrs_latency_ms"],
+            edited_field_count=row["edited_field_count"],
+            fields_touched=row["fields_touched"],
+            field_names=None if raw_names is None else tuple(json.loads(raw_names)),
+            marketplace=row["marketplace"],
+            row_count=row["row_count"],
+            export_latency_ms=row["export_latency_ms"],
+            bytes=row["bytes"],
+            delivery_latency_ms=row["delivery_latency_ms"],
+            plan=row["plan"],
+            paywall_variant=row["paywall_variant"],
+            amount_cents=row["amount_cents"],
+            currency=row["currency"],
+            paywall_trigger=row["paywall_trigger"],
+            plan_offered=row["plan_offered"],
+        )
 
     # -- plans -------------------------------------------------------------------------
     def get_plan(self, user_id: UUID) -> PlanTier:

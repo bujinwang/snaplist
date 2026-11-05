@@ -1801,3 +1801,279 @@ about the local backend only; it is not a global invariant, and the D-tests in
    string reaches `jobs.error_detail` on the wire; the other two mislead the next reader.
 9. **`/readyz` still reports `migrations_applied: false`** unconditionally.
 
+
+# E5-T6 — `events` table + `POST /v1/events`
+
+Run date: 2026-11-05. Every command below was executed in this working tree, on this machine.
+Suite: **540 pytest (480 → 540, i.e. 60 new) + 72 node**, `make lint` clean.
+No commit (the lead收口). **One ADR was needed after all**: implementing the route exposed that the
+frozen envelope had no `event_id`, so a client validating with `analytics.ts` could not build a
+body the route accepts. ADR-007 adds the field, `EVENTS_VERSION` goes 1.2.0 → **1.3.0**,
+`docs/CONTRACTS.md` §7 changes four lines (version sentence + history row), and
+`CONTRACT_VERSION` does not move.
+
+## 1. What changed
+
+| file | change |
+|---|---|
+| `infra/migrations/0002_events.sql` | **new.** `public.events`: client-uuid PK, seven-name CHECK, one narrow nullable column per payload field with its own CHECK, forward CHECKs (required per event) **and reverse CHECKs (this column belongs to that event only)**, `payload_sha256`, two indexes, RLS on with a single `service_role` policy. Plus `events_field_names_are_name_list(text[])`, a 3-line immutable SQL function, because a CHECK may not contain the `unnest` the per-element regex needs. |
+| `infra/migrations/README.md` | new section describing 0002: why it is not an extension of `usage_events`, what each pin is for, and that "applies on Postgres" is UNVERIFIED here. |
+| `apps/api/routers/events.py` | **new.** 7 pydantic models in a discriminated union (`extra="forbid"`), `TypeAdapter`-based manual body parse (so 413 precedes 422), `subject`↔caller binding (403), canonical payload digest, idempotency (202 duplicate / 409 reuse). No `GET`. |
+| `apps/api/repository.py` | `EventRecord` (frozen dataclass), protocol + `SqliteRepository.append_analytics_event()` / `get_analytics_event()`, and a SQLite mirror of `events` carrying the same forward and reverse CHECKs. |
+| `apps/api/main.py` | router registered; module docstring's route list mentions the new endpoint. |
+| `apps/api/tests/test_events.py` | **new**, 60 tests, several of which read *other* files as text: `infra/migrations/0002_events.sql` and `packages/shared/src/analytics.ts`. |
+
+Deliberately **not** touched: `docs/PLAN.md`, `docs/CONTRACTS.md`, `apps/api/schemas.py`,
+`packages/**`, `evals/**`. In particular `apps/api/schemas.py` did not gain a model — see §6.1.
+
+## 2. Acceptance — real uvicorn, real curl
+
+Server: `SNAPLIST_DB=$(mktemp -d)/dev.db .venv/bin/python -m uvicorn apps.api.main:app --port 8011 --log-level warning`
+(`U = 11111111-1111-4111-8111-111111111111`, `EID = f889bed7-4422-4a3c-a2a8-b482ffd751c3`)
+
+```
+$ curl -s -X POST localhost:8011/v1/events -H "x-snaplist-user-id: $U" -H 'content-type: application/json' -d "$BODY" -w ' [%{http_code}]\n'
+{"accepted":true,"duplicate":false} [202]
+
+$ curl -s ... -d "$BODY"        # byte-identical replay, same event_id
+{"accepted":true,"duplicate":true} [202]
+
+$ curl -s ... -d "${BODY/\"row_count\":3/\"row_count\":99}"    # same id, different content
+{"error":{"code":"invalid_request","message":"This `event_id` was already ingested with a different payload. A reused id is a client bug: event ids must be generated once per event and reused only for retries of that same event.","retry_after_seconds":null,"details":{"event_id":"f889bed7-4422-4a3c-a2a8-b482ffd751c3"}}} [409]
+
+$ curl -s ... -d '{"event":"item_created"}'
+{"error":{"code":"invalid_request","message":"Request body is not one of the seven frozen analytics events. See details for the fields.","retry_after_seconds":null,"details":{"body":"Input tag 'item_created' found using 'event' does not match any of the expected tags: 'upload_started', 'prettify_approved', 'attributes_edited', 'export_clicked', 'subscription_started', 'paywall_imp"}}} [422]
+```
+
+Three more, on the same server, because the brief asked for the ones the four above do not cover:
+
+```
+$ curl -s -o /dev/null -w '%{http_code}\n' localhost:8011/v1/events -H "x-snaplist-user-id: $U"      # GET
+405
+
+$ curl ... --data-binary @big.json     # 9 KB body
+{"error":{"code":"invalid_request","message":"Analytics event body must be at most 8192 bytes; 9039 was too large.","retry_after_seconds":null,"details":{"limit_bytes":"8192","observed_bytes":"9039"}}} [413]
+
+$ curl ... -d '{... "email":"a@b.c"}'  # otherwise-valid upload_started + one extra key
+{"error":{"code":"invalid_request","message":"Request body is not one of the seven frozen analytics events. See details for the fields.","retry_after_seconds":null,"details":{"upload_started.email":"Extra inputs are not permitted"}}} [422]
+```
+
+The row on disk (same server, `sqlite3` CLI against the file backend — no repository code involved,
+which is why the replay assertion in §3 uses a second connection too):
+
+```
+$ sqlite3 $DB 'select count(*) from events;
+               select event, subject, marketplace, row_count, quote(plan), payload_sha256 from events;'
+1
+export_clicked|usr_11111111-1111-4111-8111-111111111111|ebay|3|NULL|818c725aec5bf20e61ccda9a115756121f0f3f7c5867742f348ea33bf60e2060
+```
+
+One row after four POSTs: the 202 duplicate did not add a second, and neither the 409 nor the
+422 (`item_created`) was written anywhere. `plan` is `NULL` on an `export_clicked` — that is the
+reverse constraint doing its job.
+
+## 3. Tests
+
+`apps/api/tests/test_events.py`, 60 cases (9 + 27 + 5 + 4 + 7 + 5 + 3). Grouped by what they
+defend, not by endpoint:
+
+- **Happy paths (9).** 7 — one per frozen event, each asserting `{accepted: true, duplicate:
+  false}`; the union's membership (7 members, names equal to the builder keys); and one that
+  reads back a stored `export_clicked` row to prove only its own payload columns were written
+  (`plan`, `currency`, `bytes`, `field_names`, `decision` all `None`).
+- **Vocabulary and shape (27).** Unknown event name → 422; unknown envelope key (`email`) → 422;
+  unknown payload key (`photo_url`) → 422; `field_names: ["color:red"]` → 422; `["Size Label"]`
+  → 422; 21 names → 422; `field_names` omitted → 202 with `()`; **7** cases of a required
+  payload field missing → 422; **5** cases of a payload field on the *wrong* event → 422;
+  **5** negative/zero counters → 422; unknown enum literal → 422; `client_ts` with no offset →
+  422; `currency: "usd"` → **202** (see §6.2).
+- **Identity (5).** `anon_` and `usr_` + own uuid → 202 (2 cases); another account's uuid → 403
+  with `details.reason = subject_not_bound_to_caller`; `subject: "seller@example.com"` → 422; no
+  identity → 401.
+- **Idempotency (4).** Replay → 202 duplicate **and exactly one row, read by a second `sqlite3`
+  connection**; same id + changed body → 409 and the first payload still stands; replay respelled
+  as `+02:00` → duplicate (the digest canonicalises `client_ts`); a fresh id → a second row
+  (per-id, not per-content).
+- **Transport (7).** >8 KB → 413; **exactly** 8 KB is not refused for size (the boundary is `>`,
+  pinned); `b"not json"`/`b"[1,2,3]"`/`b""` → 422 (3 cases); `GET` → 405; every refusal body is
+  `{"error": {...}}` with no FastAPI `detail`.
+- **Migration as text (5).** The CHECK pins exactly the seven names; RLS is enabled, there is
+  exactly one policy, it names `service_role` and neither `anon` nor `authenticated`;
+  `payload_sha256` is `not null` + hex-CHECKed; the `field_names` regex is byte-identical in
+  `analytics.ts`, python and the SQL function; and the **column whitelist**:
+  `set(parsed_columns) == EXPECTED_COLUMNS` (30 names, written out in full), no
+  `jsonb`/`json`/`hstore`/`bytea`, **and every `text`/`text[]` column is mentioned in a CHECK** —
+  that second clause is what keeps working after this ticket, because a future `note text` fails
+  it even if somebody also whitelisted the name.
+- **Frozen-vocabulary parity (3).** `analytics.ts` is parsed with anchored regexes into
+  `(names, per-event payload fields, envelope fields)`; the union's members are derived from
+  their own `Literal` tags; the two are compared field by field. A parser self-check
+  (`len(names) == 7`, envelope == 6 fields) stops the comparison from silently going vacuous if
+  the TS file is refactored. Last, `BUILDERS` is validated against the models, so a typo in a
+  test body cannot masquerade as a router bug.
+
+```
+$ make test
+1..72 / # pass 72 / # fail 0            (node, unchanged)
+540 passed, 4 skipped, 1 xfailed, 1 warning in 52.00s
+
+$ make lint
+/Users/bujin/Documents/Projects/SnapList/.venv/bin/python -m ruff check .
+All checks passed!
+pnpm -w lint → packages/shared lint: Done, apps/mobile lint: Done
+```
+
+## 4. The seven events, and exactly what the database pins for each
+
+Every payload column is *forward*-constrained (required on its own event) **and**
+*reverse*-constrained (absent everywhere else). The reverse half is the part that makes "the
+payload cannot be smuggled onto another event" a database fact rather than a code convention.
+
+| event | required by CHECK | enum / domain CHECKs | reverse constraint |
+|---|---|---|---|
+| `upload_started` | `source`, `capture_mode` | `source in (camera, library)`; `capture_mode in (single, batch)`; `batch_index >= 0` | `source`, `capture_mode`, `batch_index` NULL on every other event |
+| `prettify_approved` | `decision`, `job_latency_ms`, `prettify_latency_ms`, `attrs_latency_ms` | `decision in (approve, retry, remove_bg_waitlist)`; the three latencies `>= 0` | all four NULL elsewhere |
+| `attributes_edited` | `edited_field_count`, `fields_touched` | both `>= 0` (no `> 0`: the `0` bucket is the blind-accept metric); `field_names` ≤ 20, no NULL elements, each `^[a-z][a-z0-9_]*$` | all three NULL elsewhere |
+| `export_clicked` | `marketplace`, `row_count`, `export_latency_ms` | `marketplace in (ebay, poshmark, vinted)`; `row_count >= 1`; latency `>= 0` | `export_latency_ms` only here; `marketplace`/`row_count` only on the two export events |
+| `subscription_started` | `plan`, `paywall_variant`, `amount_cents`, `currency` | `plan in (starter, pro)`; `paywall_variant in (a, b, c)`; `amount_cents >= 0`; `length(currency) = 3` | `plan`, `amount_cents`, `currency` only here |
+| `paywall_impression` | `paywall_variant`, `paywall_trigger`, `plan_offered` | `trigger in (upload_4th, on_model, export_limit)`; `plan_offered in (starter, pro)` | `paywall_trigger`, `plan_offered` only here |
+| `export_delivered` | `marketplace`, `row_count`, `bytes`, `delivery_latency_ms` | `bytes >= 0`; latency `>= 0`; `row_count >= 1` | `bytes`, `delivery_latency_ms` only here |
+
+`paywall_variant` is the single payload column two events share (`subscription_started` and
+`paywall_impression`), on purpose: an impression and the subscription it converts into must be
+joinable on the variant, and splitting the column would delete that join. The brief listed it as
+"subscription_started only"; that would have made every `paywall_impression` insert fail. This is
+the one place where the brief and `analytics.ts` conflicted and I followed `analytics.ts`.
+
+## 5. What I do not stand behind
+
+1. **`analytics.ts`'s `Envelope` has no `event_id`, and this route requires one.** The frozen
+   zod `Envelope` is `{event, client_ts, session_id, subject, app_version, platform}` with
+   `.strict()`, so `AnalyticsEvent.parse(body)` on the client **rejects** the very body
+   `POST /v1/events` demands. E6-T1 must either send the id outside the validated object, or
+   `analytics.ts` gains `event_id` in an `EVENTS_VERSION` bump (an ADR, and not mine to write).
+   The API-side consequence today: the field is required, so the client has no legal way to omit
+   it — but a client that validates with the shared schema first will fail before it gets here.
+   `test_python_models_mirror_the_frozen_typescript_vocabulary` names this asymmetry out loud
+   (`API_ADDITIVE_FIELDS`) instead of filtering it away silently.
+2. **No rate limit, no per-subject quota, no auth on volume.** One authenticated seller can POST
+   events as fast as the process answers; the only bound is the 8 KB ceiling. A `subject` bound
+   to an account does not stop that account from writing a million rows. Needs a token bucket
+   keyed on `subject` (or a gateway limit) before the funnel is load-bearing.
+3. **`client_ts` is whatever the phone says.** Stored, shape-validated, normalised to UTC — and
+   still forgeable. Every report must order and window on `received_at`; a dashboard that uses
+   `client_ts` for "events in the last 7 days" is trivially gamed and also wrong for a device
+   whose clock is off. There is no server-side correction and no skew metric yet.
+4. **The RLS claim is unproven.** No Postgres, no docker, no supabase CLI in this environment.
+   `0002_events.sql` has never been executed. What is tested is its text and the SQLite mirror;
+   the policy is written but nobody has proved that `anon` and `authenticated` are actually
+   refused on a real project — `pg_policies` would show the policy exists, which is not the same
+   claim. Two things I would check first on a real instance: that `service_role` (which is
+   `bypassrls` in the shim) is the role the API connects as, and that no default `GRANT` on
+   `public` gives `anon` table privileges that RLS then has to deny.
+5. **`events_field_names_are_name_list()` is untested SQL.** It is the only place the
+   per-element regex is enforced *in the database*, and it exists only because a CHECK cannot
+   contain a subquery. If `unnest`/`~` inside an `immutable` SQL function does something I did
+   not expect, `field_names` validation falls back to pydantic + the SQLite mirror — i.e. the
+   Postgres table would be weaker than advertised and no test here would notice.
+6. **`currency` is a 3-character text column.** `analytics.ts` says `z.string().length(3)`, so
+   `usd`, `1 2` and `abc` are all legal payloads and all storable. A `^[A-Z]{3}$` check would be
+   *stricter than the frozen shared schema*, which would mean the API refusing something the
+   client was told was valid — so I did not add one. It is the only text column here that can
+   carry three arbitrary characters; that is small, not zero.
+7. **`edited_field_count <= fields_touched` is not enforced.** `usage_events` enforces exactly
+   this pair (the ledger's version of the same two numbers), and this table does not, because
+   zod does not and a stricter database would 500 on a payload the client validated. A report
+   that divides one by the other can therefore produce >100%.
+8. **Payload digest canonicalisation is my definition, not the contract's.** Sorted keys, no
+   whitespace, `client_ts` normalised to UTC microseconds. That normalisation is why a retry
+   which re-spells the timestamp (`Z` vs `.000Z`) still returns 202 — measured after QA pointed
+   out the earlier claim here was wrong. The false positive is elsewhere: `field_names` order is
+   semantically meaningless and the digest is order-sensitive, so `["colors","brand"]` retried as
+   `["brand","colors"]` under the same id returns **409**. Loud-once is still the choice over
+   silently picking a row, and the client fix is the same: keep the bytes you retry.
+9. **Read side: nothing exists.** No `GET /v1/events`, no report query, no `export_delivered`
+   ↔ `export_clicked` gap query — which means the export-failure rate that
+   `docs/CONTRACTS.md` §7 calls a *required observable* is still only derivable by hand. E0-T5
+   owns the reporting, and it now has a table to read.
+10. **No `events` cleanup/retention policy.** Append-only, forever, no partitioning, no TTL. At
+   v1 volume that is correct; at a hundred users it is a table nobody has planned for.
+11. **The 413 is a body-size limit, not a schema-size limit.** A payload that is small in bytes
+   but pathological in `field_names` count is caught by the 422 (`max_length=20`); there is no
+   limit on the *number of events* per request because there is exactly one event per request.
+12. **`test_a_body_over_eight_kilobytes_is_413` uses a `content-length` header, so the
+   chunked-transfer path is untested.** The route re-checks `len(raw)` after reading, which is
+   the honest second lock, but no test exercises it — `TestClient` always sets a length.
+
+## 6. Two decisions worth arguing about
+
+### 6.1 `EventAccepted` lives in the router, not in `schemas.py`
+
+`apps/api/schemas.py` is the frozen ten-model wire contract; every model there is mirrored in
+`packages/shared/src/schemas.ts` and checked by `test_contract_parity.py`. Adding a response
+model there would force a zod mirror, a `CONTRACT_VERSION` bump and an ADR, to describe a body
+only this one route returns to a client that already knows what it sent. `apps/api/responses.py`
+set the precedent for the export batch body. The consequence to know about: the two booleans in
+the 202 body are **not** part of the frozen contract and are not parity-checked; they are
+documented here and in the route docstring instead.
+
+### 6.2 `currency: "usd"` is accepted on purpose
+
+See §5.6. The test `test_currency_is_three_characters_not_an_iso4217_pattern` pins the *weaker*
+rule so that a future reviewer cannot "tighten" it into a contract violation without going red.
+
+## 7. md5 of every file this ticket delivered
+
+Recomputed **after** the audit fixes in §8 — the first version of this table was already stale
+when it was written (the test file had been edited once more), which is the same stale-digest
+failure this project keeps finding.
+
+```
+7b4491b8a7c5aa5bb556c77b312c89c3  infra/migrations/0002_events.sql
+e54bc3c12284984b9ec94dd3fc082be1  infra/migrations/README.md
+741d1a6fade609f7ac1dd223ce531069  apps/api/routers/events.py
+3a88134edb281a5d585943776f538584  apps/api/repository.py
+014fb7a0f1a7ab6d38232deaf725186a  apps/api/main.py
+c33b89e1c71202178c5ab6950b26f04a  apps/api/tests/test_events.py
+```
+
+`docs/HANDOFF-engineer.md` itself is absent from that list on purpose: a file cannot contain its
+own md5. The digest of this file after this section was written is recorded in the delivery
+message, not here — `md5 -q docs/HANDOFF-engineer.md` reproduces it.
+
+## 8. Audit round: three blocking findings, and what changed
+
+An independent review of this ticket found three things worth more than the 60 tests I shipped.
+All are fixed; this section exists so the next reader does not have to re-derive them.
+
+**8.1 Five client errors were reported as `503 internal`.** `amount_cents = 10**30`,
+`bytes = 2**63`, `job_latency_ms = 10**20`, `row_count = 10**19` and a `currency` of three NUL
+bytes each raised `OverflowError` or `IntegrityError` from the driver, which `errors.py` maps to
+"the server is broken". Every numeric payload field is now bounded by `INT4_MAX` (the Postgres
+column width) and every string field excludes control characters, so the first refusal is a 422
+with a field name. The database remains the second lock; a second lock that reports a 5xx is a
+lock that pages someone.
+
+**8.2 Two DoD numbers had no coverage at all.** The 8 KB ceiling and the 20-name cap were both
+tested *against the constant that defines them* — the payload was built as
+`"x" * (MAX_EVENT_BYTES + 512)`. Raising the constant to 64 KiB, and then to 1 GiB, left the
+file green. Both tests now build their payload from a literal and assert the constant equals it,
+so a change to either breaks the build instead of agreeing with itself.
+
+**8.3 The SQLite mirror was looser than the migration it mirrors.** `subject`, `session_id`,
+`app_version` and `payload_sha256` had shape CHECKs in Postgres and none in the table this build
+actually writes to; a direct `append_analytics_event()` call accepted `subject =
+"seller@example.com"` and `field_names = ["color:red"]`. Three of those four are expressible in
+SQLite and are now enforced there; the one that is not (`field_names`' per-element regex, which
+needs a subquery) is capped at 2000 bytes, with the router's pydantic pattern as the real gate.
+
+Two smaller ones, same family: `field_names` elements had an alphabet but no length, so
+`["a"*4000]` was a 7 KB lowercase text channel — now 64 characters, in the router, the SQLite
+mirror and the Postgres function. And the reverse CHECKs (the "this column belongs to that event
+only" constraints this ticket calls its core mechanism) are covered by **text** assertions only:
+deleting one leaves the suite green. That is recorded, not solved — a SQL-level constraint test
+needs a Postgres to run against.
+
+**What the audit could not change:** the table has no `item_id`. `docs/METRICS.md` assumes
+`export_delivered` carries one, and PLAN's per-item tool-time and activation-dedup gates need it.
+That is a contract gap one level above this ticket, and E0-T5 inherits it.
