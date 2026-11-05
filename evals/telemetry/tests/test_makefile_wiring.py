@@ -1,18 +1,21 @@
 # ruff: noqa: F811
-# `tmp_path` is imported to register the shim-safe pytest fixture defined in fixtures.py;
-# each test's parameter of the same name is the injected value, not a redefinition.
-"""Makefile wiring is a NAMED RESIDUAL, outside E0-T5's allowed paths.
+# `tmp_path` is imported to register the shim-safe pytest fixture defined in fixtures.py; each
+# test's parameter of the same name is the injected value, not a redefinition.
+"""Makefile wiring for the E0-T5 telemetry gate.
 
-Bert ruling 2 forbids touching `Makefile` and `evals/run.py`. The two `make` targets still run
-(`make evals` / `make evals-strict`) but their output is **vision harness output, not gate
-evidence** — the transcripts are pasted into `docs/QA.md` with exactly that label. The gate
-delivered by this ticket is `python -m evals.telemetry`.
+E0-T5 was delivered under a whitelist that forbade touching `Makefile` and `evals/run.py`, so
+`make evals` / `make evals-strict` still invoked the vision harness (`evals.run`), not the gate.
+That gap was named residual **R4** (docs/QA.md §10) and is closed by the follow-up ticket that
+wires both targets to `python -m evals.telemetry`:
 
-The `xfail(strict=True)` test below is a TRIPWIRE, not a correctness assertion about Makefile
-text: it asserts a real subprocess exit code. Today `make evals-strict` calls the vision harness
-and refuses with exit 2, so it xfails. The moment somebody wires the target to the telemetry
-gate the assertion XPASSes, `strict=True` turns that into a FAILURE, and the engineer must
-delete the marker and re-review the wiring. Nothing in this file asserts SQL/Makefile text.
+  make evals        -> python -m evals.telemetry --since 7d --gate --allow-inconclusive
+  make evals-strict -> python -m evals.telemetry --since 7d --gate
+
+This module proves that wiring with a REAL subprocess (never by grepping Makefile text):
+`make -n evals-strict` resolves to a recipe containing `evals.telemetry` and not `evals.run`,
+and the gate itself returns exit 0 on a complete 30-item baseline. The baseline run pins `--now`
+so the assertion is date-independent — the 7-day window is half-open, and an unpinned run would
+drift out of window on a later date.
 """
 
 from __future__ import annotations
@@ -21,35 +24,31 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from evals.telemetry.tests import fixtures as fx
 from evals.telemetry.tests.fixtures import tmp_path  # noqa: F401 - pytest fixture
 
-TRIPWIRE_REASON = (
-    "Makefile -> python -m evals.telemetry wiring is a named E0-T5 residual (out of allowed "
-    "paths). When it lands this XPASS fails under strict=True and forces the marker to be "
-    "removed and the wiring reviewed."
-)
 
+def test_make_evals_strict_is_wired_to_the_telemetry_gate(tmp_path: Path) -> None:
+    """Real subprocess proof: `make evals-strict` resolves to, and runs, the telemetry gate."""
+    # 1) Wiring: the resolved recipe invokes the telemetry module, not the vision harness.
+    dry = subprocess.run(
+        ["make", "-n", "evals-strict"],
+        cwd=fx.REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "NO_COLOR": "1"},
+        check=True,
+    )
+    assert "evals.telemetry" in dry.stdout
+    assert "evals.run" not in dry.stdout
 
-@pytest.mark.xfail(strict=True, reason=TRIPWIRE_REASON)
-def test_make_evals_strict_wiring_tripwire(tmp_path: Path) -> None:
-    """Real subprocess exit code: 0 once `evals-strict` is wired to the telemetry gate."""
+    # 2) Behaviour: the wired gate passes on a complete baseline (pinned now, date-independent).
     path = tmp_path / "dev.db"
     db = fx.make_db(path)
     fx.populate_baseline(db)
     fx.close(db)
-    child_env = {**os.environ, "SNAPLIST_DB": str(path), "NO_COLOR": "1"}
-    result = subprocess.run(
-        ["make", "evals-strict"],
-        cwd=fx.REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=child_env,
-        check=False,
-    )
+    result = fx.run_cli(path, "--since", "7d", "--gate")
     assert result.returncode == 0
     assert "SnapList telemetry gate" in result.stdout
 

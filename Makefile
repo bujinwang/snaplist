@@ -12,8 +12,9 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install test lint fmt evals evals-strict golden golden-provisional masks-provisional \
-        seg-iou fetch-models fetch-sdxl install-sdxl dev dev-web dev-mobile contract clean
+.PHONY: help install test lint fmt evals evals-strict evals-report evals-vision \
+        golden golden-provisional masks-provisional seg-iou fetch-models fetch-sdxl \
+        install-sdxl dev dev-web dev-mobile contract clean
 
 MODEL_DIR ?= $(if $(SNAPLIST_MODEL_DIR),$(SNAPLIST_MODEL_DIR),$(HOME)/.cache/snaplist/models)
 U2NET_SHA256 := 8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491
@@ -24,10 +25,12 @@ help:
 	@echo "  make install    uv sync + pnpm install  (no credentials; no torch, no SDXL)"
 	@echo "                  note: uv sync prunes, so this UNINSTALLS the sdxl group if present"
 	@echo "  make install-sdxl  uv sync --group sdxl + fetch-sdxl (0.72 GB + 6.9 GB, only for mode=sdxl_inpaint)"
-	@echo "  make test       pnpm -w test, then pytest"
+	@echo "  make test       pnpm -w test, then pytest (telemetry suite now included)"
 	@echo "  make lint       ruff check + tsc --noEmit in every TS package"
-	@echo "  make evals      report only; prints UNMEASURED until E1..E4, always exit 0"
-	@echo "  make evals-strict  release gate; deliberately fails until E0-T5 exists"
+	@echo "  make evals      E0-T5 telemetry gate (dev/CI): --gate --allow-inconclusive; exits 0 or 1"
+	@echo "  make evals-strict  E0-T5 telemetry release gate: --gate, never allows inconclusive"
+	@echo "  make evals-report  telemetry report only, always exit 0 (no gate)"
+	@echo "  make evals-vision  the E0-T2 vision harness (evals.run --suite vision)"
 	@echo "  make golden     validate the E0-T1 golden set; exit 0 only when it is complete"
 	@echo "  make golden-provisional  structure check of the web-sourced stand-in set"
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
@@ -66,8 +69,19 @@ lint:
 fmt:
 	$(PY) -m ruff format .
 
+# E0-T5 telemetry gate (docs/PLAN.md E0-T5 acceptance). `make evals` is the dev / CI gate: it
+# passes `--allow-inconclusive`, so an empty or unmeasured database (3a: source absent) is
+# downgraded to exit 0 with a banner instead of blocking development. `make evals-strict` is the
+# release gate and omits that flag, so an unmeasured pipeline cannot ship. R4 (docs/QA.md §10)
+# closed the wiring gap that E0-T5 itself could not touch under its allowed-paths whitelist.
+# `exec` makes the recipe process BE the telemetry gate, so the gate's real exit code is what
+# the process returns. NOTE: GNU Make 3.81 (macOS stock) collapses ANY non-zero recipe exit to 2,
+# so on this make the wrapper can only distinguish pass (0) vs fail (2); the precise FAIL (1) /
+# INCONCLUSIBLE (2) / DATA_UNAVAILABLE (3) distinction is available by running
+# `python -m evals.telemetry --since 7d --gate [--allow-inconclusive]` directly (it returns the
+# correct code). On newer make, `exec` propagates the code exactly.
 evals:
-	$(PY) -m evals.run --suite vision --allow-inconclusive
+	exec $(PY) -m evals.telemetry --since 7d --gate --allow-inconclusive
 
 # Golden-set check (docs/PLAN.md E0-T1). Exits 2 while the manifest does not exist — the set
 # is empty until real photos are added, and an empty set must not look like a passing one.
@@ -119,11 +133,20 @@ fetch-models:
 fetch-sdxl:
 	$(PY) -c "from packages.vision.prettify import fetch_sdxl_weights as f; f()"
 
-# Release gate (docs/PLAN.md E0-T5). Deliberately fails until E0-T5 is implemented: a release
-# must not be cut on a pipeline nobody has measured. `make evals` exits 0 but prints
-# `GATE NOT EVALUATED` — never evidence for a release, and this target is what says so.
+# Release gate (docs/PLAN.md E0-T5). Runs the telemetry gate WITHOUT `--allow-inconclusive`, so
+# an empty or unmeasured database (source absent, 3a) exits 3 — a release must not be cut on a
+# pipeline nobody has measured. `make evals` (dev / CI) downgrades that to 0 with a banner.
 evals-strict:
-	$(PY) -m evals.run --suite vision --gate
+	exec $(PY) -m evals.telemetry --since 7d --gate
+
+# Telemetry report only (docs/PLAN.md E0-T5 acceptance, third mode). Never gates; always exit 0.
+evals-report:
+	exec $(PY) -m evals.telemetry --since 7d
+
+# The E0-T2 vision harness, preserved after `make evals` was repurposed to the telemetry gate.
+# Invoked directly by the E0-T2 / E1-T4 / E2-T3 / E3-T3 acceptance commands.
+evals-vision:
+	$(PY) -m evals.run --suite vision
 
 dev:
 	$(PY) -m uvicorn apps.api.main:app --reload --port 8000

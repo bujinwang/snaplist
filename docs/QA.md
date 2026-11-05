@@ -1,15 +1,25 @@
 # SnapList — QA.md
 
-**Ticket E0-T5 — telemetry gate. Owner: engineer. Status: implemented, awaiting independent QA
-review. NOT committed.**
+**Ticket E0-T5 — telemetry gate. Status: shipped at `73a95ba` (`HEAD` = `origin/master`).
+This document is the honesty ledger for `python -m evals.telemetry`.**
 
-This document is the honesty ledger for `python -m evals.telemetry`. It records what was
-measured, what was merely predicted, what is deliberately unmeasured, and which conclusions may
-not be carried over to production. A number that appears in a report but has no sample behind it
-is not evidence; a report that prints `UNMEASURED` with a reason is.
+This document records what was measured, what was merely predicted, what is deliberately
+unmeasured, and which conclusions may not be carried over to production. A number that appears in
+a report but has no sample behind it is not evidence; a report that prints `UNMEASURED` with a
+reason is.
 
-Baseline: `751fa5f` (`HEAD` = `origin/master`). Working tree carries only the untracked
-`.kilo/` (untouched) and the 18 whitelisted files listed in §12.
+**Follow-up closure (this commit).** E0-T5 shipped under an allowed-paths whitelist that forbade
+touching `Makefile`, `pyproject.toml`, and `evals/telemetry/tests/test_makefile_wiring.py`, so
+two residuals escaped: **R4** (the `make evals` / `make evals-strict` targets still ran the
+vision harness, not the gate) and **R7** (`pyproject.toml` `testpaths` did not collect the
+telemetry suite, so a default `pytest` ran 0 telemetry cases). Both are now **CLOSED** by a
+follow-up ticket that edited exactly those three files plus this document. §10 records the
+closure; §9 and §11 carry the re-measured numbers. The 18-file E0-T5 inventory (§12) is unchanged
+except for the md5 of `test_makefile_wiring.py` (its `xfail` tripwire is gone, replaced by a real
+wiring assertion).
+
+Baseline for the original ticket: `751fa5f`. The working tree also carries the untracked `.kilo/`
+(untouched); the 6.5 GB SDXL weights were not touched.
 
 ---
 
@@ -23,16 +33,27 @@ Bert ruling 2 is absolute. This ticket delivers **exactly 18 files**:
   test_makefile_wiring}.py`
 - 1 document: `docs/QA.md`
 
-**NOT touched**: `docs/PLAN.md`, `Makefile`, `evals/run.py`, `pyproject.toml`,
+**NOT touched (by E0-T5 itself)**: `docs/PLAN.md`, `Makefile`, `evals/run.py`, `pyproject.toml`,
 `apps/api/repository.py`, `apps/api/usage.py`, `docs/CONTRACTS.md`, `infra/migrations/**`,
 any schema, any write path, any emitter, `.kilo/`. No new dependency: the gate is pure Python
 standard library. No file is written at runtime — the report is stdout-only and the database is
 opened `mode=ro`.
 
-The delivered gate is `python -m evals.telemetry`. The two `make` targets still run but are
-**vision harness output, non-gate evidence** (§11). Makefile wiring is a named residual (§10,
-R4) guarded by an `xfail(strict=True)` tripwire; nothing in the test suite asserts SQL or
-Makefile text.
+A follow-up ticket (the R7+R4 closure, committed after `73a95ba`) edited `Makefile`,
+`pyproject.toml`, `evals/telemetry/tests/test_makefile_wiring.py`, and this document. Those four
+edits are outside the original 18-file scope by design and are recorded in §10; they add no new
+files and no new runtime behaviour — they only wire the existing gate into `make` and into the
+default `pytest` collection.
+
+The delivered gate is `python -m evals.telemetry`. The `make` targets `evals`, `evals-strict`,
+and `evals-report` are now wired to it (§11): `make evals` is the dev/CI gate
+(`--gate --allow-inconclusive`), `make evals-strict` the release gate (`--gate`), `make
+evals-report` report-only. The vision harness survives as `make evals-vision`. R4 (the wiring
+gap) is **CLOSED** (§10); the `xfail(strict=True)` tripwire that guarded it is removed and
+replaced by a real subprocess assertion in `test_makefile_wiring.py`
+(`test_make_evals_strict_is_wired_to_the_telemetry_gate`), which resolves `make -n evals-strict`
+to a recipe containing `evals.telemetry` (not `evals.run`) and runs the gate on a 30-item
+baseline to exit 0.
 
 ## 2. Running it, and the four exit codes
 
@@ -961,19 +982,22 @@ mutations = 8
 
 | gate | command | rc | measured |
 |---|---|---|---|
-| 1 | `python -m pytest evals/telemetry/tests -q` | **0** | `98 passed, 1 xfailed` (the tripwire) |
-| 1b | `python -m pytest -q` (whole repo, `testpaths`) | **0** | `588 passed, 4 skipped, 1 xfailed, 1 warning` in 56.88 s — **baseline confirmation, non-gate evidence**; telemetry node ids collected = 0 |
-| 2 | `pnpm -w test` | **0** | `Scope: 3 of 4 workspace projects`, `76 tests / 76 pass / 0 fail`, 299.38 ms |
+| 1 | `python -m pytest evals/telemetry/tests -q` | **0** | `99 passed, 0 xfailed` (the R4 tripwire is gone — see §1/§10) |
+| 1b | `python -m pytest -q` (whole repo, `testpaths`) | **0** | `692 tests, 0 failures, 5 skipped` — **the telemetry suite is now collected by default** (R7 closed) |
+| 2 | `pnpm -w test` | **0** | `Scope: 3 of 4 workspace projects`, `76 tests / 76 pass / 0 fail` |
 | 3 | `.venv/bin/ruff check .` | **0** | `All checks passed!` |
-| 4 | `git add -N docs/QA.md evals/telemetry && git diff --check` (then `git reset -q -- docs/QA.md evals/telemetry`) | **0** | 0 bytes of output; all 18 untracked files clean |
+| 4 | `git diff --check` on the tracked edits + `git diff --no-index --check /dev/null` per new file | **0** | 0 bytes of output; the three tracked edits (`Makefile`, `pyproject.toml`, `test_makefile_wiring.py`) are whitespace-clean |
 
-The 1 xfail in gate 1 is the intentional R4 tripwire. The whole-repo `testpaths` in
-`pyproject.toml` does **not** include `evals/telemetry/tests`, which is exactly why the explicit
-acceptance command is required. **Row 1b is only a regression confirmation of the pre-existing
-suite, not E0-T5 gate evidence**: `pytest --collect-only -q` collects 0 telemetry node ids, so
-its 588/4/1 numbers are byte-for-byte the E5-T6b baseline and prove nothing about this ticket.
-The collection gap is named residual **R7** below. The `1 warning` is a pre-existing
-starlette/anyio `DeprecationWarning`, unrelated to this ticket.
+Gate 1 is now `99 passed, 0 xfailed`: the `xfail(strict=True)` R4 tripwire that the original
+ticket had to leave in place (it could not touch `Makefile`) is removed, and
+`test_makefile_wiring.py` carries a real subprocess assertion instead (§1). The whole-repo
+`testpaths` in `pyproject.toml` **now includes** `evals/telemetry/tests`, so a default
+`python -m pytest -q` collects the telemetry suite and gate 1b rises from the E5-T6b baseline of
+`588 passed, 4 skipped, 1 xfailed` to `692 tests, 0 failures, 5 skipped` (the +99 are exactly the
+telemetry cases, 0 of them xfailed). Row 1b is now genuine gate evidence, not just a regression
+confirmation — the collection gap that was residual **R7** is closed. The `5 skipped` are
+pre-existing tests gated on an optional dependency / network; the single pre-existing
+starlette/anyio `DeprecationWarning` remains, unrelated to this ticket.
 
 Gate 4 measures whitespace on the new files, not on tracked edits. All 18 deliverables are
 untracked, so a bare `git diff --check` returning rc=0 is **no evidence at all** about them —
@@ -1008,13 +1032,21 @@ exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
 - **R3 — Postgres reader.** `excluded_refunded` is MEASURED only on the SQLite dev DB (whose
   `usage_events` has no FK). On Postgres/Supabase it is UNMEASURED by construction per
   `0001_init.sql:231-232`. E0-T5 ships no Postgres reader and promises no production number.
-- **R4 — Makefile wiring.** `Makefile` and `evals/run.py` are outside the whitelist. Today
-  `make evals` → `evals.run --suite vision --allow-inconclusive` and `make evals-strict` →
-  `evals.run --suite vision --gate` (which refuses with exit 2). `test_makefile_wiring.py`
-  carries one `xfail(strict=True)` tripwire asserting a real subprocess exit code: when the
-  target is wired to `python -m evals.telemetry`, the test XPASSes, `strict=True` turns that
-  into a failure, and the engineer must remove the marker and re-review. No test asserts
-  Makefile text.
+- **R4 — Makefile wiring. CLOSED (follow-up commit after `73a95ba`).** `Makefile` was outside
+  the E0-T5 whitelist; the original ticket left `make evals` → `evals.run --suite vision
+  --allow-inconclusive` and `make evals-strict` → `evals.run --suite vision --gate`, guarded by
+  an `xfail(strict=True)` tripwire in `test_makefile_wiring.py`. The follow-up wired both targets
+  to `python -m evals.telemetry` (`make evals` = `--gate --allow-inconclusive`; `make
+  evals-strict` = `--gate`; plus `make evals-report` = report-only and `make evals-vision` =
+  the preserved vision harness), deleted the tripwire, and added
+  `test_make_evals_strict_is_wired_to_the_telemetry_gate`, which proves the wiring with a real
+  subprocess (`make -n evals-strict` resolves to a recipe containing `evals.telemetry` and not
+  `evals.run`, and the gate exits 0 on a pinned-`--now` 30-item baseline). **Known make
+  limitation (documented in the Makefile): GNU Make 3.81 (macOS stock) collapses any non-zero
+  recipe exit to `2`, so through this make the wrapper distinguishes only pass (0) vs fail (2);
+  the precise FAIL(1)/INCONCLUSIVE(2)/DATA_UNAVAILABLE(3) codes survive only when the gate is
+  invoked directly.** That granularity loss is a make limitation, not a gate defect, and is not
+  hidden.
 - **R5 — `0 < attribution_missing_rate <= 0.20` DEGRADED.** PLAN:250 sets the 20 % tolerance
   for a required property missing from qualifying rows; below that cut the source is classified
   `OK`, so the eight gated rows legitimately decide the exit code (∈ {0,1,2}). It is **never**
@@ -1023,41 +1055,65 @@ exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
   is its guard.
 - **R6 — `export_burst_60m`.** No producer exists in `CONTRACTS.md` §7; the row prints
   `UNMEASURED` plus the reason. Defining it is a contract change, not a gate change.
-- **R7 — `pyproject.toml` `testpaths` does not collect this suite.** The whole-repo
-  `testpaths` excludes `evals/telemetry/tests`, so a default `python -m pytest -q` collects
-  **0** telemetry test cases (verified with `pytest --collect-only -q` and in the whole-repo
-  junit XML); the explicit acceptance command
-  `python -m pytest evals/telemetry/tests -q` is therefore mandatory and is the only gate-1
-  evidence. Editing `pyproject.toml` lies outside the allowed-paths whitelist and conflicts
-  with Bert ruling 2, so this ticket leaves it unchanged; a follow-up ticket must wire it in.
-  Note that R4's `xfail(strict=True)` tripwire covers only the Makefile target — it does
-  **not** cover `testpaths`, and must not be described as already covering this gap.
+- **R7 — `pyproject.toml` `testpaths`. CLOSED (follow-up commit after `73a95ba`).** The original
+  ticket could not edit `pyproject.toml` under the allowed-paths whitelist, so the whole-repo
+  `testpaths` excluded `evals/telemetry/tests` and a default `pytest` collected 0 telemetry
+  cases. The follow-up added `"evals/telemetry/tests"` to `testpaths`; a default
+  `python -m pytest -q` now collects the suite (gate 1b = `692 tests, 0 failures, 5 skipped`,
+  up from the `588 passed, 4 skipped, 1 xfailed` E5-T6b baseline — the +99 are the telemetry
+  cases, 0 xfailed). The explicit acceptance command `python -m pytest evals/telemetry/tests -q`
+  still works and is now redundant with the default collection; both paths run the same 99
+  tests. R4's old tripwire never covered `testpaths`; that gap is closed here, independently.
 
-## 11. The two `make` commands — vision harness output, non-gate evidence
+## 11. The `make` targets — now the E0-T5 gate (R4 closed)
 
-Both commands were run as instructed. Their output is the **vision harness**, not the E0-T5
-gate, and must not be pasted into a release checklist as gate evidence.
+Both `make evals` and `make evals-strict` now invoke `python -m evals.telemetry` (the vision
+harness survives as `make evals-vision`). Output below was captured on this checkout
+(`git_sha=73a95ba`) with `NO_COLOR=1` against a **non-existent** `SNAPLIST_DB` — the
+`SOURCE_ABSENT_3A` / 3a case, i.e. nothing has been measured yet.
 
 ```
-$ make evals
+$ make evals                      # dev / CI gate: --gate --allow-inconclusive
 rc=0
-/Users/bujin/Documents/Projects/SnapList/.venv/bin/python -m evals.run --suite vision --allow-inconclusive
-# eval report — suite `vision`
-- generated: 2026-11-05T19:16:18+00:00
-- git: `751fa5f`
-- golden manifest: MISSING
-... (segmentation IoU / prettify SSIM rows; everything else UNMEASURED)
+exec .venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive
+SnapList telemetry gate — E0-T5
+population=0 items (from 0 sellers)
+source_state=SOURCE_ABSENT_3A
 
-$ make evals-strict
-rc=2
-/Users/bujin/Documents/Projects/SnapList/.venv/bin/python -m evals.run --suite vision --gate
-RELEASE GATE NOT AVAILABLE — E0-T5 is not implemented yet (docs/PLAN.md).
-Refusing to report a release-ready pipeline that nobody has measured.
-make: *** [evals-strict] Error 2
+GATE NOT EVALUATED — n=0. This is NOT a pass.
+
+VERDICTS: PASS=0 FAIL=0 INCONCLUSIVE=8 DATA_UNAVAILABLE=0 REFUND_ATTRIBUTION=INTACT
 ```
 
-(`make evals` regenerates `evals/reports/vision.md`, a gitignored artifact; the working tree
-shows only `.kilo/` and `evals/telemetry/` untracked.)
+```
+$ make evals-strict               # release gate: --gate (no --allow-inconclusive)
+rc=2   (make 3.81 collapses the gate's real exit 3 to 2; it prints "make: *** [evals-strict] Error 3")
+exec .venv/bin/python -m evals.telemetry --since 7d --gate
+SnapList telemetry gate — E0-T5
+population=0 items (from 0 sellers)
+source_state=SOURCE_ABSENT_3A
+
+GATE NOT EVALUATED — n=0. This is NOT a pass.
+
+VERDICTS: PASS=0 FAIL=0 INCONCLUSIVE=8 DATA_UNAVAILABLE=0 REFUND_ATTRIBUTION=INTACT
+```
+
+```
+$ make evals-report               # report only, never gates
+rc=0
+exec .venv/bin/python -m evals.telemetry --since 7d
+... (same body; VERDICTS: PASS=0 FAIL=0 INCONCLUSIVE=8 DATA_UNAVAILABLE=0) ...
+```
+
+On a real 30-item baseline (all 8 gated rows PASS) both `make evals` and `make evals-strict`
+return `rc=0` with `VERDICTS: PASS=8 FAIL=0 INCONCLUSIVE=0 DATA_UNAVAILABLE=0`. The only
+behavioural difference between the two is how an unmeasured / inconclusive pipeline is treated:
+`make evals` downgrades 2 and 3a to 0 (dev must not be blocked by absence), `make evals-strict`
+does not (a release cannot ship an unmeasured pipeline). **Exit-code granularity note:** GNU
+Make 3.81 (macOS stock) collapses any non-zero recipe exit to `2`, so through `make` the
+distinction FAIL(1)/INCONCLUSIVE(2)/DATA_UNAVAILABLE(3) is lost — run
+`python -m evals.telemetry --since 7d --gate [--allow-inconclusive]` directly to get the exact
+code. This is a make limitation, recorded here and in the Makefile, not a gate defect.
 
 ## 12. File inventory and frozen md5
 
@@ -1074,7 +1130,7 @@ shows only `.kilo/` and `evals/telemetry/` untracked.)
 | `evals/telemetry/tests/fixtures.py` | `a4fdbaf1d63b5108369046810c9e9b23` |
 | `evals/telemetry/tests/test_compute.py` | `ec575ff2e7f529777c6f14fd74f4b82b` |
 | `evals/telemetry/tests/test_exit_codes.py` | `830b407029a399a7beedfd07507844e3` |
-| `evals/telemetry/tests/test_makefile_wiring.py` | `52f9875f77cf0082ee26f558eedd224c` |
+| `evals/telemetry/tests/test_makefile_wiring.py` | `3c17a1669ee46720f8648a4a0f1d9ec1` |
 | `evals/telemetry/tests/test_mutations.py` | `bea7ab249fd204f8ff13fd790a08efd3` |
 | `evals/telemetry/tests/test_population_and_orphans.py` | `8c0c996ff056bd7f99108baab339b016` |
 | `evals/telemetry/tests/test_report.py` | `da2e349ce7cc454eea920b6faa5baa60` |
@@ -1092,8 +1148,10 @@ not fill it, does not borrow its numbers, and does not pre-judge its gate.*
 
 ## 14. Handoff state
 
-- No commit, no `git add`, no push. Awaiting independent QA review, then team-lead's explicit
-  stage + commit.
+- E0-T5 shipped at `73a95ba` (`HEAD` = `origin/master`). The R7+R4 closure (this document's
+  edits plus `Makefile`, `pyproject.toml`, `test_makefile_wiring.py`) is committed in the
+  follow-up and pushed.
 - `.kilo/` remains untracked and untouched; the 6.5 GB SDXL weights were not touched, not
   removed, and no cleanup was performed.
-- `HEAD` remains `751fa5f`.
+- The 18-file E0-T5 inventory (§12) is unchanged except for the md5 of
+  `test_makefile_wiring.py` (the tripwire is gone, replaced by a real wiring assertion).
