@@ -33,8 +33,20 @@ const envelope = {
   platform: "ios" as const,
 };
 
+/**
+ * The same envelope plus `item_id`, for the five events that **require** one (ADR-008).
+ *
+ * Deliberately not folded into `envelope`: `subscription_started` must *not* carry an item,
+ * and a shared literal with the field in it would blur the difference between "forbidden" and
+ * "wrong type" in the tests below.
+ */
+const ITEM_ID = "7f1b0c62-5f2f-4a59-9a1d-0c9a1f66b0aa";
+const itemEnvelope = { ...envelope, item_id: ITEM_ID };
+
 test("exactly seven frozen event names, in frozen order", () => {
-  assert.equal(EVENTS_VERSION, "1.3.0");
+  // 1.4.0 added `item_id` to the envelope — a field, not an event (ADR-008). A version bump
+  // alone is not evidence the field survived; the next test is what checks that.
+  assert.equal(EVENTS_VERSION, "1.4.0");
   assert.deepEqual([...ANALYTICS_EVENTS], [
     "upload_started",
     "prettify_approved",
@@ -51,17 +63,17 @@ test("the envelope carries event_id, and it must be a uuid", () => {
   // envelope had no such field, so a client validating with this schema could not build a
   // sendable body at all — the API would 422 it for the key it required and this schema
   // would 422 it for the key it forbade.
-  const parsed = UploadStarted.parse({ ...envelope, event: "upload_started", source: "camera", capture_mode: "single" });
+  const parsed = UploadStarted.parse({ ...itemEnvelope, event: "upload_started", source: "camera", capture_mode: "single" });
   assert.equal(parsed.event_id, envelope.event_id);
 
-  const { event_id: _omitted, ...withoutId } = envelope;
+  const { event_id: _omitted, ...withoutId } = itemEnvelope;
   assert.equal(
     UploadStarted.safeParse({ ...withoutId, event: "upload_started", source: "camera", capture_mode: "single" }).success,
     false,
   );
   assert.equal(
     UploadStarted.safeParse({
-      ...envelope,
+      ...itemEnvelope,
       event_id: "not-a-uuid",
       event: "upload_started",
       source: "camera",
@@ -71,20 +83,113 @@ test("the envelope carries event_id, and it must be a uuid", () => {
   );
 });
 
+test("item_id is required on the five per-item events", () => {
+  // ADR-008 / EVENTS_VERSION 1.4.0. These five are what `tool_time_ms` per item,
+  // `activation_items_exported_7d` and the export-failure rate join on; an emitter that
+  // forgets the id must be a parse error in the client, not a hole in the funnel.
+  const bodies = [
+    ["upload_started", { ...itemEnvelope, event: "upload_started", source: "camera", capture_mode: "single" }, UploadStarted],
+    [
+      "prettify_approved",
+      {
+        ...itemEnvelope,
+        event: "prettify_approved",
+        decision: "approve",
+        job_latency_ms: 1,
+        prettify_latency_ms: 2,
+        attrs_latency_ms: 3,
+      },
+      PrettifyApproved,
+    ],
+    [
+      "attributes_edited",
+      {
+        ...itemEnvelope,
+        event: "attributes_edited",
+        edited_field_count: 0,
+        fields_touched: 2,
+        field_names: ["colors"],
+      },
+      AttributesEdited,
+    ],
+    [
+      "export_clicked",
+      { ...itemEnvelope, event: "export_clicked", marketplace: "ebay", row_count: 2, export_latency_ms: 900 },
+      ExportClicked,
+    ],
+    [
+      "export_delivered",
+      { ...itemEnvelope, event: "export_delivered", marketplace: "ebay", row_count: 2, bytes: 10, delivery_latency_ms: 3 },
+      ExportDelivered,
+    ],
+  ] as const;
+
+  for (const [name, body, schema] of bodies) {
+    const parsed = schema.parse(body);
+    assert.equal(parsed.item_id, ITEM_ID, `${name} should keep the item id`);
+
+    const { item_id: _dropped, ...withoutItem } = body as Record<string, unknown>;
+    assert.equal(
+      schema.safeParse(withoutItem).success,
+      false,
+      `${name} without item_id must not validate: three per-item reports would break`,
+    );
+    assert.equal(
+      schema.safeParse({ ...withoutItem, item_id: null }).success,
+      false,
+      `${name} with a null item_id must not validate either`,
+    );
+  }
+});
+
+test("subscription_started forbids item_id, because Stripe has no item", () => {
+  // A subscription is not about one garment. An id attached here would attribute revenue to
+  // whichever item happened to be on screen (ADR-008). Absent and explicit null are both
+  // legal — the python mirror is `item_id: None = None` — a real uuid is not.
+  const base = {
+    ...envelope,
+    event: "subscription_started",
+    plan: "pro",
+    paywall_variant: "b",
+    amount_cents: 4900,
+    currency: "USD",
+  };
+  assert.equal(SubscriptionStarted.safeParse(base).success, true);
+  assert.equal(SubscriptionStarted.safeParse({ ...base, item_id: null }).success, true);
+  assert.equal(SubscriptionStarted.safeParse({ ...base, item_id: ITEM_ID }).success, false);
+  assert.equal(
+    AnalyticsEvent.safeParse({ ...base, item_id: ITEM_ID }).success,
+    false,
+    "the union must refuse it too, not just the member schema",
+  );
+});
+
+test("paywall_impression is the one event where item_id is optional", () => {
+  const base = {
+    ...envelope,
+    event: "paywall_impression",
+    paywall_variant: "a",
+    trigger: "upload_4th",
+    plan_offered: "starter",
+  };
+  assert.equal(PaywallImpression.safeParse(base).success, true);
+  assert.equal(PaywallImpression.safeParse({ ...itemEnvelope, ...base }).success, true);
+});
+
 test("export_delivered exists as a real event, not just a version number", () => {
   // A version bump alone does not prove the event survived: someone could roll the array back
-  // and leave EVENTS_VERSION at 1.2.0. Activation counts on this event existing.
+  // and leave EVENTS_VERSION alone. Activation counts on this event existing.
   assert.ok(
     (ANALYTICS_EVENTS as readonly string[]).includes("export_delivered"),
     "export_delivered missing from ANALYTICS_EVENTS — activation_items_exported_7d cannot be computed",
   );
-  assert.equal(ExportDelivered.safeParse({ ...envelope, event: "export_delivered" }).success, false);
-  assert.equal(AnalyticsEvent.safeParse({ ...envelope, event: "export_delivered" }).success, false);
+  assert.equal(ExportDelivered.safeParse({ ...itemEnvelope, event: "export_delivered" }).success, false);
+  assert.equal(AnalyticsEvent.safeParse({ ...itemEnvelope, event: "export_delivered" }).success, false);
 });
 
 test("export_delivered carries bytes and delivery latency, not export latency", () => {
   const ok = ExportDelivered.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "export_delivered",
     marketplace: "ebay",
     row_count: 5,
@@ -108,7 +213,7 @@ test("the three different threes are named apart", () => {
 
 test("upload_started distinguishes single from batch capture", () => {
   const ok = UploadStarted.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "upload_started",
     source: "camera",
     capture_mode: "single",
@@ -116,7 +221,7 @@ test("upload_started distinguishes single from batch capture", () => {
   assert.equal(ok.capture_mode, "single");
   assert.equal(
     UploadStarted.safeParse({
-      ...envelope,
+      ...itemEnvelope,
       event: "upload_started",
       source: "library",
       capture_mode: "batch",
@@ -128,7 +233,7 @@ test("upload_started distinguishes single from batch capture", () => {
 
 test("prettify_approved carries all three latency proxies", () => {
   const ok = PrettifyApproved.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "prettify_approved",
     decision: "approve",
     job_latency_ms: 18_000,
@@ -141,7 +246,7 @@ test("prettify_approved carries all three latency proxies", () => {
 
 test("attributes_edited separates touched from edited", () => {
   const ok = AttributesEdited.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "attributes_edited",
     edited_field_count: 1,
     fields_touched: 4,
@@ -152,7 +257,7 @@ test("attributes_edited separates touched from edited", () => {
 
 test("field_names rejects anything that looks like a leaked value", () => {
   const leaked = AttributesEdited.safeParse({
-    ...envelope,
+    ...itemEnvelope,
     event: "attributes_edited",
     edited_field_count: 1,
     fields_touched: 1,
@@ -161,7 +266,7 @@ test("field_names rejects anything that looks like a leaked value", () => {
   assert.equal(leaked.success, false);
 
   const ok = AttributesEdited.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "attributes_edited",
     edited_field_count: 0,
     fields_touched: 2,
@@ -172,7 +277,7 @@ test("field_names rejects anything that looks like a leaked value", () => {
 
 test("export_clicked names a real marketplace and a row count", () => {
   const ok = ExportClicked.parse({
-    ...envelope,
+    ...itemEnvelope,
     event: "export_clicked",
     marketplace: "ebay",
     row_count: 5,
@@ -181,7 +286,7 @@ test("export_clicked names a real marketplace and a row count", () => {
   assert.equal(ok.marketplace, "ebay");
   assert.equal(
     ExportClicked.safeParse({
-      ...envelope,
+      ...itemEnvelope,
       event: "export_clicked",
       marketplace: "etsy",
       row_count: 5,
@@ -225,7 +330,7 @@ test("the discriminated union rejects an unknown event name", () => {
 
 test("an unknown key is rejected, so PII cannot ride along", () => {
   const withEmail = UploadStarted.safeParse({
-    ...envelope,
+    ...itemEnvelope,
     event: "upload_started",
     source: "camera",
     capture_mode: "single",

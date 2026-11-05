@@ -1964,13 +1964,16 @@ the one place where the brief and `analytics.ts` conflicted and I followed `anal
    still forgeable. Every report must order and window on `received_at`; a dashboard that uses
    `client_ts` for "events in the last 7 days" is trivially gamed and also wrong for a device
    whose clock is off. There is no server-side correction and no skew metric yet.
-4. **The RLS claim is unproven.** No Postgres, no docker, no supabase CLI in this environment.
-   `0002_events.sql` has never been executed. What is tested is its text and the SQLite mirror;
-   the policy is written but nobody has proved that `anon` and `authenticated` are actually
-   refused on a real project — `pg_policies` would show the policy exists, which is not the same
-   claim. Two things I would check first on a real instance: that `service_role` (which is
-   `bypassrls` in the shim) is the role the API connects as, and that no default `GRANT` on
-   `public` gives `anon` table privileges that RLS then has to deny.
+4. **The Supabase-hosted RLS claim is unproven.** `0001` → `0002` → `0003` were applied clean
+   (twice for `0003`, `-v ON_ERROR_STOP=1`) to a local vanilla **PostgreSQL 14.18** behind
+   `infra/migrations/verify/local_supabase_shim.sql`, and the CHECKs, the per-item index and
+   the hard-delete behaviour were measured on that database. That is not a Supabase project:
+   the hosted environment, PG15, the RLS role policies (`anon` / `authenticated` /
+   `service_role` grants) and PostgREST remain **UNVERIFIED** — `pg_policies` would show the
+   policy exists, which is not the same claim. Two things I would check first on a real
+   instance: that `service_role` (which is `bypassrls` in the shim) is the role the API
+   connects as, and that no default `GRANT` on `public` gives `anon` table privileges that
+   RLS then has to deny.
 5. **`events_field_names_are_name_list()` is untested SQL.** It is the only place the
    per-element regex is enforced *in the database*, and it exists only because a CHECK cannot
    contain a subquery. If `unnest`/`~` inside an `immutable` SQL function does something I did
@@ -2076,4 +2079,155 @@ needs a Postgres to run against.
 
 **What the audit could not change:** the table has no `item_id`. `docs/METRICS.md` assumes
 `export_delivered` carries one, and PLAN's per-item tool-time and activation-dedup gates need it.
-That is a contract gap one level above this ticket, and E0-T5 inherits it.
+That is a contract gap one level above this ticket, and E0-T5 inherits it. → **closed by E5-T6b
+(ADR-008). See §9.**
+
+## 9. E5-T6b — `item_id` on the envelope, graded per event
+
+The gap §8 closed with was real and is now shut: `public.events` has no join key on the item, so
+`tool_time_ms` per item, `activation_items_exported_7d` (deduped to one row per item) and the
+`export_clicked` − `export_delivered` failure rate — a *required observable*, per
+`docs/CONTRACTS.md` §7 — were three numbers nobody could compute. E0-T5 would have printed them
+as counts of events: plausible, comparable to nothing, and wrong in the direction that looks
+fine.
+
+**9.1 The shape.** `item_id` is on the envelope and **graded per event** — required on
+`upload_started`, `prettify_approved`, `attributes_edited`, `export_clicked`, `export_delivered`;
+optional on `paywall_impression`; forbidden on `subscription_started`. Not "optional everywhere":
+an optional field on a frozen envelope is how a metric dies quietly, because the emitter that
+forgets still gets a 202 and the only symptom is a percentage drifting. The reasoning for each
+grade, including why the paywall exception is factual rather than convenient, is in
+`docs/ADR-008-events-item-id.md` — do not re-litigate it in a PR description.
+
+**9.2 Where the grade is enforced.** Four places, and the count is the point:
+zod per-event schemas (`analytics.ts`), pydantic per-event models (`routers/events.py`), two
+CHECK constraints in `infra/migrations/0003_events_item_id.sql`, two table CHECKs in the SQLite
+mirror (`repository.py`). The schemas catch the client; the database catches anything that
+bypasses the route. `test_events.py::test_the_sqlite_mirror_refuses_a_subscription_with_an_item`
+calls `append_analytics_event()` **directly**, with a *real* item id (a random one would raise on
+the foreign key and prove nothing), which is the only version of that test that means something.
+
+**9.3 Ownership, and the 404.** `bind_item()` looks the id up with
+`get_item(..., user_id=caller.user_id, include_deleted=True)` and answers **404** for anything
+else — 404 and not 403 because a 403 confirms that somebody else's item exists, the same call
+`routers/items.py` makes. `include_deleted=True` is deliberate: soft-deleted items still own
+their events, or a client retrying an offline-queued event after the seller tidied up would be
+refused for a step that was legal when it happened. The check is *point in time* — "yours now",
+not "yours then" — which is a limitation, not an oversight; see 9.6.
+
+**9.4 `docs/METRICS.md` was corrected, not rewritten.** Four field names had drifted from the
+frozen contract, and one of them (`stripe_customer_id`) is a **PII violation**, not just a
+mismatch:
+
+| was | is | why |
+|---|---|---|
+| `price_cents` | `amount_cents` | the contract's name; the row had a field that does not exist |
+| `stripe_customer_id (hashed)` | not in the event at all | §7 bans PII; a hashed customer id is still a customer id. Read it from Stripe, keyed by subscription |
+| `paywall_type (soft\|hard)` | `trigger` + `plan_offered` | `paywall_type` was never a wire field |
+| `free_items_exported` | computed from `export_delivered` per `item_id` | the confounder is derivable, and a derived figure cannot disagree with the funnel it explains |
+
+The table also gained an `item_id` column stating the grade per row, and the header now says the
+wire names come from `CONTRACTS.md` §7 with the contract winning any conflict. That last line
+existed as prose before and the table drifted anyway; it is now a standing instruction with the
+three examples inline, because "check the contract" is advice nobody follows retrospectively.
+
+**9.5 What the tests pin, in the two places that can actually fail.** Python: five events with a
+legal item → 202; without → 422 naming `item_id`; with **another seller's** item → 404 *and no
+row written*; `subscription_started` + item → 422; `paywall_impression` both ways → 202; the
+round-trip through `get_analytics_event`; the 0003 text-level facts (column spelling, both
+CHECKs by name, index column list, and **the absence of any ON DELETE action**); and a
+python↔TS *grade* parity test that compares the requirement event by event — field-name parity
+cannot see the difference between "graded" and "optional everywhere", which is the whole
+subject of the ticket. Since the Corrigendum (§9.7) the decisive evidence is **behavioural,
+not textual**: a real `delete from items` followed by whole-`EventRecord` equality across all
+seven events, `pragma foreign_key_list(events)` introspection, and a direct
+`update events set item_id = null` that must raise.
+Node: `EVENTS_VERSION === "1.4.0"` as a literal, the envelope at eight fields, and the three
+grades asserted against the schemas.
+
+**9.6 Still not standing — read this before believing the report.**
+
+1. **Only a local vanilla PostgreSQL 14.18 has run these migrations.** `0001` → `0002` → `0003`
+   were applied clean (twice for `0003`, `-v ON_ERROR_STOP=1`) behind
+   `infra/migrations/verify/local_supabase_shim.sql`; the CHECKs, the per-item index and the
+   hard-delete behaviour were measured there, and `apps/api/tests/test_events.py` still asserts
+   the text (both CHECKs, the index, the absence of an ON DELETE action) and exercises the
+   SQLite mirror, which is the copy that runs. The Supabase-hosted environment, PG15, the RLS
+   role policies and PostgREST remain **UNVERIFIED**, exactly as for 0001/0002. The file was
+   corrected **before** it was ever applied to a Supabase project (§9.7), so no environment
+   has the withdrawn FK and no data repair is pending.
+2. **An upgraded SQLite *file* database is looser than a fresh one.** `alter table` can add a
+   column but not a CHECK, so a `SNAPLIST_DB` file created before 0003 gets a plain
+   `item_id text` with **no FK** but also without the uuid shape CHECK and the two grade CHECKs —
+   it enforces the grade only in the router (`SqliteRepository._migrate_event_item_column`).
+   Fresh databases enforce it twice. A file built by the *pre-fix* version that already carries
+   the bad `ON DELETE SET NULL` FK is **refused with a `RuntimeError`** telling the operator to
+   delete the dev DB; SQLite cannot drop a constraint with `ALTER TABLE`, and keeping it quietly
+   would contradict the migration that ships. Dev-only path, written down rather than smoothed
+   over. Note also that `pragma foreign_keys = on` is **per-connection and defaults OFF** in
+   SQLite, so any external sqlite3 connection to a dev file has no FK enforcement at all.
+3. **Ownership is a point-in-time check.** Events filed against an item that has since been
+   *hard*-deleted 404 (soft deletes are fine — `include_deleted=True`), and an event filed while
+   the item was yours stays yours. There is no audit of "who owned this item at `client_ts`",
+   because the schema does not record item ownership history. The direction of residual risk is
+   favourable: an attacker can only attach events to items they own. **Existing** event rows are
+   unaffected by a hard delete and keep their original `item_id` (§9.7).
+4. **There is no static referential integrity on `item_id`, and that is the design.** Removing
+   the FK (§9.7) means a dangling uuid at rest is legal: the event outlives its item. Reports,
+   including E0-T5's `tool_time_ms` and activation SQL, **must tolerate orphans** — filtering
+   them out would silently shrink historical rates, exactly what the FK was supposed to
+   prevent. Any writer that bypasses `bind_item` must validate the id itself; the shape CHECK
+   proves it is a uuid, not that the item exists or belongs to the subject. If a data-subject
+   erasure must remove the evidence too, it is an explicit, auditable
+   `delete from events where item_id = ?` — not a silent constraint side effect.
+5. **The per-item reports do not exist yet.** This ticket makes them *computable*; E0-T5 has to
+   write the SQL. Everything `docs/METRICS.md` says about `tool_time_ms` and activation is still
+   **UNMEASURED** — `make evals-strict` still fails on purpose, and nothing here changes that.
+6. **Nothing validates that `item_id` is real at *emit* time on the client.** The client can
+   build a valid body from a stale item id; the API answers 404 and the client must drop the
+   event rather than retry it forever. That is a mobile-side outbox rule (E6-T1), not something
+   this route can enforce.
+7. **`paywall_impression`'s optionality is untested against a real client.** Both branches are
+   covered by the suite; whether the settings-screen paywall actually exists yet is a product
+   question, so the "no item" path is a schema that allows something nobody emits.
+
+## 9.7 Corrigendum (2026-11-05) — the FK that could not work
+
+An independent QA audit found a blocking defect in the version of E5-T6b described in §9.
+`0003_events_item_id.sql` declared `item_id uuid references public.items (id) on delete set
+null`, and the SQLite mirror copied it. The same file declares the forward CHECK that makes
+`item_id` **required** on five events. `ON DELETE SET NULL` is an implicit `UPDATE`, and a CHECK
+is re-evaluated on UPDATE, so the two constraints are mutually exclusive. Measured against a
+real `SqliteRepository(":memory:")` with `pragma foreign_keys = on`:
+
+| event | with the old FK | after the fix (no FK) |
+|---|---|---|
+| the five item events | `delete from items` **refused** by CHECK violation; row unchanged, FK silently degraded to `NO ACTION` | delete succeeds; row unchanged, `item_id` intact |
+| `paywall_impression` | delete succeeds, event row **silently rewritten to `item_id = NULL`** | delete succeeds; row unchanged, `item_id` intact |
+| `subscription_started` | delete succeeds, `item_id` stays NULL | delete succeeds, `item_id` stays NULL |
+
+The FK therefore did the wrong thing on **both** halves, and §9's "an orphaned timestamp is
+still a datapoint" was unachievable on the five events that matter. Every existing test was
+green because `test_migration_0003_adds_item_id_with_a_set_null_foreign_key` asserted only the
+SQL **text** — the same failure shape §8.2 documents for constants that were tested against
+themselves, one level up.
+
+**Fix (ADR-008 Corrigendum):** remove the FK outright. `item_id` is a bare `uuid` column in
+Postgres (the type is the shape constraint) and `text` with a length + GLOB CHECK in SQLite;
+existence and ownership remain in `bind_item`. `0003` was corrected **in place** — it was
+untracked, never committed, and the pre-fix version was never applied to any database, so no
+0004 and no data repair. The corrected file has since been applied clean twice to a local
+vanilla PostgreSQL 14.18 behind the shim (§9.6 item 1).
+`CASCADE`, `RESTRICT`/`NO ACTION` and "relax the forward CHECK" were all evaluated and rejected
+(ADR-008 Alternatives rejected). No wire shape changed: `EVENTS_VERSION` stays 1.4.0,
+`CONTRACT_VERSION` does not move (unchanged by this ADR), `docs/CONTRACTS.md` §7 and
+`analytics.ts` untouched.
+
+**What now proves it:** `test_hard_deleting_an_item_never_rewrites_an_event_row` (all seven
+events, whole frozen-dataclass equality before/after a real hard delete),
+`test_foreign_keys_are_enabled_and_events_item_id_has_no_delete_action` (real
+`pragma foreign_key_list(events)` introspection + an `assets` cascade positive control),
+`test_an_item_event_cannot_be_nulled_after_the_fact`, the non-uuid shape CHECK test, and the
+pre-fix / pre-0003 file-database tests. Three mutations were run against a `/tmp` copy to
+prove these tests actually go red: re-adding the bad FK, deleting `pragma foreign_keys = on`,
+and relaxing the forward CHECK. Residuals from the fix are folded into §9.6 items 2 and 4.

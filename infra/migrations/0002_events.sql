@@ -142,7 +142,7 @@ create table if not exists public.events (
     payload_sha256        text        not null,
 
     -- ===== the frozen vocabulary =====================================================
-    -- docs/CONTRACTS.md §7, packages/shared/src/analytics.ts (EVENTS_VERSION 1.3.0).
+    -- docs/CONTRACTS.md §7, packages/shared/src/analytics.ts (EVENTS_VERSION 1.4.0).
     -- An eighth name is an ADR + a version bump, not a commit to this list.
     constraint events_event_check check (event in (
         'upload_started',
@@ -306,7 +306,7 @@ create table if not exists public.events (
 );
 
 comment on table public.events is
-    'Analytics funnel rows (docs/CONTRACTS.md §7, EVENTS_VERSION 1.3.0). Backend-only table: RLS is enabled and the only policy is for the service role. `anon` and `authenticated` have NO permission of any kind — clients write through POST /v1/events and never read this table, because a client that can read the funnel can read other sellers'' behaviour. No column here can hold free text; see the header of 0002_events.sql.';
+    'Analytics funnel rows (docs/CONTRACTS.md §7, EVENTS_VERSION 1.4.0). Backend-only table: RLS is enabled and the only policy is for the service role. `anon` and `authenticated` have NO permission of any kind — clients write through POST /v1/events and never read this table, because a client that can read the funnel can read other sellers'' behaviour. No column here can hold free text; see the header of 0002_events.sql.';
 comment on column public.events.event_id is
     'Client-generated uuid, and the idempotency key. Not server-generated: a retry must reuse the id or the funnel counts one flaky network as several events.';
 comment on column public.events.subject is

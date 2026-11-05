@@ -116,28 +116,54 @@ is readable on day one without anyone inventing a story around a bare number.
 
 ## 3. Funnel events to instrument
 
-**The vocabulary is seven events.** Five funnel events were specified here; `paywall_impression`
-(6th) and `export_delivered` (7th) were added at product's request and frozen in
-`docs/CONTRACTS.md §7` / `packages/shared/src/analytics.ts` under `EVENTS_VERSION 1.2.0`.
-Renaming any of them requires an ADR — same rule as any other contract.
+**The vocabulary is seven events, and it has been seven since `EVENTS_VERSION 1.2.0`.** Six
+events were frozen in `docs/CONTRACTS.md` §7 / `packages/shared/src/analytics.ts` at
+`EVENTS_VERSION 1.1.0`; `export_delivered` (the 7th) was added at product's request in
+`1.2.0`. The current vocabulary is `1.4.0`, but the two later bumps added **fields, not
+events**: `1.3.0` added `event_id` (ADR-007) and `1.4.0` added `item_id` (ADR-008). Renaming
+any of the seven requires an ADR — same rule as any other contract.
 
-> **Payload authority (settled 2026-10-28).** `docs/CONTRACTS.md §7` owns the frozen *shape*;
-> this document owns *definitions and thresholds*. Where the two disagree, **CONTRACTS wins and
-> this table is the thing that is wrong.** Reconciled at review time: dropped `is_free_item`,
+> **Wire names come from `docs/CONTRACTS.md` §7.** This document owns *definitions and
+> thresholds*; the contract owns the frozen *shape and field names*. If a row below names a
+> field the contract does not have, **the contract wins and this table is the thing that is
+> wrong** — check §7 before implementing or instrumenting from here. (This used to be a
+> paragraph of prose; it is a standing instruction because the table drifted anyway: it carried
+> `price_cents`, `paywall_type` and a hashed `stripe_customer_id`, none of which the contract
+> has ever had.)
+>
+> **Payload authority (settled 2026-10-28).** Reconciled at review time: dropped `is_free_item`,
 > `export_attempt_index` and hashed `stripe_customer_id` (CONTRACTS carries `row_count`,
 > `export_latency_ms`, `amount_cents` instead — none of which my metrics need); `retry_count` and
 > `confidence_bucket` are **not** in the frozen payload either, so the prettify retry rate is
 > re-derived from `decision` (§3.2) rather than from a counter that does not exist.
+>
+> **`item_id` (2026-11-05, `EVENTS_VERSION 1.4.0`, ADR-008).** Added to the envelope and graded
+> per event — **required** on the five per-item funnel events, **optional** on
+> `paywall_impression`, **forbidden** on `subscription_started` (a Stripe webhook has no item).
+> It is the join key every per-item number in this document assumes: `tool_time_ms` per item,
+> `activation_items_exported_7d` deduped to one row per item, and the `export_clicked` −
+> `export_delivered` failure gap. The `item_id` column in the table below states which grade each
+> event carries.
 
-| # | Event name (exact) | Fires when | Required properties | Explicitly must NOT contain |
-|---|---|---|---|---|
-| 1 | `upload_started` | The seller submits a photo for processing; a `jobs` row is created | `item_id`, `job_id`, `source` (`camera` \| `library`), `photo_bytes`, `free_items_remaining`, `attempt_index` | image bytes, EXIF/GPS, filename |
-| 2 | `prettify_approved` | Seller taps "Use this" on a prettified result and advances to attributes | `item_id`, `job_id`, `retry_count` (0 = first result accepted), `job_latency_ms`, **`prettify_latency_ms`**, **`attrs_latency_ms`**, `confidence_bucket` (`high` \| `low`) | the image, the URL, the matte |
-| 3 | `attributes_edited` | Seller **confirms** the attributes screen — **fires whether or not any value changed** (`fields_touched` may be 0) | `item_id`, **`field_names[]`** (names only, regex `^[a-z][a-z0-9_]*$`, e.g. `["material","measurements_chest"]`), **`edited_field_count`** (value changed), **`fields_touched`** (read *or* changed, deduped per field) | the values, any measurement number, brand strings, `"Material: Silk"`-style name/value pastes |
-| 4 | `export_clicked` | Seller **asks for** a marketplace file. **This is the attempt** — the file may never be produced | `item_id`, `marketplace` (`ebay` \| `poshmark` \| `vinted`), `row_count` | the CSV contents, buyer/seller data |
-| 5 | **`export_delivered`** | The CSV is **actually produced and returned to the client** (7th event, `EVENTS_VERSION 1.2.0`). **The north star and activation bind to this one** | `item_id`, `marketplace`, `row_count`, **`export_latency_ms`** | the CSV contents, buyer/seller data |
-| 6 | `subscription_started` | Stripe webhook `checkout.session.completed` is received **and signature-verified**, then plan is activated | `plan` (`starter` \| `pro`), `price_cents`, `currency`, `stripe_customer_id` (hashed), `paywall_variant` (`a` \| `b` \| `c`, from `ONBOARDING.md`) | card data, email, full address |
-| 7 | `paywall_impression` | The paywall is shown, converted or not (6th event) | `paywall_variant`, `paywall_type` (`soft` \| `hard`), `trigger`, `plan_offered`, `free_items_exported` | anything about the seller's identity |
+| # | Event name (exact) | Fires when | Required properties | `item_id` | Explicitly must NOT contain |
+|---|---|---|---|---|---|
+| 1 | `upload_started` | The seller submits a photo for processing; a `jobs` row is created | `item_id`, `source` (`camera` \| `library`), `capture_mode` (`single` \| `batch`), `batch_index?` | **required** | image bytes, EXIF/GPS, filename |
+| 2 | `prettify_approved` | Seller taps "Use this" on a prettified result and advances to attributes | `item_id`, `decision` (`approve` \| `retry` \| `remove_bg_waitlist`), `job_latency_ms`, **`prettify_latency_ms`**, **`attrs_latency_ms`** | **required** | the image, the URL, the matte |
+| 3 | `attributes_edited` | Seller **confirms** the attributes screen — **fires whether or not any value changed** (`fields_touched` may be 0) | `item_id`, **`field_names[]`** (names only, regex `^[a-z][a-z0-9_]*$`, e.g. `["material","measurements_chest"]`), **`edited_field_count`** (value changed), **`fields_touched`** (read *or* changed, deduped per field) | **required** | the values, any measurement number, brand strings, `"Material: Silk"`-style name/value pastes |
+| 4 | `export_clicked` | Seller **asks for** a marketplace file. **This is the attempt** — the file may never be produced | `item_id`, `marketplace` (`ebay` \| `poshmark` \| `vinted`), `row_count`, **`export_latency_ms`** | **required** | the CSV contents, buyer/seller data |
+| 5 | **`export_delivered`** | The CSV is **actually produced and returned to the client** (7th event, `EVENTS_VERSION 1.2.0`). **The north star and activation bind to this one** | `item_id`, `marketplace`, `row_count`, **`bytes`**, **`delivery_latency_ms`** | **required** | the CSV contents, buyer/seller data |
+| 6 | `subscription_started` | Stripe webhook `checkout.session.completed` is received **and signature-verified**, then plan is activated | `plan` (`starter` \| `pro`), **`amount_cents`**, `currency`, `paywall_variant` (`a` \| `b` \| `c`, from `ONBOARDING.md`) | **forbidden** | card data, email, full address; **`stripe_customer_id` is not in the event at all** (PII ban, §4) — read it from Stripe's own records, keyed by the subscription id |
+| 7 | `paywall_impression` | The paywall is shown, converted or not (6th event) | `paywall_variant`, **`trigger`** (`upload_4th` \| `on_model` \| `export_limit`), `plan_offered` (`starter` \| `pro`) | optional | anything about the seller's identity; `free_items_exported` is **not** in v1 (`future field, not in EVENTS_VERSION 1.4.0`) |
+
+> **Two fields in this table name something the contract does not carry, and that is now the
+> table's problem, not the contract's.** `paywall_type (soft|hard)` was never a wire field — the
+> contract carries `trigger` (why the wall appeared) and `plan_offered` (what it offered). If a
+> "soft vs hard" distinction is still wanted, it is expressible today as
+> `trigger=on_model`/`upload_4th` (soft: the seller can walk away) versus `trigger=export_limit`
+> (hard: the work is done and cannot be handed over) — write the mapping down before adding a
+> field. `free_items_exported` does not exist either; the confounder it was meant to capture is
+> computed from the events themselves (count `export_delivered` per `item_id` for the seller in
+> the window), which is also the version that cannot disagree with the funnel.
 
 **`export_clicked` vs `export_delivered` is a deliberate pair, not a duplicate.** The difference
 is the "tapped and got nothing" segment: CSV generation failed, the network died, or the seller
@@ -312,22 +338,26 @@ Three copy variants exist in `docs/ONBOARDING.md` §4.
 > `user_id` hash computed client-side would re-roll on device change and destroy attribution
 > weeks later. **Do not implement hashing** — the earlier draft of this document said to.
 
-- **Exposure:** `paywall_impression` with `paywall_variant`, `paywall_type` (`soft` \| `hard`),
-  `free_items_exported`.
+- **Exposure:** `paywall_impression` with `paywall_variant`, **`trigger`** (`upload_4th` \|
+  `on_model` \| `export_limit`), `plan_offered`, and `item_id` **when there is one** (it is
+  optional on this event only — see §3).
   > **Naming note:** `paywall_impression` is not one of the five original funnel events. It is
   > one of the **two added events** (with `export_delivered`), all seven now frozen in
-  > `docs/CONTRACTS.md §7` and `packages/shared/src/analytics.ts` under `EVENTS_VERSION 1.2.0`
-  > (2026-10-28). Do not overload `export_clicked` to carry it, and do not merge the two
-  > vocabularies.
+  > `docs/CONTRACTS.md §7` and `packages/shared/src/analytics.ts` under `EVENTS_VERSION 1.4.0`
+  > (2026-10-28; `1.4.0` added `item_id`, ADR-008). Do not overload `export_clicked` to carry it,
+  > and do not merge the two vocabularies. The wire field is `trigger`, not `paywall_type`.
 - **Primary metric:** `subscription_started` with matching `paywall_variant`, within 7 days of
   the impression.
 - **Winner rule (chosen now, so it cannot be rationalised later):** highest
   `subscription_started ÷ paywall_impression`, requiring **≥200 impressions per arm and ≥14
   days**, otherwise **no winner is declared**. Do **not** peek daily and stop on the first
   arm that leads.
-- **Confounder to watch:** `free_items_exported` at impression time. A variant that reaches
-  more high-intent sellers (4+ deliveries) will look better for reasons unrelated to its copy.
-  Segment the readout by it.
+- **Confounder to watch:** how far the seller had already got before the wall — 4+ delivered
+  exports at impression time. A variant that reaches more high-intent sellers will look better
+  for reasons unrelated to its copy; segment the readout by it. Compute it from the events
+  (`export_delivered` rows per `item_id` for that seller in the window), not from a
+  `free_items_exported` property — that property does not exist in the frozen payload, and a
+  figure derived from the same table cannot disagree with the funnel it is explaining.
 
 ---
 

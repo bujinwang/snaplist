@@ -229,6 +229,12 @@ class EventRecord:
     app_version: str
     platform: str
     payload_sha256: str
+    #: The item this event is about — the join key every per-item report needs (ADR-008).
+    #: `None` is legal only for `paywall_impression` (a paywall from the settings screen has no
+    #: item) and is mandatory-NULL for `subscription_started` (Stripe's webhook has no item).
+    #: The grade lives in the router's models and in the table's CHECK constraints; this field
+    #: is deliberately permissive for the same reason every other payload field is.
+    item_id: UUID | None = None
     # 1. upload_started
     source: str | None = None
     capture_mode: str | None = None
@@ -527,6 +533,20 @@ create table if not exists events (
                                                                'export_limit')),
     plan_offered         text    check (plan_offered is null or plan_offered in ('starter', 'pro')),
     payload_sha256       text    not null check (length(payload_sha256) = 64),
+    -- The item this event is about (ADR-008, infra/migrations/0003_events_item_id.sql).
+    -- **No foreign key, deliberately.** An `on delete set null` FK looks like the right way to
+    -- keep append-only history when an item is hard-deleted, but SET NULL is an implicit
+    -- `update events set item_id = null` and a CHECK is re-evaluated on UPDATE: the five item
+    -- events (forward CHECK below) then make the whole DELETE fail, while `paywall_impression`
+    -- (allowed a NULL id) gets its history row silently rewritten. `cascade` deletes evidence,
+    -- `no action` refuses the delete. With no FK at all, a hard delete succeeds and the row
+    -- keeps its original item_id — an orphaned timestamp is still a datapoint.
+    -- Existence and ownership are proven in `routers/events.py::bind_item` (404 for a foreign
+    -- id), which is stronger than what the FK ever proved. SQLite has no uuid type, so the
+    -- shape constraint is spelled out here as length + alphabet, exactly like `subject` above;
+    -- Postgres gets it from the `uuid` column type in 0003.
+    item_id              text    check (item_id is null or length(item_id) = 36
+                                        and item_id not glob '*[^0-9a-f-]*'),
     -- forward: this event carries these columns
     check (event <> 'upload_started'
            or (source is not null and capture_mode is not null)),
@@ -563,10 +583,23 @@ create table if not exists events (
            or event = 'subscription_started'),
     check (paywall_variant is null or event in ('subscription_started', 'paywall_impression')),
     check (paywall_trigger is null or event = 'paywall_impression'),
-    check (plan_offered is null or event = 'paywall_impression')
+    check (plan_offered is null or event = 'paywall_impression'),
+    -- item_id, both directions (ADR-008). The forward CHECK is the one that makes the field
+    -- required for the five per-item events; the reverse one is what stops a Stripe webhook
+    -- row from carrying an item. Both exist in
+    -- infra/migrations/0003_events_item_id.sql in the same words, and the copies are the point:
+    -- the SQLite table is the one this build writes to, the migration is the one that ships.
+    check (event not in ('upload_started', 'prettify_approved', 'attributes_edited',
+                         'export_clicked', 'export_delivered')
+           or item_id is not null),
+    check (item_id is null or event <> 'subscription_started')
 );
 create index if not exists events_event_received on events (event, received_at desc);
 create index if not exists events_subject_received on events (subject, received_at desc);
+-- The per-item read pattern: "one item's timeline, filtered by step" — the query
+-- `activation_items_exported_7d` and the tool-time percentile both run (ADR-008).
+create index if not exists events_item_event_received
+    on events (item_id, event, received_at desc);
 """
 
 
@@ -585,6 +618,13 @@ class SqliteRepository:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("pragma foreign_keys = on")
         with self._lock:
+            # `_migrate_event_item_column` must run **before** `_SCHEMA`: a file database
+            # created before 0003 has an `events` table with no `item_id` column, and the
+            # `create index ... on events (item_id, ...)` in `_SCHEMA` would fail with
+            # "no such column: item_id" before any migration helper got a chance to add it.
+            # On a fresh database (`":memory:"` or a new file) the helper sees no `events`
+            # table at all and returns immediately; `_SCHEMA` then creates the full shape.
+            self._migrate_event_item_column()
             self._conn.executescript(_SCHEMA)
             self._migrate_asset_columns()
 
@@ -601,6 +641,53 @@ class SqliteRepository:
             self._execute("alter table assets add column byte_size integer")
         if "meta" not in columns:
             self._execute("alter table assets add column meta text not null default '{}'")
+
+    def _migrate_event_item_column(self) -> None:
+        """Add `item_id` to an `events` table created before 0003; refuse a pre-fix one.
+
+        Called **before** `executescript(_SCHEMA)` so that a pre-0003 file database gets the
+        column before `_SCHEMA` tries to create an index on it. A fresh database has no
+        `events` table yet, so this is a no-op and `_SCHEMA` builds the complete shape.
+
+        **A file database built by the pre-fix version of this ticket is refused loudly.**
+        That build added `item_id ... references items (id) on delete set null`, which rewrites
+        append-only history (or blocks the delete) depending on the event. SQLite cannot
+        `ALTER TABLE ... DROP CONSTRAINT`, so silently continuing would leave a database whose
+        behaviour contradicts the migration that ships. `RuntimeError` with the remedy in the
+        message is the honest answer; the caller deletes the dev database and lets `make dev`
+        rebuild it. No production database ever had that shape — 0003 was corrected before it
+        was applied (see its header).
+
+        **A genuinely pre-0003 file database stays looser than a fresh one**, and that is stated
+        rather than hidden: `alter table` can add a column but cannot add a CHECK, so after this
+        migration that database lacks the uuid shape CHECK and the two grade CHECKs. It enforces
+        the per-event grade only in the router. A fresh database enforces them twice. This is a
+        dev-only path (`SNAPLIST_DB`); production gets `infra/migrations/0003_events_item_id.sql`.
+        """
+        if not self._query(
+            "select 1 from sqlite_master where type = 'table' and name = 'events'"
+        ):
+            return  # fresh database: nothing to migrate
+
+        legacy_fks = [
+            row
+            for row in self._query("pragma foreign_key_list(events)")
+            if row["from"] == "item_id"
+        ]
+        if legacy_fks:
+            raise RuntimeError(
+                "This SQLite database was created by a pre-fix SnapList build: "
+                "events.item_id carries a foreign key with ON DELETE SET NULL. That action "
+                "rewrites append-only history (it is an implicit UPDATE, and the CHECK that "
+                "requires item_id on five events makes the DELETE fail instead). SQLite cannot "
+                "drop a constraint with ALTER TABLE. Delete this dev database and let "
+                "`make dev` rebuild it from _SCHEMA; no events table built by the fixed code "
+                "has this foreign key."
+            )
+
+        columns = {row["name"] for row in self._query("pragma table_info(events)")}
+        if "item_id" not in columns:
+            self._execute("alter table events add column item_id text")
 
     # -- plumbing ----------------------------------------------------------------------
     @contextmanager
@@ -974,6 +1061,12 @@ class SqliteRepository:
         `field_names` is stored as JSON text (SQLite has no array type). The order the client
         sent is preserved: it is not a set, and a report that wants "first three fields the
         seller touched" cannot recover it from a sorted copy.
+
+        `item_id` is written as `str | None`; a `subscription_started` row carrying one is
+        refused by the reverse CHECK, so a caller that skips the router (`_to_record`) cannot
+        get that pair into the table either. That is exactly what
+        `test_events.py::test_the_sqlite_mirror_refuses_subscription_started_with_an_item`
+        proves by calling this method directly.
         """
         with self._lock:
             cursor = self._conn.execute(
@@ -982,9 +1075,9 @@ class SqliteRepository:
                 "job_latency_ms, prettify_latency_ms, attrs_latency_ms, edited_field_count, "
                 "fields_touched, field_names, marketplace, row_count, export_latency_ms, "
                 "bytes, delivery_latency_ms, plan, paywall_variant, amount_cents, currency, "
-                "paywall_trigger, plan_offered, payload_sha256) "
+                "paywall_trigger, plan_offered, payload_sha256, item_id) "
                 "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?) "
+                "?, ?, ?, ?, ?, ?, ?, ?) "
                 "on conflict (event_id) do nothing",
                 (
                     str(event.event_id),
@@ -1017,6 +1110,7 @@ class SqliteRepository:
                     event.paywall_trigger,
                     event.plan_offered,
                     event.payload_sha256,
+                    None if event.item_id is None else str(event.item_id),
                 ),
             )
             return cursor.rowcount == 1
@@ -1047,6 +1141,7 @@ class SqliteRepository:
             app_version=row["app_version"],
             platform=row["platform"],
             payload_sha256=row["payload_sha256"],
+            item_id=None if row["item_id"] is None else UUID(row["item_id"]),
             source=row["source"],
             capture_mode=row["capture_mode"],
             batch_index=row["batch_index"],

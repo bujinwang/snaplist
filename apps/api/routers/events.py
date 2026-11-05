@@ -3,7 +3,7 @@
 What this endpoint is for
 -------------------------
 The mobile client emits the seven events frozen in `docs/CONTRACTS.md` §7 (typed in
-`packages/shared/src/analytics.ts`, `EVENTS_VERSION 1.3.0`). This route is the only way a row
+`packages/shared/src/analytics.ts`, `EVENTS_VERSION 1.4.0`). This route is the only way a row
 reaches `public.events`. There is no read side: reports query the table directly, and **no
 `GET /v1/events` exists** on purpose — a client that can read the funnel can read other
 sellers' behaviour through any aggregate a future endpoint forgets to filter. A `GET` on this
@@ -11,7 +11,7 @@ path is answered by FastAPI's router with **405 Method Not Allowed** (the path e
 method does not), which is the answer that tells a confused client it is holding the wrong
 verb rather than a wrong URL.
 
-Five things this module does that are easy to get wrong, and how each is done
+Six things this module does that are easy to get wrong, and how each is done
 ---------------------------------------------------------------------------
 1. **The vocabulary is closed in three places.** `extra="forbid"` on every model (the
    python equivalent of the zod `.strict()` in `analytics.ts`), a discriminated union on
@@ -23,15 +23,22 @@ Five things this module does that are easy to get wrong, and how each is done
    `subject` is just an assertion: any authenticated seller could file events against any
    other seller's id and the funnel would be poisonable by one curl command. The database can
    only check the *shape* of `subject` (it has no JWT), so the binding has to live here.
-3. **Idempotency is on `event_id`, the client's uuid.** Same id + same payload digest → 202
+3. **`item_id` is bound to the caller too, and graded per event** (ADR-008, `1.4.0`). Five
+   events require it, `paywall_impression` may omit it, `subscription_started` must not carry
+   it. The uuid is checked against `repository.get_item(..., user_id=caller.user_id)` and a
+   foreign id is a **404** — the same answer `routers/items.py` gives, for the same reason: a
+   403 would confirm that somebody else's item exists. Without this check the field would be
+   an assertion exactly like an unbound `subject`, and one seller could attach rows to
+   another's items.
+4. **Idempotency is on `event_id`, the client's uuid.** Same id + same payload digest → 202
    `{"accepted": true, "duplicate": true}` and no second row. Same id + a *different* digest →
    **409**: that is not a retry, it is a client that reused an id, and silently swallowing it
    would leave the funnel quietly wrong (one id, one row, whichever payload won the race).
-4. **8 KB body ceiling, 413.** Checked against `content-length` before the bytes are read and
+5. **8 KB body ceiling, 413.** Checked against `content-length` before the bytes are read and
    again against the real length after, because a chunked request has no such header. An
    event is ~300 bytes; 8 KB is ~25x the largest legal payload (`field_names` with 20 names),
    so the ceiling can only ever be hit by something that is not an event.
-5. **Nothing here reaches `apps/api/schemas.py`.** This module is deliberately outside the
+6. **Nothing here reaches `apps/api/schemas.py`.** This module is deliberately outside the
    frozen ten-model wire contract: adding `EventAccepted` there would require a zod mirror in
    `packages/shared/src/schemas.ts`, a `CONTRACT_VERSION` bump and an ADR, to describe a
    response that only this route ever returns. `apps/api/responses.py` sets the same
@@ -48,6 +55,9 @@ What this endpoint does not do, and will not pretend to
   `client_ts`; every report must order by `received_at`. Nothing here can fix that.
 * **No dedupe of semantically identical events.** Two different `event_id`s carrying the same
   `upload_started` are two rows. Idempotency is per client-generated id, not per content.
+* **No proof that `item_id` was ever the caller's at the time of the event.** The check is
+  "this item belongs to you now". An item hard-deleted between emit and retry is a 404, which
+  is why the ownership lookup includes soft-deleted rows (see `bind_item`).
 """
 
 from __future__ import annotations
@@ -174,11 +184,19 @@ class EventEnvelope(BaseModel):
     key and the shared schema had none, which meant a client validating with that schema could
     not build a body this route accepts. The two are now identical on purpose — the parity test
     in `apps/api/tests/test_events.py` compares them with an empty additive-field set.
+
+    `item_id` joined at `1.4.0` (ADR-008) and is **graded per event**, not merely optional:
+    the five per-item events redeclare it as a required `UUID`, `subscription_started`
+    redeclares it as `None`, and only `paywall_impression` inherits the optional form below.
+    The grade is the point — `docs/METRICS.md` had assumed every funnel event carried an item
+    id for two quarters while the table had no such column, and a globally optional field
+    would have reproduced that bug in a shape nobody could test.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     event_id: UUID
+    item_id: UUID | None = None
     client_ts: datetime
     session_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]{1,64}$")
     subject: str = Field(min_length=1, pattern=r"^(anon|usr)_[0-9a-f-]{36}$")
@@ -204,6 +222,7 @@ class UploadStarted(EventEnvelope):
     """1. the shutter fired, or a library photo was picked."""
 
     event: Literal["upload_started"]
+    item_id: UUID
     source: CaptureSource
     capture_mode: CaptureMode
     batch_index: int | None = Field(default=None, ge=0)
@@ -215,9 +234,12 @@ class PrettifyApproved(EventEnvelope):
     One event per *decision*: a retried item emits several, and only the final `approve` is
     the item's verdict (docs/CONTRACTS.md §7). `job_latency_ms` is the server's number and the
     other two are the client's; conflating them destroys the only server/client split we have.
+    `item_id` is required precisely because of that "several rows, one item" rule: without it,
+    a retried item is indistinguishable from three items.
     """
 
     event: Literal["prettify_approved"]
+    item_id: UUID
     decision: PrettifyDecision
     job_latency_ms: int = Field(ge=0, le=INT4_MAX)
     prettify_latency_ms: int = Field(ge=0, le=INT4_MAX)
@@ -228,6 +250,7 @@ class AttributesEdited(EventEnvelope):
     """3. the attribute sheet was dismissed. `fields_touched` may be 0 (blind accept)."""
 
     event: Literal["attributes_edited"]
+    item_id: UUID
     edited_field_count: int = Field(ge=0, le=INT4_MAX)
     fields_touched: int = Field(ge=0, le=INT4_MAX)
     field_names: list[
@@ -241,15 +264,27 @@ class ExportClicked(EventEnvelope):
     """4. the seller *asked* for a marketplace file. Attempt, not success."""
 
     event: Literal["export_clicked"]
+    item_id: UUID
     marketplace: Marketplace
     row_count: int = Field(ge=1, le=INT4_MAX)
     export_latency_ms: int = Field(ge=0, le=INT4_MAX)
 
 
 class SubscriptionStarted(EventEnvelope):
-    """5. money moved."""
+    """5. money moved.
+
+    `item_id` is **forbidden**, and forbidden by the type rather than by a comment: the field
+    is redeclared as `None`, so a body that carries an item id is a 422 with `item_id` named
+    in the details. The reason is factual — this event is written by the API from a Stripe
+    webhook, where no item is in scope. A subscription is not about one garment, and a
+    plausible id attached to it would silently attribute revenue to whichever item happened to
+    be on the seller's screen (ADR-008). The table's reverse CHECK pins the same rule for
+    writes that bypass this route; that duplication is deliberate, because one lock guards the
+    client and the other guards us.
+    """
 
     event: Literal["subscription_started"]
+    item_id: None = None
     plan: PaidPlan
     paywall_variant: PaywallVariant
     amount_cents: int = Field(ge=0, le=INT4_MAX)
@@ -262,7 +297,14 @@ class SubscriptionStarted(EventEnvelope):
 
 
 class PaywallImpression(EventEnvelope):
-    """6. the paywall was shown, converted or not. Never smuggled into `export_clicked`."""
+    """6. the paywall was shown, converted or not. Never smuggled into `export_clicked`.
+
+    The one event where `item_id` stays optional — inherited from the envelope, not
+    redeclared. `trigger=on_model` and `trigger=export_limit` always have an item; a paywall
+    opened from the settings screen has none, and none of the paywall metrics segment by item.
+    Requiring it would 422 a legal impression; forbidding it would refuse the two triggers that
+    do have one (ADR-008).
+    """
 
     event: Literal["paywall_impression"]
     paywall_variant: PaywallVariant
@@ -274,6 +316,7 @@ class ExportDelivered(EventEnvelope):
     """7. the seller **has** the file. This — never `export_clicked` — counts activation."""
 
     event: Literal["export_delivered"]
+    item_id: UUID
     marketplace: Marketplace
     row_count: int = Field(ge=1, le=INT4_MAX)
     bytes: int = Field(ge=0, le=INT4_MAX)
@@ -377,6 +420,46 @@ def bind_subject(subject: str, caller: Caller) -> None:
         )
 
 
+def bind_item(item_id: UUID | None, caller: Caller, repository: Repository) -> None:
+    """`item_id`, when present, must name an item the caller owns. Otherwise 404.
+
+    Same shape of reasoning as `bind_subject`, applied to the other identifying field: the
+    uuid is supplied by the client, so without a lookup it is a claim. The consequences of
+    trusting it are worse than for `subject`, because `item_id` is the join key every
+    per-item report uses — a forged one does not just poison a count, it attaches rows to
+    another seller's item and makes their tool-time and workload numbers nonsense.
+
+    **404, not 403**, and for the reason `routers/items.py` gives for the same choice:
+    confirming that a foreign id exists is itself the leak. The caller has no use for the
+    distinction between "not yours" and "not there", and an attacker probing uuids must not be
+    able to tell them apart either.
+
+    `include_deleted=True` is deliberate. Events are append-only history and an item that was
+    soft-deleted an hour ago still owns its rows; the ownership question is "was this ever
+    yours", not "is it still live". With the default (`include_deleted=False`) deleting an
+    item would start 404-ing retries of events that were legal when they were emitted, i.e.
+    the client would be punished for the seller tidying up.
+
+    **There is deliberately no FK on `events.item_id`; this is the only existence check** —
+    `ON DELETE SET NULL` would be an implicit UPDATE of an append-only row and would collide
+    with the forward CHECK, so a hard-deleted item leaves existing rows holding their original
+    id (ADR-008 Corrigendum) while new events naming it are refused here with a 404.
+
+    `None` is a no-op: absent is legal on `paywall_impression`, and forbidden-on
+    `subscription_started` is enforced by the model's type and by the table's reverse CHECK,
+    not here — a validator that silently accepted `item_id=None` for `subscription_started`
+    and rejected a real one would still let a *stale* id through if it ever appeared.
+    """
+    if item_id is None:
+        return
+    if repository.get_item(item_id, user_id=caller.user_id, include_deleted=True) is None:
+        raise errors.not_found(
+            "No item for this account matches `item_id`. Events may only be filed against "
+            "your own items.",
+            details={"reason": "item_id_not_owned_by_caller"},
+        )
+
+
 def canonical_payload_digest(event: AnalyticsEvent) -> str:
     """sha256 of the canonical JSON payload — the replay-vs-misuse discriminator.
 
@@ -414,6 +497,12 @@ def _to_record(event: AnalyticsEvent, *, digest: str, received_at: datetime) -> 
         app_version=event.app_version,
         platform=event.platform.value,
         payload_sha256=digest,
+        # envelope (ADR-008). One line rather than an `isinstance` branch: the per-event grade
+        # lives in the models (`UUID` for the five, `None` for `subscription_started`,
+        # optional for `paywall_impression`), so by the time a record is built the value is
+        # already either a legal uuid or `None`. Re-deciding it here would be a third copy of
+        # the matrix, and the third copy is the one that drifts.
+        item_id=event.item_id,
         # 1. upload_started
         source=event.source.value if isinstance(event, UploadStarted) else None,
         capture_mode=event.capture_mode.value if isinstance(event, UploadStarted) else None,
@@ -487,6 +576,7 @@ def _too_large(observed: int | None) -> errors.ApiError:
     response_model=EventAccepted,
     responses={
         403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
         413: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
@@ -511,9 +601,11 @@ async def ingest_event(
     request carries no such header.
 
     Order of refusals is deliberate: authentication (401) → size (413) → shape (422) →
-    ownership (403) → replay/conflict (409). Size before shape means an attacker cannot use
-    validation timing on a 10 MB body as an oracle; ownership after shape means a caller
-    cannot learn which subjects exist by watching 403s for malformed payloads.
+    ownership of `subject` (403) → ownership of `item_id` (404) → replay/conflict (409). Size
+    before shape means an attacker cannot use validation timing on a 10 MB body as an oracle;
+    ownership after shape means a caller cannot learn which subjects exist by watching 403s
+    for malformed payloads, and the item check runs before the idempotency read so a replay of
+    a foreign item is refused rather than answered "duplicate".
     """
     repository: Repository = web.repository_of(request)
 
@@ -532,6 +624,7 @@ async def ingest_event(
 
     event = parse_event(raw)
     bind_subject(event.subject, caller)
+    bind_item(event.item_id, caller, repository)
 
     digest = canonical_payload_digest(event)
     received_at = utcnow()

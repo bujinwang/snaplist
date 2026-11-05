@@ -324,15 +324,16 @@ Rules: never blame the seller for an `internal` failure; always say whether a cr
 
 ---
 
-## 7. Analytics event vocabulary — frozen, own version (`EVENTS_VERSION = 1.3.0`)
+## 7. Analytics event vocabulary — frozen, own version (`EVENTS_VERSION = 1.4.0`)
 
 Typed source of truth: `packages/shared/src/analytics.ts`. This is deliberately **not** under
 `CONTRACT_VERSION`: the mobile client ships on its own schedule and an event rename must not
 force an API version bump. It is still frozen, and still requires an ADR to change.
 
 **Seven events.** Adding an eighth is a version bump here, not an improvisation in a screen.
-Current: `EVENTS_VERSION = 1.3.0` (`1.1.0` = six events; `1.2.0` adds `export_delivered`, H below;
-`1.3.0` adds `event_id` to the envelope — a field, not an event, ADR-007).
+Current: `EVENTS_VERSION = 1.4.0` (`1.1.0` = six events; `1.2.0` adds `export_delivered`, H below;
+`1.3.0` adds `event_id` to the envelope — a field, not an event, ADR-007; `1.4.0` adds `item_id`
+to the envelope, also a field, graded per event, ADR-008).
 
 **Owner of event *definitions* and their thresholds:** `docs/METRICS.md` (product). This section
 owns the *shape* and the frozen names; product owns what the numbers have to be. The five funnel
@@ -362,15 +363,37 @@ the funnel*; collapsing the two would delete the evidence we want and quietly in
 - The gap (`export_clicked` present, no matching `export_delivered`) is a **required observable** —
   it is the export-failure rate. Report it; never drop the unmatched clicks.
 
-| # | event | fires when | required payload beyond the envelope |
-|---|---|---|---|
-| 1 | `upload_started` | shutter fires, or a library photo is picked | `source: camera\|library`, `capture_mode: single\|batch`, `batch_index?` |
-| 2 | `prettify_approved` | seller accepts / retries / asks for manual bg removal — **one event per decision, so a retried item has several; only the final `approve` is the item's verdict** | `decision`, `job_latency_ms` (server), `prettify_latency_ms` (client), `attrs_latency_ms` (client) |
-| 3 | `attributes_edited` | **the attribute sheet is touched — emitted when it is dismissed (leaving the screen or losing focus), one event per item per visit, `fields_touched` may be `0`** | `edited_field_count`, **`fields_touched`**, `field_names[]` |
-| 4 | `export_clicked` | seller asks for a marketplace file | `marketplace`, `row_count`, `export_latency_ms` |
-| 5 | `subscription_started` | Stripe reports the subscription became active | `plan`, `paywall_variant`, `amount_cents`, `currency` |
-| 6 | `paywall_impression` | the paywall is shown, converted or not | `paywall_variant`, `trigger: upload_4th\|on_model\|export_limit`, `plan_offered` |
-| 7 | `export_delivered` | the seller **has** the marketplace file (write/download complete) | `marketplace`, `row_count`, `bytes`, `delivery_latency_ms` |
+| # | event | fires when | required payload beyond the envelope | `item_id` |
+|---|---|---|---|---|
+| 1 | `upload_started` | shutter fires, or a library photo is picked | `source: camera\|library`, `capture_mode: single\|batch`, `batch_index?` | **required** |
+| 2 | `prettify_approved` | seller accepts / retries / asks for manual bg removal — **one event per decision, so a retried item has several; only the final `approve` is the item's verdict** | `decision`, `job_latency_ms` (server), `prettify_latency_ms` (client), `attrs_latency_ms` (client) | **required** |
+| 3 | `attributes_edited` | **the attribute sheet is touched — emitted when it is dismissed (leaving the screen or losing focus), one event per item per visit, `fields_touched` may be `0`** | `edited_field_count`, **`fields_touched`**, `field_names[]` | **required** |
+| 4 | `export_clicked` | seller asks for a marketplace file | `marketplace`, `row_count`, `export_latency_ms` | **required** |
+| 5 | `subscription_started` | Stripe reports the subscription became active | `plan`, `paywall_variant`, `amount_cents`, `currency` | **forbidden** |
+| 6 | `paywall_impression` | the paywall is shown, converted or not | `paywall_variant`, `trigger: upload_4th\|on_model\|export_limit`, `plan_offered` | optional |
+| 7 | `export_delivered` | the seller **has** the marketplace file (write/download complete) | `marketplace`, `row_count`, `bytes`, `delivery_latency_ms` | **required** |
+
+**`item_id` — required, optional, forbidden (`1.4.0`, ADR-008).** It is the envelope field every
+per-item report joins on, and it is **not** uniformly optional:
+
+- **required** on the five per-item events. Without it `tool_time_ms` per item (PLAN's p50 ≤ 35 s
+  gate), `activation_items_exported_7d` (deduped to one row per `item_id`) and the export-failure
+  rate — a *required observable* in this section — are three numbers that cannot be computed, and
+  the reports that would print them degrade into counts of events, which look similar and mean
+  something else. A body missing it is a **422**.
+- **optional** on `paywall_impression`. `trigger=on_model` and `trigger=export_limit` always have
+  an item; a paywall opened from the settings screen has none, and no paywall metric segments by
+  item. Requiring it would refuse a legal impression and push an emitter to invent an id.
+- **forbidden** on `subscription_started`. It is written by the API from a Stripe webhook, where
+  no item is in scope; a plausible id here would attribute revenue to whichever item happened to
+  be on screen. A body carrying one is a **422**, and the table's reverse CHECK refuses it again
+  for writes that bypass the route.
+
+**`item_id` must belong to the caller.** `POST /v1/events` looks it up with the authenticated
+uuid and answers **404** — not 403 — for an item that is not the caller's, the same answer
+`GET /v1/items/{id}` gives and for the same reason: confirming that a foreign id exists is the
+leak. Soft-deleted items are accepted (`include_deleted=True`): events are append-only history,
+and an item deleted after the event happened still owns it.
 
 **`fields_touched` vs `edited_field_count`.** `edited_field_count` counts fields whose value
 changed. `fields_touched` counts fields the seller *interacted with*, including reading and
@@ -478,14 +501,21 @@ number from `GET /v1/usage` (`Usage.items_included`) and must never hardcode 3, 
 | 1.0.0 (note) | 2026-10-28 | `subscriptions.overage_enabled` / `overage_unit_price_cents` reserved, v1 hard-blocks; no wire shape change | ADR-005 §3 |
 | events 1.2.0 | 2026-10-28 | 7th event `export_delivered`; activation re-bound to delivered (not attempted); v2 `listing_confirmations` placeholder | ADR-002 |
 | events 1.3.0 | 2026-11-04 | envelope gains `event_id` — the client-generated idempotency key `POST /v1/events` is built on; no new event, no new payload field | ADR-007 |
+| events 1.4.0 | 2026-11-05 | envelope gains `item_id`, **graded per event** (required ×5, optional on `paywall_impression`, forbidden on `subscription_started`); ownership checked on write (404); `infra/migrations/0003_events_item_id.sql` | ADR-008 |
 
 **Drift, resolved (kept for the record):** `packages/shared/src/analytics.ts` was briefly at
 `EVENTS_VERSION = 1.1.0` with six events while this table already listed seven — the contract ran
 ahead of the typed module, which is the normal direction but was unsafe here because mobile codes
-against the *types*, not this document. It now exports `EVENTS_VERSION = "1.2.0"`, seven events, and
-a `ExportDelivered` zod schema, and `packages/shared/test/analytics.test.ts` pins both the version
-**and** the presence of `export_delivered` (a version bump alone would not catch someone rolling the
-event back). The statement "typed source of truth" at the top of this section is true again.
+against the *types*, not this document. **At the time of that fix** the module was brought to
+`EVENTS_VERSION = "1.2.0"` (then the current vocabulary), seven events, and an `ExportDelivered`
+zod schema; `packages/shared/test/analytics.test.ts` pinned both the version **and** the presence
+of `export_delivered` (a version bump alone would not catch someone rolling the event back). The
+vocabulary has since moved on through `1.3.0` (`event_id`) and `1.4.0` (`item_id`) — see the
+version history above for the current value. The statement "typed source of truth" at the top of
+this section is true again.
 
-`CONTRACT_VERSION` stays `1.0.0`: neither the wire shape nor an enum changed. The events
-vocabulary is versioned separately on purpose — `EVENTS_VERSION = 1.3.0` (see §7).
+`CONTRACT_VERSION` does not move: neither the wire shape nor an enum changed. The events
+vocabulary is versioned separately on purpose — `EVENTS_VERSION = 1.4.0` (see §7). Two
+consecutive events bumps (`1.3.0`, `1.4.0`) have added a field to the envelope and nothing else,
+which is the intended shape of a change to this section: the funnel grew a join key, the API did
+not change.
