@@ -122,7 +122,10 @@ def render(report: GateReport, *, colour: bool | None = None) -> str:
     lines.append(f"git_sha={report.git_sha}")
     lines.append(f"source={report.source_label}")
     lines.append(f"backend={report.backend}")
-    lines.append("refund_attribution=sqlite-only")
+    _refund_tag = (
+        "sqlite-only" if report.backend == "local-dev" else f"{report.backend}-source"
+    )
+    lines.append(f"refund_attribution={_refund_tag}")
     if report.refund_attribution.status is AttributionStatus.DEGRADED:
         lines.append(f"refund_attribution={report.refund_attribution.label}")
     elif report.refund_attribution.status is AttributionStatus.UNVERIFIED:
@@ -152,6 +155,8 @@ def render(report: GateReport, *, colour: bool | None = None) -> str:
     for line in report.report_only:
         lines.append(line)
     lines.append(_excluded_refunded_line(report))
+    # R1 (docs/QA.md §10): items with events but no surviving jobs row (ADR-008 no-FK + CASCADE).
+    # Accepted as a PERMANENT, intentional honesty residual — no schema change, no write path.
     lines.append(f"failure_mix_unattributable={report.failure_mix_unattributable}")
     lines.append(f"orphan_item_ids={len(report.orphan_item_ids)}")
     mix = " ".join(f"{code}={count}" for code, count in report.failure_mix.items())

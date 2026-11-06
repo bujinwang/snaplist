@@ -1021,17 +1021,15 @@ exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
   row lose their `reason_code` by ADR-008's no-FK design plus `jobs` CASCADE. Adding a
   reason_code signal requires changing a write path or a migration — both outside the
   allowed-paths whitelist and in conflict with Bert ruling 2. This ticket invents no data and
-  changes no schema; it reports the count as an honest residual. Follow-up ticket required.
+  changes no schema; it reports the count as an honest residual. Follow-up ticket required. **CLOSED (E0-T5 R1–R3): accepted as a permanent, intentional honesty residual — no schema change, no write-path change. Documented in ADR-009.**
 - **R2 (#19) — `0001_init.sql:231-232` `on delete set null` unchanged.** The two FK actions on
   `usage_events.item_id` / `job_id` are outside the whitelist, so E0-T5 does not touch them.
   `usage_events` is the quota ledger; `units` / `user_id` are what quota is derived from, so
   nulling the join keys may be deliberate for billing. Its consequence for analytics attribution
   is measured in §5.2. **Recommend a follow-up ADR** deciding whether analytics needs a
   separate, deletion-proof attribution key, before anyone quotes `excluded_refunded` on
-  Postgres.
-- **R3 — Postgres reader.** `excluded_refunded` is MEASURED only on the SQLite dev DB (whose
-  `usage_events` has no FK). On Postgres/Supabase it is UNMEASURED by construction per
-  `0001_init.sql:231-232`. E0-T5 ships no Postgres reader and promises no production number.
+  Postgres. **CLOSED (E0-T5 R1–R3): the SET NULL FK actions are retained by design; ADR-009 records the decision and the follow-up ADR pointer.**
+- **R3 — Postgres reader.** **CLOSED (E0-T5 R1–R3):** a read-only `PostgresEventSource` now ships as an OPTIONAL dependency group (`pg`, `psycopg[binary]`, not installed by default `uv sync`). It is selected only when `SNAPLIST_PG_DSN` is set and reuses the SAME `_classify_attribution` as SQLite, so SET NULL NULLs are still DEGRADED (evidence absence) and `excluded_refunded` is now MEASURED on Postgres too — `UNVERIFIED` stays reserved for the not-yet-measured-under-real-RLS case.
 - **R4 — Makefile wiring. CLOSED (follow-up commit after `73a95ba`).** `Makefile` was outside
   the E0-T5 whitelist; the original ticket left `make evals` → `evals.run --suite vision
   --allow-inconclusive` and `make evals-strict` → `evals.run --suite vision --gate`, guarded by

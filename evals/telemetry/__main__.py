@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from evals.telemetry.compute import parse_now
 from evals.telemetry.gate import build_report, exit_code
 from evals.telemetry.report import render
-from evals.telemetry.source import SqliteEventSource
+from evals.telemetry.source import select_source
 from evals.telemetry.spec import WINDOW_SINCE
 
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     now = parse_now(args.now) if args.now else datetime.now(UTC)
-    source = SqliteEventSource(args.db)
+    source = select_source(db=args.db)
     data = source.load()
     report = build_report(data, now)
     sys.stdout.write(render(report))

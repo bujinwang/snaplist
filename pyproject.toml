@@ -38,6 +38,13 @@ sdxl = [
   "huggingface-hub>=0.25",
 ]
 
+# PEP 735 OPTIONAL group for the E0-T5 Postgres reader (R3). NOT pulled by a plain `uv sync`:
+# the default telemetry gate runs off the SQLite dev DB. Install explicitly with
+# `uv sync --group pg` only where a Postgres/Supabase source is actually read.
+pg = [
+  "psycopg[binary]>=3.2,<4",
+]
+
 # Virtual project: this root is a workspace container, not an installable package.
 # Python packages live at apps/api, packages/vision, evals and are imported from the
 # repo root (pythonpath = "."), which keeps `python -m packages.vision.cli` working
