@@ -1149,6 +1149,16 @@ own hash). 17 Python files + this document = the 18 whitelisted files.
 count, the `UNMEASURED` rows and the E1+E2+E3 `<= $0.03` threshold verdict here. E0-T5 does
 not fill it, does not borrow its numbers, and does not pre-judge its gate.*
 
+**Status 2026-11-06: UNMEASURED — not filled, and deliberately not fabricated.**
+
+The dashboard reads a measured `evals/reports/cost.md`, which **does not exist**. There are no
+production `usage_events`, and no pipeline has ever run against a paid provider: E4 on-model is a
+stub and the FASHN/Modal keys are absent (`packages/vision/BLOCKED.md`). The `<= $0.03/item`
+verdict is therefore **unreachable**, not "passing". Unblock by (1) running E1/E2/E3 over the
+E0-T1 golden set with real providers, (2) writing measured `$/item` per stage to
+`evals/reports/cost.md`, (3) pasting the transcript + sample count here. Until then every cost
+cell stays `UNMEASURED`.
+
 ## 14. Handoff state
 
 - E0-T5 shipped at `73a95ba` (`HEAD` = `origin/master`). The R7+R4 closure (this document's
