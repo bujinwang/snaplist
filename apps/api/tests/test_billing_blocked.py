@@ -62,35 +62,36 @@ def test_checkout_still_refuses_when_credentials_exist(configured_client: TestCl
     assert "session_id" not in body
 
 
-def test_an_unsigned_webhook_is_never_accepted(configured_client: TestClient) -> None:
-    """A webhook without a valid `Stripe-Signature` is the free-Pro exploit path."""
+def test_an_unsigned_webhook_is_rejected_with_400(configured_client: TestClient) -> None:
+    """A webhook without a `Stripe-Signature` is the free-Pro exploit path: 400, never 200."""
     response = configured_client.post(
         "/v1/webhooks/stripe",
         content=b'{"type":"checkout.session.completed","data":{"object":{"id":"cs_test"}}}',
     )
-    assert response.status_code == 501
-    assert response.status_code < 200 or response.status_code >= 300
-    assert response.json()["error"]["code"] == "not_implemented"
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
-def test_a_forged_signature_header_is_never_accepted(configured_client: TestClient) -> None:
+def test_a_forged_signature_header_is_rejected_with_400(configured_client: TestClient) -> None:
     """Present-but-wrong signature must not be treated as 'verified'."""
     response = configured_client.post(
         "/v1/webhooks/stripe",
         content=b'{"type":"invoice.paid"}',
         headers={"stripe-signature": "t=1,v1=deadbeef"},
     )
-    assert response.status_code == 501, (
+    assert response.status_code == 400, (
         "a forged signature must never fall through to a success path: " + response.text
     )
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_a_refused_webhook_grants_no_plan_change(configured_client: TestClient) -> None:
     """The side effect, not the status code: the caller's plan is untouched."""
     before = configured_client.get("/v1/usage", headers=HEADERS).json()["plan"]
-    configured_client.post(
+    response = configured_client.post(
         "/v1/webhooks/stripe",
         content=b'{"type":"checkout.session.completed"}',
     )
+    assert response.status_code == 400
     after = configured_client.get("/v1/usage", headers=HEADERS).json()["plan"]
     assert (before, after) == ("free", "free")

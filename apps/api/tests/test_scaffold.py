@@ -77,11 +77,13 @@ def test_credential_blocked_routes_answer_501_with_the_same_envelope(
     assert body["error"]["details"]["missing_credential"] == "stripe_secret"
 
 
-def test_the_stripe_webhook_is_501_and_takes_no_auth(client: TestClient) -> None:
+def test_the_stripe_webhook_is_503_without_secret(client: TestClient) -> None:
+    # Default settings have no STRIPE_WEBHOOK_SECRET, so the receiver is disabled (not faked).
     response = client.post("/v1/webhooks/stripe", content=b"{}")
-    assert response.status_code == 501
-    # 501 rather than 401: an unauthenticated surface with no side effects is the safe order.
-    assert response.json()["error"]["code"] == "not_implemented"
+    assert response.status_code == 503
+    # 503 + a named missing credential: an unauthenticated surface with no side effects is the
+    # safe order, and BLOCKED.md documents the Stripe-key requirement.
+    assert response.json()["error"]["details"]["missing_credential"] == "stripe_webhook_secret"
 
 
 def test_no_route_returns_fastapi_default_detail_bodies(
