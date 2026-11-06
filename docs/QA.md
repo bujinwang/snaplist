@@ -283,12 +283,17 @@ row an `item_id` too, so the `SET NULL` action is directly observable. Productio
 cannot change the attribution result; the AFTER zero rows come from `job_id` becoming NULL and
 `e.item_id is not null`, which is the production shape.
 
-> **证据边界（QA.md 必须原样写死）**：仅在 vanilla PG14.18 + shim + superuser 上 MEASURED；
-> Supabase 托管 PG、PG15、真实 RLS 角色策略、PostgREST 一律 UNVERIFIED；不得外推到生产数字。
+> **证据边界（QA.md 必须原样写死）**：`PostgresEventSource` 的**读取路径**（attribution /
+> failure mix / orphan 分类，含 `usage_events` SET NULL 经 ledger self-join 的 DEGRADED 判定）已在
+> vanilla PG14.18 + shim + superuser 上由 `evals/telemetry/tests/test_pg_integration.py` MEASURED；
+> **真实 RLS 角色（`service_role` / `authenticated`）下的行可见性**仍 UNVERIFIED（superuser 绕过
+> RLS）；Supabase 托管 PG、PG15、PostgREST 一律 UNVERIFIED；不得外推到生产数字。
 
-**UNVERIFIED — Supabase managed PG, PostgreSQL 15, real RLS role policies, PostgREST, and any
-production number derived from `usage_events` attribution.** No Postgres reader is shipped by
-E0-T5 (R3).
+**UNVERIFIED — Supabase managed PG, PostgreSQL 15, real RLS role policies (row visibility under the
+`service_role`/`authenticated` roles), PostgREST, and any production number derived from
+`usage_events` attribution.** A read-only `PostgresEventSource` IS shipped by E0-T5 (R3, see
+ADR-009) and its read path is MEASURED on vanilla PG14.18 + shim + superuser; the honest gap that
+remains is RLS row-visibility, which the local superuser run does not exercise.
 
 **Do not cite the 0003 hard-delete probe as evidence for `usage_events` SET NULL.** That earlier
 probe inserted only `items`/`events` and read back only `events.item_id`; it says nothing about
@@ -1029,7 +1034,7 @@ exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
   is measured in §5.2. **Recommend a follow-up ADR** deciding whether analytics needs a
   separate, deletion-proof attribution key, before anyone quotes `excluded_refunded` on
   Postgres. **CLOSED (E0-T5 R1–R3): the SET NULL FK actions are retained by design; ADR-009 records the decision and the follow-up ADR pointer.**
-- **R3 — Postgres reader.** **CLOSED (E0-T5 R1–R3):** a read-only `PostgresEventSource` now ships as an OPTIONAL dependency group (`pg`, `psycopg[binary]`, not installed by default `uv sync`). It is selected only when `SNAPLIST_PG_DSN` is set and reuses the SAME `_classify_attribution` as SQLite, so SET NULL NULLs are still DEGRADED (evidence absence) and `excluded_refunded` is now MEASURED on Postgres too — `UNVERIFIED` stays reserved for the not-yet-measured-under-real-RLS case.
+- **R3 — Postgres reader.** **CLOSED (E0-T5 R1–R3):** a read-only `PostgresEventSource` now ships as an OPTIONAL dependency group (`pg`, `psycopg[binary]`, not installed by default `uv sync`). It is selected only when `SNAPLIST_PG_DSN` is set and reuses the SAME `_classify_attribution` as SQLite, so SET NULL NULLs are still DEGRADED (evidence absence) and `excluded_refunded` is now MEASURED on Postgres too. The read path is verified against real PG14.18 (superuser) by `evals/telemetry/tests/test_pg_integration.py` (skipped unless psycopg + psql + a local Postgres are present). `UNVERIFIED` stays reserved for the not-yet-measured-under-real-RLS case (row visibility under `service_role`/`authenticated`).
 - **R4 — Makefile wiring. CLOSED (follow-up commit after `73a95ba`).** `Makefile` was outside
   the E0-T5 whitelist; the original ticket left `make evals` → `evals.run --suite vision
   --allow-inconclusive` and `make evals-strict` → `evals.run --suite vision --gate`, guarded by

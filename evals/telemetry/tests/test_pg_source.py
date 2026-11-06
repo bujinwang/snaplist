@@ -174,9 +174,15 @@ def _run_pg(
 # 1. Delayed import: importing the module must NOT import psycopg.
 # ------------------------------------------------------------------------------------------
 def test_pg_module_imports_without_psycopg():
+    # Capture the module set BEFORE importing, so a *different* test that legitimately imports
+    # psycopg (the real-Postgres integration test) running earlier in the session cannot make
+    # this assertion flaky. The contract under test is that importing `pg_source` ITSELF must
+    # not pull in psycopg (the import is lazy, inside `_connect`) — not that psycopg is globally
+    # absent for the whole run.
+    before = set(sys.modules)
     mod = importlib.import_module("evals.telemetry.pg_source")
     # Loud failure if we ever regress to a top-level `import psycopg`.
-    assert "psycopg" not in sys.modules
+    assert "psycopg" not in (set(sys.modules) - before)
     assert not hasattr(mod, "psycopg")
 
 

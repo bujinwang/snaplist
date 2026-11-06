@@ -50,9 +50,16 @@ without changing any schema or write path.
 - NULL ledger join keys remain classified as **DEGRADED** (evidence absence), never as 3b data
   corruption — on both backends.
 - The SET NULL FKs are retained by design (R2 closed); no migration is proposed here.
-- **Follow-up ADR required:** analytics needs a decision on whether a deletion-proof attribution
-  key is required before quoting `excluded_refunded` on Postgres under the *real* RLS role. Until
-  that is measured under the production role, `UNVERIFIED` is the honest status for that path.
-  R1 is accepted as a permanent, intentional honesty residual (no schema change, no write path).
+- **Read path verified on real PG14.18 (2026-11-07):** `evals/telemetry/tests/test_pg_integration.py`
+  applies `shim -> 0001 -> 0002 -> 0003` via `psql -f` and asserts the SAME attribution / failure_mix
+  / orphan classification as the SQLite path. This downgrades R3 from "no Postgres reader at all" to
+  "reader MEASURED on local PG14, RLS row-visibility still UNVERIFIED". The test is `skipif`'d when
+  psycopg / psql / a local Postgres are absent, so the default `pytest` never goes red for a missing
+  database.
+- **Follow-up ADR required (RLS only):** the local run connects as superuser, which bypasses RLS, so
+  the honest gap that remains is row-visibility under the *real* `service_role` / `authenticated`
+  roles (and Supabase-managed PG / PG15 / PostgREST). A decision on whether a deletion-proof
+  attribution key is required before quoting `excluded_refunded` under that role is still open. R1 is
+  accepted as a permanent, intentional honesty residual (no schema change, no write path).
 
 See QA.md §5.2 (SET NULL attribution measurement) and §10 (R1 / R2 / R3 CLOSED).
