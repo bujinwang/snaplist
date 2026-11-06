@@ -21,6 +21,11 @@
     },
     "web": {
       "bundler": "metro"
+    },
+    "extra": {
+      "apiBase": "",
+      "supabaseUrl": "",
+      "supabaseAnonKey": ""
     }
   }
 }
