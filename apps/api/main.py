@@ -32,6 +32,7 @@ from apps.api.routers import items as items_router
 from apps.api.routers import jobs as jobs_router
 from apps.api.routers import uploads as uploads_router
 from apps.api.routers import usage as usage_router
+from apps.api.routers import webhooks as webhooks_router
 from apps.api.schemas import CONTRACT_VERSION
 from apps.api.settings import Settings, get_settings
 from apps.api.storage import Storage, build_storage
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(usage_router.router)
     app.include_router(billing_router.router)
     app.include_router(events_router.router)
+    app.include_router(webhooks_router.router)
     return app
 
 

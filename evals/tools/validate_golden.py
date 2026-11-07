@@ -1,10 +1,11 @@
 """E0-T1 tooling: validate the golden set before anyone quotes a number from it.
 
-The golden set is 40 real garment photos with 20 hand masks and a manifest. The photos are
-not something this tool can produce — and fabricating them is exactly what `docs/PLAN.md`
-E0-T1 forbids. What the tool *can* do is make the contract mechanical: given the directory,
-it says PASS/FAIL for every rule, names the counts, and refuses to let a half-valid set
-become the base of an eval report.
+The E0-T1 golden set is 40 real garment photos with 20 hand-drawn masks and a manifest.
+This tool checks that 20 mask files are present; it does NOT verify they were drawn by hand
+(see mask_source in manifest.json). The photos are not something this tool can produce — and
+fabricating them is exactly what `docs/PLAN.md` E0-T1 forbids. What the tool *can* do is make
+the contract mechanical: given the directory, it says PASS/FAIL for every rule, names the counts,
+and refuses to let a half-valid set become the base of an eval report.
 
     python -m evals.tools.validate_golden [--golden-dir PATH]
 
@@ -96,7 +97,12 @@ class Report:
         lines.append("")
         if self.passed:
             if self.profile == "golden":
-                lines.append("summary: COMPLETE — the golden set satisfies every rule above.")
+                lines.append(
+                    "summary: STRUCTURE COMPLETE — the file/count checks above hold. "
+                    "Mask provenance is NOT verified by this tool (see the reported "
+                    "mask_source tally); E0-T1's hand-drawn requirement is UNVERIFIED and "
+                    "make golden exit 0 is NOT a golden-set DoD verdict."
+                )
             else:
                 lines.append(
                     "summary: COMPLETE (provisional profile) — structure holds. Composition "
@@ -363,9 +369,25 @@ def validate(golden_dir: Path, profile: str = "golden") -> Report:
     mask_entries = [entry for entry in entries if _non_empty_str(entry.get("mask_path"))]
     if strict:
         report.record(
-            f"exactly {TOTAL_MASKS} hand masks",
+            f"exactly {TOTAL_MASKS} mask files (presence only)",
             len(mask_entries) == TOTAL_MASKS,
             f"{len(mask_entries)}/{TOTAL_MASKS}",
+        )
+        sources = sorted(
+            {str(entry.get("mask_source") or "unspecified") for entry in mask_entries}
+        )
+        hand = sum(
+            1
+            for entry in mask_entries
+            if str(entry.get("mask_source") or "").strip().lower().startswith("hand")
+        )
+        report.record(
+            "mask provenance (reported, not gated)",
+            True,
+            f"{len(mask_entries)} masks: {', '.join(sources) or 'none'}; "
+            f"hand-drawn by mask_source convention: {hand}/{len(mask_entries)}. "
+            "This tool does not gate provenance; E0-T1's hand-drawn requirement is "
+            "UNVERIFIED here.",
         )
     else:
         # In this profile every entry is meant to be measurable, so a missing mask is a

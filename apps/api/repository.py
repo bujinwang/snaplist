@@ -325,6 +325,10 @@ class Repository(Protocol):
 
     def set_plan(self, user_id: UUID, plan: PlanTier) -> None: ...
 
+    def get_paywall_variant(self, user_id: UUID) -> str: ...
+
+    def assign_paywall_variant(self, user_id: UUID) -> str: ...
+
     def plan_limit(self, plan: PlanTier) -> int | None: ...
 
     def set_plan_limit(self, plan: PlanTier, items_per_month: int) -> None: ...
@@ -353,6 +357,8 @@ _SCHEMA = """
 create table if not exists profiles (
     user_id      text primary key,
     plan         text not null default 'free',
+    -- E8-T4: server-assigned, sticky for the life of the account (see assign_paywall_variant).
+    paywall_variant text not null default 'a' check (paywall_variant in ('a', 'b', 'c')),
     -- ADR-003: anonymous sellers exist from first launch; conversion keeps the same user_id.
     is_anonymous integer not null default 1,
     merged_into  text references profiles (user_id),
@@ -601,6 +607,18 @@ create index if not exists events_subject_received on events (subject, received_
 create index if not exists events_item_event_received
     on events (item_id, event, received_at desc);
 """
+
+#: The closed A/B set used for server-assigned, sticky paywall assignment (E8-T4).
+_PAYWALL_VARIANTS: tuple[str, ...] = ("a", "b", "c")
+
+
+def _paywall_variant_for(user_id: UUID) -> str:
+    """Deterministic, stable variant for a user id (no randomness, no client input).
+
+    A client can never choose its variant, and the same user always resolves to the same variant.
+    """
+    digest = int(str(user_id).replace("-", ""), 16)
+    return _PAYWALL_VARIANTS[digest % len(_PAYWALL_VARIANTS)]
 
 
 class SqliteRepository:
@@ -1181,6 +1199,30 @@ class SqliteRepository:
             "on conflict (user_id) do update set plan = excluded.plan",
             (str(user_id), plan.value, to_wire(utcnow())),
         )
+
+    def get_paywall_variant(self, user_id: UUID) -> str:
+        rows = self._query(
+            "select paywall_variant from profiles where user_id = ?", (str(user_id),)
+        )
+        if not rows or not rows[0]["paywall_variant"]:
+            return "a"
+        return str(rows[0]["paywall_variant"])
+
+    def assign_paywall_variant(self, user_id: UUID) -> str:
+        """Server-assigned, sticky for the life of the account (E8-T4).
+
+        Derived deterministically from the user id, so it is assigned once and never changes — a
+        client cannot choose it, and a re-assignment returns the same value. This makes the paywall
+        A/B assignment reproducible for `paywall_impression` / `subscription_started`.
+        """
+        variant = _paywall_variant_for(user_id)
+        self._execute(
+            "insert into profiles (user_id, plan, paywall_variant, created_at) "
+            "values (?, 'free', ?, ?) "
+            "on conflict (user_id) do update set paywall_variant = excluded.paywall_variant",
+            (str(user_id), variant, to_wire(utcnow())),
+        )
+        return variant
 
     # -- plan ceilings (runtime override of apps/api/settings.py) -----------------------
     def plan_limit(self, plan: PlanTier) -> int | None:

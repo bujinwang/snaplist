@@ -168,6 +168,18 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
     return measured, notes
 
 
+def _is_hand_made_source(source: str) -> bool:
+    """Whether a `mask_source` string claims a human drew the mask.
+
+    Same convention as `evals/tools/seg_iou.py::_is_hand_made`, and deliberately kept in step
+    with it: the table row's note and that tool's own report must never disagree about whether
+    the same set is hand-masked. Anything that does not start with `hand` — `algorithmic:*`,
+    `ai:*`, an empty or unknown value — counts as machine-made, because a set that stays quiet
+    about its provenance must not be able to certify itself.
+    """
+    return source.strip().lower().startswith("hand")
+
+
 def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
     """E1: mean IoU over whichever masked set exists. `None` means UNMEASURED, with a reason."""
     golden = masked_set()
@@ -197,15 +209,24 @@ def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
         return None, [f"segmentation: UNMEASURED — the measurement failed ({reason})"]
 
     stats = seg_iou.summarise(rows)
-    sources = sorted({row["mask_source"] for row in rows})
+    sources = sorted({str(row.get("mask_source", "unspecified")) for row in rows})
+    machine_sources = [name for name in sources if not _is_hand_made_source(name)]
+    note = (
+        f"backend {meta['backend']} on {meta['device']}, mask source: {', '.join(sources)}; "
+        f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
+    )
+    if machine_sources:
+        # The row is what gets quoted, so the caveat has to travel with it: a mean IoU taken
+        # against machine-made references is a pipeline check, not E1-T4's hand-mask number.
+        note += (
+            f"; references are not hand-drawn ({', '.join(machine_sources)}) — a pipeline check, "
+            "not the E1-T4 DoD number; the hand-mask gate stays open"
+        )
     measurement = Measurement(
         value=stats["mean"],
         n=meta["n"],
         set_name="provisional" if "provisional" in golden.name else "golden",
-        note=(
-            f"backend {meta['backend']} on {meta['device']}, mask source: {', '.join(sources)}; "
-            f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
-        ),
+        note=note,
     )
     try:
         where = str(golden.relative_to(ROOT))

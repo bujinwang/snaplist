@@ -4,45 +4,359 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SnapList — photo in, listing out</title>
+    <meta
+      name="description"
+      content="Turn a phone photo of a garment into a listing-ready asset pack: a prettified image, detected attributes, written copy, and a marketplace export."
+    />
     <style>
       :root {
         --paper: #f2f1ee;
         --ink: #151515;
         --muted: #6b6b6b;
+        --line: #d9d7d1;
+        --accent: #1f6f54;
+        --accent-ink: #ffffff;
+        --warn-bg: #fbf6e9;
+        --warn-line: #e6d9b0;
+        --radius: 14px;
       }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
         margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
         background: var(--paper);
         color: var(--ink);
-        font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        text-align: center;
+        font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       }
-      h1 {
-        font-size: clamp(2.5rem, 8vw, 4rem);
-        letter-spacing: -0.03em;
-        margin: 0 0 0.5rem;
+      .wrap { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+      header.nav {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 22px 20px; max-width: 960px; margin: 0 auto;
       }
-      p {
-        color: var(--muted);
-        margin: 0.25rem 0;
+      .brand { font-weight: 700; letter-spacing: -0.02em; font-size: 1.15rem; }
+      .brand span { color: var(--accent); }
+      nav.links a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 0.95rem; }
+      nav.links a:hover { color: var(--ink); }
+
+      .hero { padding: 48px 0 32px; }
+      .hero h1 {
+        font-size: clamp(2.2rem, 6vw, 3.4rem);
+        line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 0.6rem;
+        max-width: 16ch;
       }
-      .stub {
-        margin-top: 2rem;
-        font-size: 0.8rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--muted);
+      .hero p.lead { font-size: 1.15rem; color: var(--muted); max-width: 52ch; margin: 0 0 1.6rem; }
+      .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+      .btn {
+        display: inline-block; padding: 13px 22px; border-radius: 10px;
+        font-weight: 600; text-decoration: none; font-size: 1rem;
+        border: 1px solid transparent;
       }
+      .btn-primary { background: var(--accent); color: var(--accent-ink); }
+      .btn-primary:hover { background: #185a44; }
+      .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+      .btn-ghost:hover { border-color: var(--ink); }
+      .cta-note { color: var(--muted); font-size: 0.9rem; }
+
+      section { padding: 40px 0; border-top: 1px solid var(--line); }
+      h2 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+      section > p.section-sub { color: var(--muted); margin: 0 0 1.5rem; max-width: 60ch; }
+
+      /* Before / after mock */
+      .ba { position: relative; width: 100%; max-width: 640px; aspect-ratio: 4 / 3;
+        border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line);
+        user-select: none; margin: 0 auto; }
+      .ba-layer { position: absolute; inset: 0; display: grid; place-items: center; }
+      .ba-before { background:
+        repeating-linear-gradient(45deg, #cfc9bd 0 18px, #c4bdaf 18px 36px); }
+      .ba-after { background: var(--paper);
+        box-shadow: inset 0 0 0 1px var(--line);
+        clip-path: inset(0 50% 0 0); }
+      .ba-svg { width: 46%; filter: drop-shadow(0 10px 18px rgba(0,0,0,0.18)); }
+      .ba-after .ba-svg { filter: drop-shadow(0 14px 22px rgba(0,0,0,0.10)); }
+      .ba-tag { position: absolute; top: 10px; font-size: 0.72rem; letter-spacing: 0.04em;
+        text-transform: uppercase; padding: 4px 9px; border-radius: 999px;
+        background: rgba(21,21,21,0.78); color: #fff; }
+      .ba-tag.left { left: 10px; }
+      .ba-tag.right { right: 10px; background: var(--accent); }
+      .ba-caption { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 12px; }
+      .ba-slider { width: 100%; max-width: 640px; margin: 16px auto 0; display: block; }
+
+      /* Steps */
+      .steps { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+      .step { background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+        padding: 18px 20px; }
+      .step .n { font-weight: 700; color: var(--accent); font-size: 0.85rem; letter-spacing: 0.05em; }
+      .step h3 { margin: 6px 0 8px; font-size: 1.1rem; }
+      .step p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+      /* Honest box */
+      .honest { background: var(--warn-bg); border: 1px solid var(--warn-line);
+        border-radius: var(--radius); padding: 22px 24px; }
+      .honest h2 { font-size: 1.3rem; }
+      .honest ul { margin: 0.6rem 0 0; padding-left: 1.1rem; }
+      .honest li { margin: 0.5rem 0; }
+      .honest .src { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.82rem; background: #fff; border: 1px solid var(--warn-line);
+        padding: 1px 6px; border-radius: 6px; }
+      .honest strong { color: var(--ink); }
+
+      /* Pack list */
+      .pack { columns: 2; column-gap: 28px; }
+      .pack li { break-inside: avoid; margin-bottom: 8px; }
+      @media (max-width: 620px) { .pack { columns: 1; } }
+
+      /* Pricing */
+      .plans { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      .plan { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+      .plan h3 { margin: 0 0 4px; font-size: 1.15rem; }
+      .plan .price { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; }
+      .plan .price small { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
+      .plan ul { margin: 12px 0 16px; padding-left: 1.1rem; color: var(--muted); font-size: 0.95rem; }
+      .plan.free { border-color: var(--accent); }
+
+      footer { padding: 36px 0 60px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.88rem; }
+      footer a { color: var(--muted); }
+      .pill { display: inline-block; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+        background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px;
+        color: var(--muted); margin-left: 6px; }
     </style>
   </head>
   <body>
-    <main>
-      <h1>SnapList</h1>
-      <p>Turn a phone photo of a garment into a listing-ready asset pack.</p>
-      <p class="stub">Scaffold placeholder — the real landing page is E7 (growth role).</p>
+    <header class="nav">
+      <div class="brand">Snap<span>List</span></div>
+      <nav class="links">
+        <a href="#how">How it works</a>
+        <a href="#honest">Honest claims</a>
+        <a href="#pricing">Pricing</a>
+        <a href="EXPORT.md">Export guide</a>
+      </nav>
+    </header>
+
+    <main class="wrap">
+      <!-- HERO -->
+      <section class="hero" id="top" style="border-top: none;">
+        <h1>Turn a phone photo of a garment into a listing-ready asset pack.</h1>
+        <p class="lead">
+          One flat-lay photo becomes a prettified image, detected attributes and measurements,
+          written listing copy, and a marketplace export you can upload or paste. No design skills,
+          no spreadsheet wrangling.
+        </p>
+        <div class="cta-row">
+          <!--
+            CTA targets are placeholders, set at launch (E8-T1 Stripe Checkout + the app shell).
+            - Primary: the app's first-run / anonymous start URL.
+            - Secondary: a Stripe Checkout session URL returned by POST /v1/billing/checkout.
+          -->
+          <a class="btn btn-primary" href="https://app.snaplist.example/start">Start free — 3 items, no card</a>
+          <a class="btn btn-ghost" href="https://app.snaplist.example/pricing">See plans</a>
+          <span class="cta-note">Free tier: 3 successful exports, no account required to try.</span>
+        </div>
+      </section>
+
+      <!-- BEFORE / AFTER -->
+      <section id="before-after">
+        <h2>From your phone photo to a catalog-clean image</h2>
+        <p class="section-sub">
+          Drag the handle to compare. The asset pack removes the background, straightens the garment,
+          and evens the lighting — the parts of listing prep that eat the most time.
+        </p>
+
+        <div class="ba" id="ba">
+          <div class="ba-layer ba-before">
+            <span class="ba-tag left">Before · your photo</span>
+            <svg class="ba-svg" viewBox="0 0 100 100" aria-hidden="true">
+              <path fill="#3b3b3b" d="M30 18 L42 14 L58 14 L70 18 L82 30 L72 42 L72 86 L28 86 L28 42 L18 30 Z"/>
+            </svg>
+          </div>
+          <div class="ba-layer ba-after" id="baAfter">
+            <span class="ba-tag right">After · prettified</span>
+            <svg class="ba-svg" viewBox="0 0 100 100" aria-hidden="true">
+              <path fill="#2b2b2b" d="M30 18 L42 14 L58 14 L70 18 L82 30 L72 42 L72 86 L28 86 L28 42 L18 30 Z"/>
+            </svg>
+          </div>
+        </div>
+        <input
+          class="ba-slider"
+          id="baSlider"
+          type="range"
+          min="0"
+          max="100"
+          value="50"
+          aria-label="Reveal before and after"
+        />
+        <p class="ba-caption">
+          Illustrative mock — not a real photograph. Prettify output is generated per item in the app.
+        </p>
+      </section>
+
+      <!-- HOW IT WORKS -->
+      <section id="how">
+        <h2>How it works</h2>
+        <p class="section-sub">
+          Four steps, one photo in. Every step that can be automated is; the steps that need your
+          judgement are left to you and clearly flagged.
+        </p>
+        <div class="steps">
+          <div class="step">
+            <div class="n">Step 1</div>
+            <h3>Shoot it flat</h3>
+            <p>Lay the garment flat and snap one photo. No tripod, no lightbox, no props.</p>
+          </div>
+          <div class="step">
+            <div class="n">Step 2</div>
+            <h3>We prettify</h3>
+            <p>Background removal, straightening, and even lighting — on a neutral backdrop.</p>
+          </div>
+          <div class="step">
+            <div class="n">Step 3</div>
+            <h3>Attributes &amp; copy</h3>
+            <p>Brand, colour, material, size, condition and measurements are detected and written
+              into a title, description and keywords.</p>
+          </div>
+          <div class="step">
+            <div class="n">Step 4</div>
+            <h3>Export</h3>
+            <p>Download an eBay-ready CSV, copy-assist for Poshmark and Vinted, or copy the
+              listing text to paste anywhere.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- HONEST CLAIMS -->
+      <section id="honest">
+        <h2>Honest claims</h2>
+        <p class="section-sub">
+          We would rather under-promise. Here is exactly what we can and cannot stand behind today,
+          traced to our own planning docs.
+        </p>
+        <div class="honest">
+          <h2>No “time saved” number — on purpose</h2>
+          <ul>
+            <li>
+              <strong>We do not publish a minutes-saved figure.</strong> Our metrics doc
+              (<span class="src">docs/METRICS.md</span>) contains <em>zero measured values</em> — every
+              entry is a definition or a chosen threshold, explicitly marked <code>UNMEASURED</code>.
+              Until that changes, any “you’ll save 30 minutes” line would be invented.
+            </li>
+            <li>
+              <strong>The manual baseline is an estimate, not a measurement.</strong> Listing one
+              item by hand is roughly <strong>8–19 minutes</strong> by our product estimate
+              (<span class="src">PRD §3</span>), most of it <em>checking</em> details, not typing.
+              That estimate is <strong>unverified</strong> and we say so.
+            </li>
+            <li>
+              <strong>What we target (engineering, not a promise).</strong> The machine-ownable part
+              of the flow — photo prep, attributes, export — has a design target of
+              <strong>p50 ≤ 35 s, p90 ≤ 60 s</strong> per item
+              (<span class="src">METRICS.md §3.3</span>). That is a <em>chosen</em> threshold, not a
+              measured result, and it deliberately <strong>excludes</strong> the time you spend
+              reviewing the suggestion. We will not subtract it from your 8 minutes to manufacture a
+              “&lt;2 min” claim.
+            </li>
+            <li>
+              <strong>We never invent a detail.</strong> The copy generator will not state a brand or
+              fibre the photo did not support (<span class="src">packages/shared/src/listing/copy.ts</span>).
+              If we didn’t detect it, the listing won’t claim it. You stay in control of price and category.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ASSET PACK -->
+      <section id="pack">
+        <h2>What’s in the asset pack</h2>
+        <p class="section-sub">Everything the app produces for one item, ready to hand to a marketplace.</p>
+        <ul class="pack">
+          <li>Prettified image(s) on a neutral backdrop</li>
+          <li>Detected category, colour, material, size, condition</li>
+          <li>Flat measurements (you confirm with a tape)</li>
+          <li>A title ≤ 80 characters, keyword-front-loaded</li>
+          <li>A structured description with a measurements block</li>
+          <li>Up to 10 search keywords</li>
+          <li>An eBay File Exchange CSV (header matches eBay’s template)</li>
+          <li>Poshmark &amp; Vinted copy-assist rows (paste, not upload)</li>
+          <li>One-tap copy of title / description / keywords for any site</li>
+        </ul>
+      </section>
+
+      <!-- PRICING -->
+      <section id="pricing">
+        <h2>Pricing</h2>
+        <p class="section-sub">
+          The free tier is a real trial, not a substitute for a resale business. Prices below are the
+          launch figures from our onboarding plan (<span class="src">docs/ONBOARDING.md §4</span>).
+        </p>
+        <div class="plans">
+          <div class="plan free">
+            <h3>Free</h3>
+            <div class="price">$0</div>
+            <ul>
+              <li>3 successful exports</li>
+              <li>No card, no account to try</li>
+              <li>Re-downloads are free</li>
+              <li>Does not expire</li>
+            </ul>
+            <a class="btn btn-ghost" href="https://app.snaplist.example/start">Start free</a>
+          </div>
+          <div class="plan">
+            <h3>Starter</h3>
+            <div class="price">$19<small>/mo</small></div>
+            <ul>
+              <li>100 items per month</li>
+              <li>≈ 19¢ per listing</li>
+              <li>eBay, Poshmark &amp; Vinted export</li>
+              <li>Cancel in two taps</li>
+            </ul>
+            <!-- Placeholder: wire to POST /v1/billing/checkout?plan=starter (E8-T1) -->
+            <a class="btn btn-primary" href="https://app.snaplist.example/checkout?plan=starter">Choose Starter</a>
+          </div>
+          <div class="plan">
+            <h3>Pro</h3>
+            <div class="price">$49<small>/mo</small></div>
+            <ul>
+              <li>400 items per month</li>
+              <li>On-model renders (E4)</li>
+              <li>Everything in Starter</li>
+              <li>Cancel any time</li>
+            </ul>
+            <!-- Placeholder: wire to POST /v1/billing/checkout?plan=pro (E8-T1) -->
+            <a class="btn btn-primary" href="https://app.snaplist.example/checkout?plan=pro">Choose Pro</a>
+          </div>
+        </div>
+        <p class="ba-caption" style="margin-top: 16px;">
+          Stripe Checkout hosts the payment form; card details never reach our servers.
+        </p>
+      </section>
     </main>
+
+    <footer class="wrap">
+      <p>
+        SnapList — photo in, listing out.
+        <span class="pill">v1 export: eBay CSV</span>
+        <span class="pill">Poshmark / Vinted: copy-assist</span>
+      </p>
+      <p>
+        Read the plain-language export steps in <a href="EXPORT.md">EXPORT.md</a>, and the
+        honest metric definitions in <a href="METRICS.md">METRICS.md</a>.
+        We do not list on your behalf and do not set your price — v1 ships an export you upload.
+      </p>
+    </footer>
+
+    <script>
+      // Before/after reveal — pure DOM, no dependencies.
+      (function () {
+        const slider = document.getElementById("baSlider");
+        const after = document.getElementById("baAfter");
+        if (!slider || !after) return;
+        const apply = function (value) {
+          // value 0..100 controls how much of the "after" layer is revealed from the left.
+          after.style.clipPath = "inset(0 " + (100 - value) + "% 0 0)";
+        };
+        apply(Number(slider.value));
+        slider.addEventListener("input", function () {
+          apply(Number(slider.value));
+        });
+      })();
+    </script>
   </body>
 </html>

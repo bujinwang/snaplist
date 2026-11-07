@@ -177,7 +177,10 @@ def test_too_few_masks_is_caught(workdir: Path) -> None:
     entries[0]["mask_path"] = None
     rewrite_manifest(golden, entries)
 
-    assert f"exactly {vg.TOTAL_MASKS} hand masks" in failed_names(vg.validate(golden))
+    assert (
+        f"exactly {vg.TOTAL_MASKS} mask files (presence only)"
+        in failed_names(vg.validate(golden))
+    )
 
 
 # ---------------------------------------------------------------------------- content rules

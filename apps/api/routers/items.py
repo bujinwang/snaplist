@@ -42,6 +42,7 @@ from apps.api.schemas import (
     ErrorResponse,
     ItemAttributes,
     JobKind,
+    PlanTier,
 )
 from apps.api.storage import StorageError, source_object_key, storage_of
 
@@ -336,11 +337,31 @@ def rerender_item(item_id: str, caller: Caller = Depends(current_caller)) -> JSO
 
 @router.post(
     "/items/{item_id}/on-model",
-    responses={501: {"model": ErrorResponse}},
-    summary="Render the garment on a model (blocked: FASHN credentials)",
+    responses={402: {"model": ErrorResponse}, 501: {"model": ErrorResponse}},
+    summary="Render the garment on a model (Pro-only; blocked: FASHN credentials)",
 )
-def on_model(item_id: str, caller: Caller = Depends(current_caller)) -> JSONResponse:
-    """E4-T1: needs `FASHN_API_KEY` and the quality gate. 501, not a fake queue entry."""
+def on_model(
+    item_id: str, request: Request, caller: Caller = Depends(current_caller)
+) -> JSONResponse:
+    """E4-T1 + E8-T4: Pro-only on-model.
+
+    The plan gate runs before the FASHN/worker check: a Free/Starter seller hitting on-model gets
+    a **402** that is distinguishable from the item-quota 402 by `error.details.reason ==
+    "plan_required"`. A Pro seller still gets the honest **501** — FASHN is not implemented here —
+    but never a fake queue entry.
+    """
+    plan = web.repository_of(request).get_plan(caller.user_id)
+    if plan is not PlanTier.PRO:
+        raise errors.ApiError(
+            errors.STATUS_PAYMENT_REQUIRED,
+            ErrorCode.QUOTA_EXCEEDED,
+            f"On-model rendering is a Pro feature; the current plan is {plan.value}.",
+            details={
+                "reason": "plan_required",
+                "required_plan": "pro",
+                "current_plan": plan.value,
+            },
+        )
     raise errors.not_implemented(
         "POST /v1/items/{item_id}/on-model needs packages.vision.vton (E4-T1) and "
         "FASHN_API_KEY. Refusing rather than charging for a render that cannot happen."

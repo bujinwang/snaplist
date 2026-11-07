@@ -88,12 +88,24 @@ parity test reads).
 | 7 | `test_py` | `.venv/bin/python -m pytest` | `make test` (2/2) | blocking; includes parity + telemetry suites |
 | 8 | `evals` | `.venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive` | `make evals` | blocking; **real rc preserved**, plus a non-blocking `::warning::` when `GATE NOT EVALUATED` is printed |
 | 9 | `evals_report` | `.venv/bin/python -m evals.telemetry --since 7d` | `make evals-report` | report-only; the command itself exits 0 |
-| 10 | `dirty_check` | `git status --porcelain --untracked-files=all` | — | blocking; exact filename whitelist — **collapsed directory-level lines are no longer accepted**; no tracked-file pollution, no unexpected artefacts |
+| 10 | `gates_report` | `.venv/bin/python infra/ci/gates/regression_gate.py` ; `.venv/bin/python infra/ci/gates/cost_dashboard.py --fail-on-unmeasured` | — | NON-BLOCKING REPORT: real rc preserved; rc=2 -> ::warning::; rc=1/>=3 fail |
+| 11 | `dirty_check` | `git status --porcelain --untracked-files=all` | — | blocking; exact filename whitelist — **collapsed directory-level lines are no longer accepted**; no tracked-file pollution, no unexpected artefacts |
 
 `evals` captures the gate's output to a temp file **outside the repo**, `cat`s
 it for the log, then returns the captured original rc — no pipe anywhere, so
 `pipefail` cannot be asked to rescue a swallowed status. The `::warning::` is
 emitted by `grep` on that file and never changes the exit code.
+
+`gates_report` is the second non-blocking report step, and its rc whitelist is
+**narrow — not "accept any non-1 code"**. Both E0-T4 tools run in their
+strictest form, their real rcs are captured (no pipe, no swallow construct,
+temp files outside the repo), and both full reports are `cat`ed into the log.
+**Only** `rc=2` together with the tool's own `GATE INCONCLUSIVE` /
+`COST BUDGET NOT EVALUATED` marker becomes a visible `::warning::` that
+literally says `this is NOT a pass`. `rc=1` (regression / budget breach),
+`rc>=3` (unexpected) and `rc=2` without that marker still fail the job. A green
+`gates_report` means "both reports were rendered", never "either gate passed" —
+see `docs/QA.md §13.6` for the named residual and the upgrade conditions.
 
 `dirty_check`, `--untracked-files=all` and `.kilo/`: plain
 `git status --porcelain` **collapses** untracked directories into a single line
@@ -149,8 +161,8 @@ setup-node** (otherwise `cache: pnpm` cannot find pnpm) → setup-node `22`.
 **not** a GitHub-official action, and `pnpm/action-setup` is community-owned.
 All five are immutable-SHA pinned, which limits (but does not eliminate) the
 trust placed in third-party release processes. `permissions: contents: read`
-keeps the `GITHUB_TOKEN` read-only. `pull_request_target` is not used. Private-
-repo fork-PR permission behaviour is UNVERIFIED (below).
+keeps the `GITHUB_TOKEN` read-only. `pull_request_target` is not used. Fork-PR
+permission behaviour on the now-**public** repo is UNVERIFIED (below).
 
 **Why no `docs/DEPS.md` row.** Global DoD #5 applies to a *new dependency* of
 the project. GitHub Actions `uses:` entries are workflow tooling executed by the
@@ -200,8 +212,101 @@ it for E0-T4 (regression gate + cost dashboard).
 
 ## Acceptance evidence
 
-All tails below are verbatim from self-checks run on the clean main worktree at
-HEAD `3cc029e09894db401ca5c1282ddceca174b7c0a4`. Environment **on the PATH used
+### Real GitHub Actions run (2026-11-06)
+
+Two real hosted runs on `bujinwang/snaplist`, read back from the GitHub API
+(`gh run view`), not from a local emulation. These are the acceptance artefacts
+for E0-T3. The local self-checks in 1)–7) below are the *equivalence* evidence;
+they are not a substitute for these two.
+
+**GREEN — [#42306976573](https://github.com/bujinwang/snaplist/actions/runs/42306976573)**
+trigger `workflow_dispatch`, branch `master`, HEAD
+`d07dfc8621bbabea64d2868904c04144541e336d`, job `ci` on `ubuntu-24.04`
+(runner image release `20261101.360`), **conclusion `success`**,
+`22:44:37Z → 22:46:45Z` (≈ 2 m 08 s). All ten business steps passed, in
+`STEP_ORDER` order: `toolchain_probe`, `contract_gate`, `install`, `lint_py`,
+`lint_ts`, `test_js`, `test_py`, `evals`, `evals_report`, `dirty_check` — after
+the five setup steps (`checkout` with `fetch-depth: 1`, `setup python 3.11`,
+`setup uv 0.8.2`, `setup pnpm 12.16.1`, `setup node 22`), all of which also
+succeeded. Verbatim from that log (timestamps stripped, elisions marked `...`):
+
+```
+STEP toolchain_probe: python3 --version && node --version && pnpm --version && uv --version && git rev-parse HEAD
+Python 3.11.18
+v22.23.4
+12.16.1
+uv 0.8.2
+d07dfc8621bbabea64d2868904c04144541e336d
+STEP contract_gate: python3 infra/ci/check_contracts.py
+CONTRACT_GATE: OK (9 anchors checked)
+...
+STEP install: uv sync --frozen && pnpm install --frozen-lockfile
+✓ Lockfile passes supply-chain policies (986 entries in 1.9s)
+Lockfile is up to date, resolution step is skipped
+...
+STEP lint_py: .venv/bin/python -m ruff check .
+All checks passed!
+...
+STEP test_py: .venv/bin/python -m pytest
+694 passed, 6 skipped, 1 xfailed, 1 warning in 94.83s (0:01:34)
+...
+STEP evals: .venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive
+GATE NOT EVALUATED — n=0. This is NOT a pass.
+VERDICTS: PASS=0 FAIL=0 INCONCLUSIVE=8 DATA_UNAVAILABLE=0 REFUND_ATTRIBUTION=INTACT
+##[warning] CI green != gate passed — evals.telemetry printed "GATE NOT EVALUATED" (n=0, --allow-inconclusive downgrade). This is NOT a pass.
+...
+STEP dirty_check: git status --porcelain --untracked-files=all
+```
+
+The run carries that `##[warning]` line as its job annotation, and recording it
+is the point of this subsection:
+
+> `CI green != gate passed — evals.telemetry printed "GATE NOT EVALUATED" (n=0, --allow-inconclusive downgrade). This is NOT a pass.`
+
+**CI green is not a gate pass.** What the green run proves: the five SHA-pinned
+actions resolve and run on a hosted runner; `setup-pnpm`-before-`setup-node`
+ordering works (`cache: pnpm` found pnpm, installed `12.16.1`); both toolchains
+install from the frozen lockfiles with no lockfile rewrite; ruff, `tsc --noEmit`,
+the JS tests, pytest and `evals_report` all exit 0; `dirty_check` sees a clean
+checkout; `contract_gate` reports 9 anchors on the real runner rather than on
+this laptop. What it does **not** prove: that the telemetry gate passed. `n=0`,
+the gate was never evaluated, and `--allow-inconclusive` downgraded that to
+rc=0 — exactly what the annotation says. The acceptance statement for this run
+is "the CI pipeline executes green end to end"; it is never "the gate passed".
+
+**RED — [#42307355201](https://github.com/bujinwang/snaplist/actions/runs/42307355201)**
+scratch branch `ci-red-proof` cut from `origin/master` (`d07dfc8`), one mutation,
+trigger `workflow_dispatch`, **conclusion `failure`**,
+`22:47:48Z → 22:48:13Z` (≈ 25 s).
+
+Mutation: in the `docs/CONTRACTS.md` §7 event table, the cell `export_clicked`
+was renamed to `export_clicked_probe` — one token, no version bump, no code
+change, nothing any test in the repo reads. `contract_gate` is step 2, before
+`install`, so it decided the job. Verbatim:
+
+```
+STEP contract_gate: python3 infra/ci/check_contracts.py
+CONTRACT_GATE: FAIL A2 §7 event column ['upload_started', 'prettify_approved', 'attributes_edited', 'export_clicked_probe', 'subscription_started', 'paywall_impression', 'export_delivered'] != ANALYTICS_EVENTS ['upload_started', 'prettify_approved', 'attributes_edited', 'export_clicked', 'subscription_started', 'paywall_impression', 'export_delivered']
+##[error]Process completed with exit code 1.
+```
+
+Every later business step was reported by the API as `"conclusion":"skipped"`:
+`install`, `lint_py`, `lint_ts`, `test_js`, `test_py`, `evals`, `evals_report`,
+`dirty_check` — 8 of the 10 (`toolchain_probe` had already passed). The failure
+is **fail-fast and hard**: the job goes red, the remaining steps never run, and
+there is no `|| true`, no `continue-on-error`, no `if: always()` that could
+rescue them. Nothing was installed, linted, tested or evaluated in that run —
+the gate alone turned it red, in about a tenth of a second.
+
+The branch and worktree were deleted afterwards; `git ls-remote --heads origin
+ci-red-proof` returns empty. The red run survives as a run record and as the log
+above, not as a branch that could re-trigger by accident.
+
+### Local self-checks (HEAD `3cc029e`)
+
+The **local** tails in 1)–7) below are verbatim from self-checks run on the
+clean main worktree at HEAD `3cc029e09894db401ca5c1282ddceca174b7c0a4`.
+Environment **on the PATH used
 for these runs**: `python3` = `Python 3.13.12` (system; the gate uses stdlib
 only), `.venv/bin/python` = 3.11, `node` = `v22.22.2`, `pnpm` = `12.16.1`,
 `uv` = `0.8.2 (21fadbcc1 2025-07-22)`. **These values vary by PATH on this same
@@ -325,7 +430,11 @@ is a local number that drifts between runs (53.82 s in round 1, 64.74 s here,
 
 RESULT: PASS (LOCAL EQUIVALENCE ONLY; GitHub Actions side UNVERIFIED)
 ```
-`LOCAL_RUNNER_RC=0`. **Two different status views, deliberately.** The
+`LOCAL_RUNNER_RC=0`. That `RESULT` line is the runner's own verdict **from that
+run**, and its "GitHub Actions side UNVERIFIED" scope is the runner's: the
+runner cannot verify GitHub. It is superseded — not retracted — by the real
+GREEN/RED pair at the top of this section, which is where the GitHub claim now
+lives. **Two different status views, deliberately.** The
 `dirty_check` step and the JUNK PROBE use `-uall` + an exact whitelist (that is
 the gate that was tightened). The runner's PRE/POST zero-pollution snapshot
 still uses plain `git status --porcelain` — it is a *verbatim before/after
@@ -344,8 +453,11 @@ restored `d54b8252d20f4b63912d26954e8c567a17fd93599cc7005d6b87e0befab059ea`
 in a detached-HEAD worktree and short-circuits at `contract_gate` (step 2), so
 `install` and every later step **do not execute** by construction — the runner
 asserts `short-circuit(before install)=True` for all five. This is the default
-GitHub Actions "fail the job, skip remaining steps" semantics. It is **not** a
-full pipeline run: no dependency install, no lint, no tests, no evals. The
+GitHub Actions "fail the job, skip remaining steps" semantics — and as of
+2026-11-06 that semantics is **observed, not assumed**: the real red run
+(#42307355201, above) reports `"conclusion":"skipped"` for all eight steps after
+`contract_gate`. It is **not** a full pipeline run: no dependency install, no
+lint, no tests, no evals. The
 worktree needs no `.venv`/`node_modules` and no symlinks. Because HEAD
 (`3cc029e`) predates E0-T3, `steps.sh` and `check_contracts.py` are copied into
 the worktree as **real files, not symlinks**, to emulate the post-commit checkout
@@ -373,28 +485,64 @@ change**. With `--untracked-files=all` the five files are listed individually:
 
 ## Honesty / UNVERIFIED
 
-* **`act -j ci` was NOT run.** `act` is not installed and the Docker daemon is
-  not running on this machine. A real PR / `workflow_dispatch` GitHub job run,
-  its job URL and its log tail are **UNVERIFIED** — no URL, SHA, duration or
-  test count for a GH run is claimed here. `workflow_dispatch` is the shortest
-  path to obtaining one.
-* **GitHub Actions execution is UNVERIFIED.** The GH-side `checkout` /
-  `setup-python` / `setup-uv` / `pnpm/action-setup` / `setup-node` actions,
-  their cache behaviour and their interaction with `ubuntu-24.04` were never
-  executed by this runner. `local_runner.py` proves only local equivalence.
-* **Required status check NOT configured.** That is a repository-settings
-  action outside this ticket's whitelist and needs Bert. Until it is set,
-  **a red CI does not actually block a merge** — the gate has teeth locally but
-  no enforcement authority on GitHub yet. UNVERIFIED.
-* **`runs-on: ubuntu-24.04` and `timeout-minutes: 20` are unverified initial
-  values.** Real GH job duration, cache hit rate and step timings are
-  **UNMEASURED**. The pytest suite took 53.82 s (round 1) / 64.74 s (round 2)
-  on this machine; those are local numbers that drift between runs, not GH
-  timings.
-* **Private repo / fork-PR permission boundary UNVERIFIED.** `bujinwang/snaplist`
-  is private; `permissions: contents: read` and the absence of
-  `pull_request_target` are deliberate, but fork-PR behaviour for a private repo
-  has not been tested.
+* **`act -j ci` was NOT run — and still has not been.** `act` is not installed
+  on this machine and the Docker daemon is not running (`docker info` fails).
+  PLAN E0-T3 allows "`act -j ci` **or** a real PR run", so acceptance went
+  through `workflow_dispatch` on the real hosted runner instead. That is
+  stronger evidence for the parts this ticket cares about (action resolution,
+  runner image, frozen installs, real step execution) but it is not the same
+  thing as `act`: the container-local emulation was never exercised, so a
+  developer without network access still has no verified offline path. Named
+  residual, not a gap hidden behind the green run.
+* **GitHub Actions execution is VERIFIED (2026-11-06).** All five pinned
+  actions ran on a hosted `ubuntu-24.04` runner (image release `20261101.360`):
+  `checkout` (`fetch-depth: 1`), `setup-python` → `Python 3.11.18`, `setup-uv`
+  → `uv 0.8.2` with its cache, `pnpm/action-setup` → `pnpm 12.16.1`,
+  `setup-node` → `node v22.23.4`. The full pipeline ran end to end and exited 0;
+  a real red run failed at `contract_gate` and skipped everything after it.
+  This **replaces** the earlier blanket "GitHub Actions execution is UNVERIFIED"
+  claim, which was true when it was written and is now stale. Residuals that
+  remain unverified are named individually below (trigger *events*, fork PRs,
+  cache behaviour over time).
+* **Required status check: CONFIGURED (measured, not assumed).**
+  `GET /repos/bujinwang/snaplist/branches/master/protection` returns
+  `required_status_checks.contexts: ["ci"]`, `"strict": true`,
+  `enforce_admins: true`, and `allow_force_pushes: false` /
+  `allow_deletions: false` (no rulesets). So a red `ci` **does** block a merge
+  to `master`, admins included. Earlier drafts of this README said this was
+  unconfigured and needed Bert; that was true then and is corrected here from
+  the API, not from memory. Residual: only the `ci` context is required (a new
+  required workflow needs the same setting); `strict: true` means a PR must be
+  up to date with `master` before it can merge; and **the enforcement itself has
+  never been observed** — no PR has ever been opened on this repo, so nothing
+  has yet been actually blocked. `origin/master` also carries direct pushes
+  (e.g. `d07dfc8`), which means the protection was either enabled after those
+  pushes or the admin path was used. The settings are measured; "a red run
+  stopped a merge" is not.
+* **`runs-on: ubuntu-24.04` and `timeout-minutes: 20` — one data point each,
+  not a distribution.** The two runs above measure 2 m 08 s (green, whole
+  pipeline) and 25 s (red, gate only) of job wall clock, so `timeout-minutes:
+  20` had roughly 9× headroom on the green run. **Cache hit rate, per-step
+  timing across runs and cold-cache worst case remain UNMEASURED** — do not
+  quote either number as a GH timing model. pytest wall time is a bad proxy in
+  either direction: 53.82 s / 64.74 s on this machine (687 passed, HEAD
+  `3cc029e`) versus 94.83 s on the runner (694 passed, HEAD `d07dfc8`) — two
+  different HEADs on two different machines, so compare nothing.
+* **The repo is now PUBLIC; fork-PR behaviour is still UNVERIFIED.**
+  `bujinwang/snaplist` was private when this ticket was written and is public
+  now — `gh repo view` reports `"visibility":"PUBLIC"`, and commit `d07dfc8`
+  ("Add top-level README for the now-public repository") added the top-level
+  `README.md` and the CI badge for exactly that reason. `permissions:
+  contents: read` and the deliberate absence of `pull_request_target` are
+  unchanged and matter *more* now, because outside contributors can open PRs.
+  Still **UNVERIFIED**: no fork PR has ever been opened, so whether a fork PR
+  gets a read-only token, whether its workflow needs maintainer approval, and
+  whether a fork PR would satisfy the required `ci` check have not been tested.
+* **The `push` / `pull_request` triggers were never fired.** Both acceptance
+  runs used `workflow_dispatch`. The trigger *events* themselves, and any
+  event-context-only behaviour, are unexercised; neither workflow step reads
+  `github.event.pull_request.*`, so the risk is low, but it is not zero and it
+  is not verified.
 * **The gate protects frozen semantic anchors, not arbitrary prose.** Editing a
   paragraph that no anchor reads will not turn CI red. This is a named residual,
   not a promise of whole-document integrity; a hash seal was rejected (above).
@@ -426,8 +574,12 @@ change**. With `--untracked-files=all` the five files are listed individually:
   `OK (9 anchors checked)` rc=0 under Python 3.9.6 / 3.11.15 / 3.12.8 / 3.13.12
   and `local_runner.py` rc=0 under 3.9.6, so stdlib-only holds. CI pins
   3.11 / 22 / 0.8.2 / 12.16.1 to remove that drift.
-* **No commit, no PR, no `git add`.** The lead owns submission. All five files
-  remain untracked; `.kilo/` remains untouched and untracked.
+* **Committed, never PR'd.** This README was authored while the five files were
+  still untracked; they were then committed by the lead as `e904d74` ("Add
+  E0-T3 CI pipeline with frozen-contract doc gate") and are on `origin/master`.
+  `.kilo/` remains untouched and untracked. No PR was opened for E0-T3 — the
+  workflow's `pull_request` path is therefore still unexercised, and the
+  acceptance runs used `workflow_dispatch`.
 * **A pre-existing `.kilo/` worktree is unrelated.** `git worktree list` also
   shows `/Users/bujin/.local/share/kilo/worktree-pool/snaplist-.../...` (detached
   at `864b849`). It belongs to the Kilo tool's own worktree pool, existed before
@@ -444,7 +596,7 @@ These are all deliberately **outside** the blocking chain:
 
 | command | why it is not in CI |
 |---|---|
-| `make golden` | exits 2 by design until the 40 real garment photos + manifest + 20 hand masks land (E0-T1). An empty set must not look like a passing one. |
+| `make golden` | `make golden` 当前 rc=0 但只验证文件/计数，不验证来源 — currently rc=0, but it validates only file presence / counts, NOT mask provenance (`mask_source`). The 20 mask files present are 18 `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana`, 0 hand; E0-T1's hand-drawn requirement stays UNVERIFIED and rc=0 is NOT a golden-set DoD verdict. |
 | `make fetch-models` | downloads 176 MB over the network on every fresh runner. Worse: with torch present, `runtime.probe()` used to select BiRefNet (unimplemented), so the default vision path started refusing on a machine that had not changed — the exact "installing a dependency changes default behaviour" incident recorded in `docs/DEPS.md`. CI must never download model weights. |
 | `make evals-strict` | the release gate omits `--allow-inconclusive`, so an unmeasured/empty database exits **3**. On today's empty DB it is guaranteed non-zero. A red-by-default gate is disabled within a week; `evals` (dev/CI gate) is the correct blocking form. |
 | `python -m evals.run --suite vision --fail-under-threshold` | E0-T2's acceptance command is **designed to exit 1 today** ("exit 1 today, by design", PLAN.md:220). The E0-T2 vision harness is deliberately not wired into CI; the ticket name's "evals" here refers to the R4-wired `evals.telemetry` dev/CI gate. |
@@ -452,5 +604,7 @@ These are all deliberately **outside** the blocking chain:
 | `make fetch-sdxl` | 6.9 GB of fp16 weights for `mode=SDXL_INPAINT`, a mode known not to be shippable; must stay an explicit act. |
 | `make test` / `make lint` / `make evals` as make targets | GNU Make 3.81 collapses any non-zero recipe exit to 2. CI calls the underlying commands directly to preserve real exit codes (and to keep `pnpm -w test` before pytest). |
 
-`evals_report` is the single non-blocking step, and only because its command
-itself always exits 0 — no `continue-on-error`, no `|| true`, no `if: always()`.
+`evals_report` 与 `gates_report` 都是非阻断报告步骤，前者命令恒 0，后者靠窄 rc 白名单 + 注解；二者都不宣称 gate 通过。
+Neither one declares a gate passed: `evals_report`'s command itself always exits 0, while
+`gates_report` uses the narrow rc whitelist + `::warning::` annotations described above —
+no `continue-on-error`, no `|| true`, no `if: always()`.

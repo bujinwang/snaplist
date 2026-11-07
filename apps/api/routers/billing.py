@@ -1,16 +1,17 @@
-"""Stripe surfaces (E8-T1/T2) — blocked, and 501 on purpose.
+"""Stripe checkout surface (E8-T1) — blocked, and 501 on purpose.
 
-A checkout session needs `STRIPE_SECRET`; a webhook needs `STRIPE_WEBHOOK_SECRET` **and** a
-signature verification we can actually test. There is no acceptable middle ground here:
+A checkout session needs `STRIPE_SECRET`; the webhook receiver (E8-T2) lives in
+`apps/api/routers/webhooks.py` and needs `STRIPE_WEBHOOK_SECRET` **and** a signature
+verification we can actually test. There is no acceptable middle ground here:
 
 * returning a fake `checkout_url` would send a seller to a 404 and lose the conversion;
-* accepting a webhook without verifying the signature would let anyone grant themselves Pro
-  with a single unauthenticated POST — a free-subscription bug, which is the worst kind.
+* a webhook without verifying the signature would let anyone grant themselves Pro with a single
+  unauthenticated POST — a free-subscription bug, which is the worst kind.
 
-So both routes exist (the shape is fixed, the mobile/web clients can code against it) and both
-answer 501 with the missing credential named in `details`. `require_stripe` is the only place
-that decides, so the moment the keys exist the routes can be wired without touching the rest of
-the API.
+So the checkout route exists (the shape is fixed, the mobile/web clients can code against it) and
+answers 501 with the missing credential named in `details`. `require_stripe` is the only place
+that decides, so the moment the key exists the route can be wired without touching the rest of the
+API.
 """
 
 from __future__ import annotations
@@ -62,16 +63,3 @@ def create_checkout(
     """E8-T1. `body`/`caller` are taken so the signature is final and the client can code
     against it; the handler then refuses rather than pretending."""
     require_stripe(request)
-
-
-@router.post(
-    "/webhooks/stripe",
-    responses={501: {"model": ErrorResponse}},
-    summary="Stripe webhook (blocked: signature verification not implemented)",
-)
-async def stripe_webhook(request: Request) -> JSONResponse:
-    """Deliberately *not* behind `current_caller`: Stripe has no seller JWT.
-
-    It is still 501, so the unauthenticated surface has no side effects at all.
-    """
-    require_stripe(request, needs_webhook=True)

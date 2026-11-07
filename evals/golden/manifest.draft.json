@@ -1,0 +1,852 @@
+[
+  {
+    "id": "top-01",
+    "path": "photos/top-01.jpg",
+    "mask_path": "masks/top-01.png",
+    "category": "top",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "slight wrinkles at the hem",
+      "ribbed neckline",
+      "no print or logo"
+    ],
+    "hard_case": false,
+    "notes": "White cotton t-shirt, laid flat on plain light grey surface, diffuse daylight, full frame, slight wrinkles at hem.",
+    "search_prompt": "white cotton t-shirt flat lay plain light grey background soft daylight wrinkled hem"
+  },
+  {
+    "id": "top-02",
+    "path": "photos/top-02.jpg",
+    "mask_path": null,
+    "category": "top",
+    "colors": [
+      "charcoal"
+    ],
+    "pattern": "knit",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "folded into a square",
+      "no visible shadow edge",
+      "charcoal reads near-grey on white"
+    ],
+    "hard_case": false,
+    "notes": "Charcoal knit sweater folded on white table, soft window light, garment fills 80% of frame.",
+    "search_prompt": "charcoal knit sweater folded white table soft window light"
+  },
+  {
+    "id": "top-03",
+    "path": "photos/top-03.jpg",
+    "mask_path": null,
+    "category": "top",
+    "colors": [
+      "navy"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "sleeves hang naturally, not pinned",
+      "wooden hanger shows above collar",
+      "button placket slightly skewed"
+    ],
+    "hard_case": false,
+    "notes": "Navy button-down shirt on wooden hanger against pale wall, sleeves hanging naturally, even soft lighting.",
+    "search_prompt": "navy button down shirt wooden hanger pale wall sleeves hanging"
+  },
+  {
+    "id": "top-04",
+    "path": "photos/top-04.jpg",
+    "mask_path": "masks/top-04.png",
+    "category": "top",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "hood folded back over the shoulders",
+      "kangaroo pocket at centre",
+      "drawstrings resting asymmetric"
+    ],
+    "hard_case": false,
+    "notes": "Black hoodie laid flat, hood folded back, plain off-white background, diffuse softbox light.",
+    "search_prompt": "black hoodie flat lay hood folded back off white background softbox"
+  },
+  {
+    "id": "top-05",
+    "path": "photos/top-05.jpg",
+    "mask_path": null,
+    "category": "top",
+    "colors": [
+      "cream",
+      "navy"
+    ],
+    "pattern": "striped",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "cream and navy horizontal stripes",
+      "classic boat neckline",
+      "thin ~1cm stripe pitch"
+    ],
+    "hard_case": false,
+    "notes": "Striped Breton top flat-lay, cream and navy stripes, light beige fabric backdrop, even lighting.",
+    "search_prompt": "breton striped top cream navy stripes flat lay beige backdrop"
+  },
+  {
+    "id": "top-06",
+    "path": "photos/top-06.jpg",
+    "mask_path": null,
+    "category": "top",
+    "colors": [
+      "white",
+      "blue"
+    ],
+    "pattern": "floral",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "small busy floral print",
+      "shoulders dimpled on the hanger",
+      "sheer where backlit"
+    ],
+    "hard_case": false,
+    "notes": "Floral blouse on hanger, busy small print, plain white wall, soft daylight.",
+    "search_prompt": "floral blouse on hanger white wall soft daylight small print"
+  },
+  {
+    "id": "top-07",
+    "path": "photos/top-07.jpg",
+    "mask_path": "masks/top-07.png",
+    "category": "top",
+    "colors": [
+      "blue"
+    ],
+    "pattern": "solid",
+    "material": [
+      "denim"
+    ],
+    "hard_attributes": [
+      "open flat, lapels splayed",
+      "visible topstitching on pockets",
+      "two chest patch pockets"
+    ],
+    "hard_case": false,
+    "notes": "Denim jacket laid flat open on light grey surface, natural diffuse light, visible stitching and pockets.",
+    "search_prompt": "denim jacket open flat lay light grey background visible stitching pockets"
+  },
+  {
+    "id": "top-08",
+    "path": "photos/top-08.jpg",
+    "mask_path": null,
+    "category": "top",
+    "colors": [
+      "olive"
+    ],
+    "pattern": "knit",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "buttoned centre placket",
+      "on a hanger, sleeves straight",
+      "ribbed cuffs and hem"
+    ],
+    "hard_case": false,
+    "notes": "Olive green cardigan buttoned on hanger against cream wall, soft even lighting.",
+    "search_prompt": "olive green cardigan buttoned hanger cream wall soft lighting"
+  },
+  {
+    "id": "top-09",
+    "path": "photos/top-09.jpg",
+    "mask_path": "masks/top-09.png",
+    "category": "top",
+    "colors": [
+      "red"
+    ],
+    "pattern": "graphic",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "faded graphic print, low contrast",
+      "slight pilling under the arms",
+      "stretched neckline"
+    ],
+    "hard_case": false,
+    "notes": "Red graphic tee with faded print, laid flat on white surface, diffuse light, slight pilling visible.",
+    "search_prompt": "red graphic t-shirt faded print flat lay white pilling"
+  },
+  {
+    "id": "top-10",
+    "path": "photos/top-10.jpg",
+    "mask_path": "masks/top-10.png",
+    "category": "top",
+    "colors": [
+      "beige"
+    ],
+    "pattern": "solid",
+    "material": [
+      "linen"
+    ],
+    "hard_attributes": [
+      "sleeves rolled to the elbow",
+      "linen slubs and wrinkles",
+      "laid on light wood, warm tone"
+    ],
+    "hard_case": false,
+    "notes": "Beige linen shirt, sleeves rolled, flat-lay on light wood, soft window light, no colour cast.",
+    "search_prompt": "beige linen shirt sleeves rolled flat lay light wood window light"
+  },
+  {
+    "id": "bottom-01",
+    "path": "photos/bottom-01.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "blue"
+    ],
+    "pattern": "solid",
+    "material": [
+      "denim"
+    ],
+    "hard_attributes": [
+      "front view, legs together",
+      "slight creases at the knees",
+      "belt loops and five pockets"
+    ],
+    "hard_case": false,
+    "notes": "Blue denim jeans laid flat front view on plain white surface, diffuse light, slight creases at knees.",
+    "search_prompt": "blue denim jeans flat lay front view plain white background creases knees"
+  },
+  {
+    "id": "bottom-02",
+    "path": "photos/bottom-02.jpg",
+    "mask_path": "masks/bottom-02.png",
+    "category": "bottom",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "polyester"
+    ],
+    "hard_attributes": [
+      "folded in half at the waist",
+      "matte fabric, no sheen",
+      "wide elastic waistband"
+    ],
+    "hard_case": false,
+    "notes": "Black leggings folded on light grey backdrop, soft even lighting, fabric texture visible.",
+    "search_prompt": "black leggings folded light grey backdrop fabric texture"
+  },
+  {
+    "id": "bottom-03",
+    "path": "photos/bottom-03.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "khaki"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "on a hanger by the waistband",
+      "flat front, no pleats",
+      "slight taper to the ankle"
+    ],
+    "hard_case": false,
+    "notes": "Khaki chinos on hanger against pale wall, diffuse daylight, garment fills frame.",
+    "search_prompt": "khaki chinos hanger pale wall diffuse daylight"
+  },
+  {
+    "id": "bottom-04",
+    "path": "photos/bottom-04.jpg",
+    "mask_path": "masks/bottom-04.png",
+    "category": "bottom",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "polyester"
+    ],
+    "hard_attributes": [
+      "knife pleats from waist to hem",
+      "wide waistband with closure",
+      "laid flat, panel overlaps"
+    ],
+    "hard_case": false,
+    "notes": "Pleated midi skirt laid flat on white surface, soft light, folds and waistband visible.",
+    "search_prompt": "pleated midi skirt flat lay white background visible folds waistband"
+  },
+  {
+    "id": "bottom-05",
+    "path": "photos/bottom-05.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "grey"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "drawstring knotted at centre",
+      "ribbed ankle cuffs",
+      "baggy through the thigh"
+    ],
+    "hard_case": false,
+    "notes": "Grey sweatpants laid flat on light beige background, diffuse softbox, drawstring visible.",
+    "search_prompt": "grey sweatpants flat lay light beige drawstring visible"
+  },
+  {
+    "id": "bottom-06",
+    "path": "photos/bottom-06.jpg",
+    "mask_path": "masks/bottom-06.png",
+    "category": "bottom",
+    "colors": [
+      "tan"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "buttoned cuffs at the hem",
+      "suede nap, soft sheen",
+      "creases pressed along the leg"
+    ],
+    "hard_case": false,
+    "notes": "Tan suede trousers with buttoned cuffs, flat-lay on neutral grey, museum-style documentation lighting.",
+    "search_prompt": "tan suede trousers buttoned cuffs flat lay neutral grey museum lighting"
+  },
+  {
+    "id": "bottom-07",
+    "path": "photos/bottom-07.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "red",
+      "blue",
+      "green"
+    ],
+    "pattern": "plaid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "plaid check print",
+      "elastic waist with drawstring",
+      "full length, both legs flat"
+    ],
+    "hard_case": false,
+    "notes": "Patterned plaid pajama bottoms laid flat on white, even light, full length in frame.",
+    "search_prompt": "plaid pajama bottoms flat lay white full length"
+  },
+  {
+    "id": "bottom-08",
+    "path": "photos/bottom-08.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "linen"
+    ],
+    "hard_attributes": [
+      "flat-lay, legs slightly apart",
+      "linen wrinkles throughout",
+      "rolled or unfinished hem"
+    ],
+    "hard_case": false,
+    "notes": "White linen trousers flat-lay on light wood, soft window light, slight wrinkles.",
+    "search_prompt": "white linen trousers flat lay light wood soft window light wrinkles"
+  },
+  {
+    "id": "bottom-09",
+    "path": "photos/bottom-09.jpg",
+    "mask_path": "masks/bottom-09.png",
+    "category": "bottom",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "denim"
+    ],
+    "hard_attributes": [
+      "on a hanger by the waistband",
+      "short inseam, frayed hem",
+      "five-pocket front"
+    ],
+    "hard_case": false,
+    "notes": "Black denim shorts on hanger against cream wall, diffuse light.",
+    "search_prompt": "black denim shorts hanger cream wall diffuse light"
+  },
+  {
+    "id": "bottom-10",
+    "path": "photos/bottom-10.jpg",
+    "mask_path": null,
+    "category": "bottom",
+    "colors": [
+      "olive"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "cargo pockets on both thighs",
+      "zip and snap closures",
+      "drawstring or button waist"
+    ],
+    "hard_case": false,
+    "notes": "Olive cargo pants laid flat, pockets and zips visible, on grey surface, even soft lighting.",
+    "search_prompt": "olive cargo pants flat lay pockets zips grey surface"
+  },
+  {
+    "id": "dress-01",
+    "path": "photos/dress-01.jpg",
+    "mask_path": null,
+    "category": "dress",
+    "colors": [
+      "white",
+      "pink"
+    ],
+    "pattern": "floral",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "on a hanger, straps up",
+      "full length, skirt flares",
+      "small floral print"
+    ],
+    "hard_case": false,
+    "notes": "Floral summer dress on hanger against white wall, soft daylight, full length visible.",
+    "search_prompt": "floral summer dress hanger white wall soft daylight full length"
+  },
+  {
+    "id": "dress-02",
+    "path": "photos/dress-02.jpg",
+    "mask_path": "masks/dress-02.png",
+    "category": "dress",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "satin"
+    ],
+    "hard_attributes": [
+      "thin spaghetti straps",
+      "bias-cut, drapes asymmetrically",
+      "matte satin sheen"
+    ],
+    "hard_case": false,
+    "notes": "Black slip dress laid flat on pale grey surface, diffuse light, straps and hem visible.",
+    "search_prompt": "black slip dress flat lay pale grey straps hem visible"
+  },
+  {
+    "id": "dress-03",
+    "path": "photos/dress-03.jpg",
+    "mask_path": null,
+    "category": "dress",
+    "colors": [
+      "red"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "midi length to the calf",
+      "on a hanger, gathered waist",
+      "soft drape, no structural seams"
+    ],
+    "hard_case": false,
+    "notes": "Red midi dress on hanger against cream backdrop, soft even lighting, fabric drape visible.",
+    "search_prompt": "red midi dress hanger cream backdrop soft lighting drape"
+  },
+  {
+    "id": "dress-04",
+    "path": "photos/dress-04.jpg",
+    "mask_path": "masks/dress-04.png",
+    "category": "dress",
+    "colors": [
+      "blue"
+    ],
+    "pattern": "solid",
+    "material": [
+      "denim"
+    ],
+    "hard_attributes": [
+      "button-through centre front",
+      "shirt collar and cuffs",
+      "patch pockets at the chest"
+    ],
+    "hard_case": false,
+    "notes": "Denim shirt-dress flat-lay on white, buttons and pockets visible, diffuse softbox.",
+    "search_prompt": "denim shirt dress flat lay white buttons pockets visible"
+  },
+  {
+    "id": "dress-05",
+    "path": "photos/dress-05.jpg",
+    "mask_path": null,
+    "category": "dress",
+    "colors": [
+      "beige"
+    ],
+    "pattern": "knit",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "folded, ribbed turtleneck",
+      "heavy knit texture",
+      "no waist seam, column shape"
+    ],
+    "hard_case": false,
+    "notes": "Knit sweater dress folded on light beige surface, texture and ribbing visible, soft light.",
+    "search_prompt": "knit sweater dress folded light beige ribbing texture"
+  },
+  {
+    "id": "shoe-01",
+    "path": "photos/shoe-01.jpg",
+    "mask_path": "masks/shoe-01.png",
+    "category": "shoe",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "pair, laces untied",
+      "slight scuffs on the toe",
+      "rubber sole contrast"
+    ],
+    "hard_case": false,
+    "notes": "White leather sneakers pair on plain white surface, soft light, slight scuffs visible.",
+    "search_prompt": "white leather sneakers pair plain white surface soft light scuffs"
+  },
+  {
+    "id": "shoe-02",
+    "path": "photos/shoe-02.jpg",
+    "mask_path": null,
+    "category": "shoe",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "elastic side gore panels",
+      "pull tabs at the heel",
+      "pair, facing outward"
+    ],
+    "hard_case": false,
+    "notes": "Black Chelsea boots pair on grey backdrop, diffuse light, elastic side gore visible.",
+    "search_prompt": "black chelsea boots pair grey backdrop elastic side gore"
+  },
+  {
+    "id": "shoe-03",
+    "path": "photos/shoe-03.jpg",
+    "mask_path": null,
+    "category": "shoe",
+    "colors": [
+      "brown"
+    ],
+    "pattern": "solid",
+    "material": [
+      "suede"
+    ],
+    "hard_attributes": [
+      "penny slot across the vamp",
+      "low heel, no laces",
+      "pair, side by side"
+    ],
+    "hard_case": false,
+    "notes": "Brown suede loafers pair on light wood, soft window light.",
+    "search_prompt": "brown suede loafers pair light wood window light"
+  },
+  {
+    "id": "shoe-04",
+    "path": "photos/shoe-04.jpg",
+    "mask_path": null,
+    "category": "shoe",
+    "colors": [
+      "natural",
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "canvas"
+    ],
+    "hard_attributes": [
+      "jute rope sole",
+      "flat, no laces",
+      "pair, toes pointing in"
+    ],
+    "hard_case": false,
+    "notes": "Canvas espadrilles pair on white surface, even lighting.",
+    "search_prompt": "canvas espadrilles pair white surface even lighting"
+  },
+  {
+    "id": "shoe-05",
+    "path": "photos/shoe-05.jpg",
+    "mask_path": "masks/shoe-05.png",
+    "category": "shoe",
+    "colors": [
+      "brown"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "lace-up front",
+      "creases across the vamp",
+      "pair, ankle height"
+    ],
+    "hard_case": false,
+    "notes": "Leather ankle boots with laces pair on grey surface, diffuse light, creasing visible.",
+    "search_prompt": "leather ankle boots laces pair grey surface creasing"
+  },
+  {
+    "id": "acc-01",
+    "path": "photos/acc-01.jpg",
+    "mask_path": null,
+    "category": "accessory",
+    "colors": [
+      "black"
+    ],
+    "pattern": "solid",
+    "material": [
+      "felt"
+    ],
+    "hard_attributes": [
+      "on a hat stand, crown up",
+      "wide brim, dented crown",
+      "felt texture, no shine"
+    ],
+    "hard_case": false,
+    "notes": "Black felt dress hat on a stand against neutral backdrop, soft light, brim and crown visible.",
+    "search_prompt": "black felt dress hat stand neutral backdrop brim crown visible"
+  },
+  {
+    "id": "acc-02",
+    "path": "photos/acc-02.jpg",
+    "mask_path": "masks/acc-02.png",
+    "category": "accessory",
+    "colors": [
+      "natural",
+      "blue"
+    ],
+    "pattern": "graphic",
+    "material": [
+      "canvas"
+    ],
+    "hard_attributes": [
+      "screen-printed logo on the front",
+      "handle casts shadow on the cloth",
+      "bag sags, not full"
+    ],
+    "hard_case": false,
+    "notes": "Canvas tote bag printed logo on dark purple backdrop, handle shadow visible.",
+    "search_prompt": "canvas tote bag printed logo dark purple backdrop handle shadow"
+  },
+  {
+    "id": "acc-03",
+    "path": "photos/acc-03.jpg",
+    "mask_path": null,
+    "category": "accessory",
+    "colors": [
+      "red",
+      "blue"
+    ],
+    "pattern": "plaid",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "laid open in a V shape",
+      "buckle at one end",
+      "wool tartan weave"
+    ],
+    "hard_case": false,
+    "notes": "Red and blue plaid wool belt laid open in a V on grey surface, soft light.",
+    "search_prompt": "red blue plaid wool belt open V shape grey surface"
+  },
+  {
+    "id": "acc-04",
+    "path": "photos/acc-04.jpg",
+    "mask_path": null,
+    "category": "accessory",
+    "colors": [
+      "black",
+      "red"
+    ],
+    "pattern": "solid",
+    "material": [
+      "acetate"
+    ],
+    "hard_attributes": [
+      "on red fabric, not a face",
+      "cast shadow under the bridge",
+      "folded arms, lenses up"
+    ],
+    "hard_case": false,
+    "notes": "Black acetate sunglasses on red fabric, cast shadow visible, diffuse light.",
+    "search_prompt": "black acetate sunglasses red fabric cast shadow diffuse light"
+  },
+  {
+    "id": "acc-05",
+    "path": "photos/acc-05.jpg",
+    "mask_path": "masks/acc-05.png",
+    "category": "accessory",
+    "colors": [
+      "brown"
+    ],
+    "pattern": "solid",
+    "material": [
+      "leather"
+    ],
+    "hard_attributes": [
+      "flap open, interior visible",
+      "long adjustable strap coiled",
+      "on white, soft shadow"
+    ],
+    "hard_case": false,
+    "notes": "Leather crossbody bag flap open on white surface, soft even lighting.",
+    "search_prompt": "leather crossbody bag flap open white surface soft lighting"
+  },
+  {
+    "id": "hard-01",
+    "path": "photos/hard-01.jpg",
+    "mask_path": "masks/hard-01.png",
+    "category": "top",
+    "colors": [
+      "black"
+    ],
+    "pattern": "knit",
+    "material": [
+      "wool"
+    ],
+    "hard_attributes": [
+      "black garment on black chair, no edge",
+      "low-light phone photo with noise",
+      "blends by colour, not shape"
+    ],
+    "hard_case": true,
+    "notes": "Black knit sweater on a black chair, shot on a phone at night, low light, garment blends into background. (breaks colour-based segmentation)",
+    "search_prompt": "black knit sweater on black chair low light night phone photo"
+  },
+  {
+    "id": "hard-02",
+    "path": "photos/hard-02.jpg",
+    "mask_path": "masks/hard-02.png",
+    "category": "dress",
+    "colors": [
+      "pink",
+      "green"
+    ],
+    "pattern": "floral",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "floral dress on floral bedding, colours match",
+      "background subtraction fails",
+      "phone indoor light, soft"
+    ],
+    "hard_case": true,
+    "notes": "Patterned dress on a busy floral bedspread, garment and background share colours, phone photo, indoor light. (breaks background subtraction)",
+    "search_prompt": "patterned floral dress on busy floral bedspread phone indoor light"
+  },
+  {
+    "id": "hard-03",
+    "path": "photos/hard-03.jpg",
+    "mask_path": "masks/hard-03.png",
+    "category": "top",
+    "colors": [
+      "white"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "wire hanger, thin outline",
+      "strong window backlight, silhouette only",
+      "cluttered bedroom behind"
+    ],
+    "hard_case": true,
+    "notes": "White shirt on a wire hanger against a cluttered bedroom, strong window backlight, high contrast. (breaks silhouette/backlight handling)",
+    "search_prompt": "white shirt wire hanger cluttered bedroom window backlight high contrast"
+  },
+  {
+    "id": "hard-04",
+    "path": "photos/hard-04.jpg",
+    "mask_path": "masks/hard-04.png",
+    "category": "outerwear",
+    "colors": [
+      "blue"
+    ],
+    "pattern": "solid",
+    "material": [
+      "denim"
+    ],
+    "hard_attributes": [
+      "one sleeve crosses the torso",
+      "patterned rug behind, low contrast",
+      "phone photo, uneven light"
+    ],
+    "hard_case": true,
+    "notes": "Denim jacket with a sleeve crossing over the body on a patterned rug, phone photo, uneven lighting. (breaks occlusion/self-overlap)",
+    "search_prompt": "denim jacket sleeve crossing body patterned rug phone uneven light"
+  },
+  {
+    "id": "hard-05",
+    "path": "photos/hard-05.jpg",
+    "mask_path": "masks/hard-05.png",
+    "category": "bottom",
+    "colors": [
+      "navy"
+    ],
+    "pattern": "solid",
+    "material": [
+      "cotton"
+    ],
+    "hard_attributes": [
+      "draped over dark sofa, low contrast",
+      "strap crosses the garment",
+      "phone flash blowout on one side"
+    ],
+    "hard_case": true,
+    "notes": "Navy trousers draped over a dark sofa with a strap crossing the garment, cluttered living room, phone flash. (breaks strap/occlusion + flash)",
+    "search_prompt": "navy trousers draped dark sofa strap crossing cluttered living room phone flash"
+  }
+]

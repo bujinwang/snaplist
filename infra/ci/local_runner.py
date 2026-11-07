@@ -11,7 +11,7 @@ A *local equivalence* runner. It proves three things and nothing more:
    make ``contract_gate`` fail at the expected anchor, in a detached-HEAD
    worktree. Each RED run short-circuits at ``contract_gate`` (step 2), so the
    later steps do NOT execute and no dependency install is needed.
-3. The WIRING EXISTS: ci.yml references all ten steps in the same order, and
+3. The WIRING EXISTS: ci.yml references all steps in STEP_ORDER, in the same order, and
    ``contract_gate`` precedes ``install``.
 
 It does NOT prove GitHub Actions executed. GH-side checkout/setup-* actions,

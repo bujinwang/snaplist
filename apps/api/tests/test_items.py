@@ -227,17 +227,19 @@ def test_attributes_edit_is_recorded_in_the_ledger(
     assert rows == 1, "an edit must leave one attributes_edited row, not zero and not two"
 
 
-def test_provider_backed_routes_still_answer_501(
+def test_provider_backed_routes_refuse_without_faking_success(
     client: TestClient, headers_a: dict[str, str]
 ) -> None:
     ids = create_item(client, headers_a)
-    for path in (
-        f"/v1/items/{ids['item_id']}/rerender",
-        f"/v1/items/{ids['item_id']}/on-model",
-    ):
-        response = client.post(path, headers=headers_a)
-        assert response.status_code == 501, (path, response.text)
-        assert response.json()["error"]["code"] == "not_implemented"
+    # rerender is a pure provider-block today: 501, no fake 202.
+    rerender = client.post(f"/v1/items/{ids['item_id']}/rerender", headers=headers_a)
+    assert rerender.status_code == 501, (rerender.status_code, rerender.text)
+    assert rerender.json()["error"]["code"] == "not_implemented"
+    # on-model is Pro-only: a Free seller is gated with 402 (distinguishable from the item-quota
+    # 402 by error.details.reason == "plan_required"), not silently 501'd into a provider error.
+    on_model = client.post(f"/v1/items/{ids['item_id']}/on-model", headers=headers_a)
+    assert on_model.status_code == 402, (on_model.status_code, on_model.text)
+    assert on_model.json()["error"]["details"]["reason"] == "plan_required"
 
 
 def test_binary_upload_is_refused_as_501_not_as_a_fake_202(
