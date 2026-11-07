@@ -57,7 +57,7 @@ pythonpath = ["."]
 # R7 (docs/QA.md §10): the E0-T5 telemetry suite is now collected by the default `pytest`,
 # so a plain `make test` / `python -m pytest -q` exercises it. It was delivered under a
 # whitelist that forbade editing this file; the follow-up ticket wires it in.
-testpaths = ["apps/api/tests", "packages/vision/tests", "evals/tests", "evals/telemetry/tests"]
+testpaths = ["apps/api/tests", "packages/vision/tests", "evals/tests", "evals/telemetry/tests", "infra/ci/gates/tests"]
 addopts = "-q"
 
 [tool.ruff]

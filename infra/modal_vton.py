@@ -25,6 +25,7 @@ BLOCKED the same way FASHN is (packages/vision/BLOCKED.md).
 from __future__ import annotations
 
 import base64
+
 import modal
 
 APP_NAME = "snaplist-catvton"

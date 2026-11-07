@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E0-T3 CI step definitions — the SINGLE source of truth for this pipeline.
+# E0-T3 + E0-T4 CI step definitions — the SINGLE source of truth for this pipeline.
 #
 # Both .github/workflows/ci.yml and infra/ci/local_runner.py call
 # `bash infra/ci/steps.sh <name>`; command text lives here only, never in the
@@ -17,6 +17,7 @@
 #   test_py          make test 2/2  .venv/bin/python -m pytest
 #   evals            make evals      .venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive
 #   evals_report     make evals-report  .venv/bin/python -m evals.telemetry --since 7d
+#   gates_report    (no target)    strict rc from both E0-T4 tools; rc=2 -> ::warning:: only
 #   dirty_check      (no target)    git status --porcelain --untracked-files=all
 #
 # WHY NO `make`: GNU Make 3.81 (macOS stock) collapses ANY non-zero recipe exit
@@ -42,6 +43,7 @@ readonly STEP_ORDER=(
   test_py
   evals
   evals_report
+  gates_report
   dirty_check
 )
 
@@ -107,6 +109,42 @@ step_evals() {
 step_evals_report() {
   _emit evals_report '.venv/bin/python -m evals.telemetry --since 7d'
   .venv/bin/python -m evals.telemetry --since 7d
+}
+
+# E0-T4 wiring. NON-BLOCKING REPORT step: its rc means "both reports were rendered",
+# NEVER "both gates passed". Both tools run in their strictest form; only rc=2 together
+# with the tool's own NOT-A-PASS marker is downgraded to a visible annotation.
+# rc=1 (regression / over budget) and rc>=3 (unexpected) still fail the job.
+# Upgrade to a blocking gate: docs/QA.md §13.6.
+step_gates_report() {
+  local rg_out cost_out rg_rc=0 cost_rc=0 bad=0
+  _emit gates_report '.venv/bin/python infra/ci/gates/regression_gate.py ; .venv/bin/python infra/ci/gates/cost_dashboard.py --fail-on-unmeasured'
+  rg_out="$(mktemp "${TMPDIR:-/tmp}/snaplist-e0t4-rg.XXXXXX")" || return 1
+  cost_out="$(mktemp "${TMPDIR:-/tmp}/snaplist-e0t4-cost.XXXXXX")" || { rm -f "$rg_out"; return 1; }
+
+  # No pipe, no swallow construct: capture the REAL rc of each tool. Temp files live
+  # outside the repo so dirty_check stays clean (same pattern as step_evals).
+  .venv/bin/python infra/ci/gates/regression_gate.py >"$rg_out" 2>&1 || rg_rc=$?
+  .venv/bin/python infra/ci/gates/cost_dashboard.py --fail-on-unmeasured >"$cost_out" 2>&1 || cost_rc=$?
+  cat "$rg_out"
+  cat "$cost_out"
+
+  # Fail-closed triage: exactly ONE code is downgradable, and only with the tool's own
+  # marker. This is NOT "accept any non-1 code".
+  if [ "$rg_rc" -eq 2 ] && grep -q 'GATE INCONCLUSIVE' "$rg_out"; then
+    printf '%s\n' '::warning:: gates_report: regression_gate.py rc=2 — GATE INCONCLUSIVE, this is NOT a pass. CI green means "report rendered", not "gate passed". See docs/QA.md §13.6.'
+  elif [ "$rg_rc" -ne 0 ]; then
+    printf 'gates_report: regression_gate.py rc=%s is not downgradable — failing the job\n' "$rg_rc" >&2
+    bad=1
+  fi
+  if [ "$cost_rc" -eq 2 ] && grep -q 'COST BUDGET NOT EVALUATED' "$cost_out"; then
+    printf '%s\n' '::warning:: gates_report: cost_dashboard.py --fail-on-unmeasured rc=2 — COST BUDGET NOT EVALUATED, this is NOT a pass. The <= $0.03/item verdict was never computed. See docs/QA.md §13.6.'
+  elif [ "$cost_rc" -ne 0 ]; then
+    printf 'gates_report: cost_dashboard.py rc=%s is not downgradable — failing the job\n' "$cost_rc" >&2
+    bad=1
+  fi
+  rm -f "$rg_out" "$cost_out"
+  return "$bad"
 }
 
 step_dirty_check() {
@@ -175,7 +213,7 @@ main() {
   fi
   case "$action" in
     all) run_all ;;
-    toolchain_probe|contract_gate|install|lint_py|lint_ts|test_js|test_py|evals|evals_report|dirty_check)
+    toolchain_probe|contract_gate|install|lint_py|lint_ts|test_js|test_py|evals|evals_report|gates_report|dirty_check)
       "step_${action}"
       ;;
     *)

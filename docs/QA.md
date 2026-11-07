@@ -1425,17 +1425,59 @@ not passing, not failing, simply never computed.**
 
 Three named residuals in this section's scope:
 
-* `pyproject.toml`'s `testpaths` does not list `infra/ci/gates/tests`, so a plain `pytest` does
+* **CLOSED.** `pyproject.toml`'s `testpaths` does not list `infra/ci/gates/tests`, so a plain `pytest` does
   **not** collect the 65 cases. They are run with the explicit `unittest discover` command in
-  §13.2. Editing `pyproject.toml` is outside E0-T4's allowed paths.
-* `.github/workflows/ci.yml` (also outside this ticket's paths) does not call either tool, so
+  §13.2. Editing `pyproject.toml` is outside E0-T4's allowed paths. — *Status:* `pyproject.toml`
+  now lists `infra/ci/gates/tests`; a plain `pytest` collects all 65 cases (793 = 728 + 65), and
+  the legacy `unittest discover` command still works.
+* **REPLACED.** `.github/workflows/ci.yml` (also outside this ticket's paths) does not call either tool, so
   neither runs on a PR yet. When it is wired: `regression_gate.py`'s `2` must be treated as
   *not a pass* — a `|| true`, or accepting any non-1 code, would restore exactly the false green
-  this ticket removes. `--fail-on-unmeasured` is the flag for the blocking form.
-* **`cost_dashboard.py` exits 0 in report mode even when the verdict is `FAIL`** — a report is not
+  this ticket removes. `--fail-on-unmeasured` is the flag for the blocking form. — *Status:*
+  replaced by the new named residual in §13.6: `ci.yml` step `gates_report` now runs both tools
+  on every PR as a non-blocking report step, with the narrow rc whitelist documented there.
+* **CLOSED BY WIRING.** **`cost_dashboard.py` exits 0 in report mode even when the verdict is `FAIL`** — a report is not
   a gate — so any CI wiring must pass `--fail-on-unmeasured`, or a breached `$0.03/item` budget
   prints `FAIL` and returns green: the same false green as the regression gate's `2`, one flag
-  away.
+  away. — *Status:* `steps.sh` always invokes `cost_dashboard.py --fail-on-unmeasured`, so the
+  report-mode 0-on-`FAIL` path cannot make CI green by itself.
+
+### 13.6 E0-T4 wiring closure
+
+`gates_report` is a **non-blocking report step**, deliberately not a gate. Both tools run in
+their strictest form on every PR; only `rc=2` together with the tool's own NOT-A-PASS marker is
+downgraded to a `::warning::`. A green `gates_report` never means a gate passed.
+
+**Named residual — E0-T4 wiring.** `ci.yml` step `gates_report` runs both E0-T4 tools on every PR. In this checkout `regression_gate.py` exits `2` (deliberately empty baseline) and `cost_dashboard.py --fail-on-unmeasured` exits `2` (`evals/reports/cost.md` does not exist). The step preserves both real exit codes, prints both full reports, and downgrades **exactly** those two `2`s to `::warning::` annotations that literally say "this is NOT a pass". **CI green therefore means "both reports were rendered", not "either gate passed."** It is not `|| true`, not `continue-on-error`, and not "accept any non-1 code": `1` (regression / budget breach), `>=3` (unexpected) and `2` without the tool's own NOT-A-PASS marker still fail the job. This residual is **deliberately temporary** and closes under the upgrade conditions below. No number in this section was estimated and no cell was filled by hand.
+
+Upgrade to a blocking gate — **all three must hold simultaneously**, each mechanically decidable:
+
+* **U1 — hand masks land.** `evals/golden/manifest.json` contains hand-drawn masks
+  (`mask_source` starts with `hand`, following the `evals/run.py::_is_hand_made_source` /
+  `evals/tools/seg_iou.py::_is_hand_made` convention) and the count meets E0-T1's 20.
+  **`evals/golden/**` is a copyright-frozen zone; this ticket does not touch it.** U1 can only be
+  triggered by a future ticket that owns permission over that directory — otherwise this
+  residual becomes a **permanent** residual by construction.
+* **U2 — the baseline is filled on purpose.** `infra/ci/gates/baseline.json` is populated via
+  `--update-baseline` (if the references are still machine-sourced, that requires an explicit
+  `--allow-machine-references` plus a recorded audit note), and `metrics` is non-empty.
+* **U3 — the cost report is billed.** `evals/reports/cost.md` is produced by a **billing
+  harness**, and both tools can reach `0` or `1` — i.e. `--fail-on-unmeasured` no longer
+  returns `2`.
+
+When U1 ∧ U2 ∧ U3 hold, the exact lines to change:
+
+1. In `infra/ci/steps.sh`, delete the two triage `if`/`elif` blocks inside
+   `step_gates_report()`; replace `return "$bad"` with, in sequence, `return "$rg_rc"` /
+   `return "$cost_rc"` / `return 0` (fail on the first non-zero, otherwise 0).
+2. **Rename** the step `gates_report` → `regression_cost_gates` in exactly six places:
+   `steps.sh`'s function name, its `_emit` argument, the `STEP_ORDER` item, the `main()` case
+   arm, `ci.yml`'s `- name:` and its `run:` line. Keeping "report" in the name would make the
+   name lie about a now-blocking gate.
+3. Keep `--fail-on-unmeasured`: it is the blocking form, and dropping it would reintroduce the
+   report-mode 0-on-`FAIL` false green.
+4. Mark this residual **CLOSED** here, and sync `infra/ci/README.md`'s step map and
+   `infra/ci/gates/README.md`.
 
 ## 14. Handoff state
 

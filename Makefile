@@ -31,7 +31,7 @@ help:
 	@echo "  make evals-strict  E0-T5 telemetry release gate: --gate, never allows inconclusive"
 	@echo "  make evals-report  telemetry report only, always exit 0 (no gate)"
 	@echo "  make evals-vision  the E0-T2 vision harness (evals.run --suite vision)"
-	@echo "  make golden     validate the E0-T1 golden set; exit 0 only when it is complete"
+	@echo "  make golden     validate golden-set file/count structure; exit 0 only when those checks pass (mask provenance NOT verified)"
 	@echo "  make golden-provisional  structure check of the web-sourced stand-in set"
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
 	@echo "  make seg-iou    segment the provisional set and report IoU (evals/reports/seglab.md)"

@@ -156,6 +156,15 @@ gate. Any CI wiring must pass `--fail-on-unmeasured`, or a breached `$0.03/item`
 `FAIL` and returns green. The same grade of claim as the regression gate's `2`: treat it as
 *not a pass*.
 
+E0-T4 wiring: `infra/ci/steps.sh`'s `gates_report` step invokes `cost_dashboard.py`
+**always with `--fail-on-unmeasured`**, so the report-mode 0-on-`FAIL` path cannot make CI
+green by itself. In this checkout that step is a **non-blocking report step**, not a gate: both
+E0-T4 tools run in their strictest form, their real rcs are preserved and both full reports are
+printed, and only `rc=2` together with the tool's own `GATE INCONCLUSIVE` /
+`COST BUDGET NOT EVALUATED` marker is downgraded to a `::warning::` that literally says
+"this is NOT a pass". `rc=1`, `rc>=3` and `rc=2` without that marker still fail the job. Green
+means "both reports were rendered", not "either gate passed" — see `docs/QA.md §13.6`.
+
 ## Honest status
 
 * **`evals/reports/cost.md` does not exist.** No stage has ever run against a paid provider
@@ -166,14 +175,25 @@ gate. Any CI wiring must pass `--fail-on-unmeasured`, or a breached `$0.03/item`
   passing state to show, and inventing one is out of scope for this ticket.
 * **A measured metric can still be `UNMEASURED` next run** — the segmentation weights live
   outside the repo (`make fetch-models`, 176 MB). The gate reports that as `2`, never as "held".
-* **These tests are not collected by `pytest`.** `pyproject.toml`'s `testpaths` lists
-  `apps/api/tests`, `packages/vision/tests`, `evals/tests`, `evals/telemetry/tests`; adding
-  `infra/ci/gates/tests` would be a config change outside this ticket's allowed paths. They are
-  run with the explicit `unittest discover` command above. Named residual — a follow-up that
-  owns `pyproject.toml` should wire them in, and `.github/workflows/ci.yml` (also outside this
-  ticket's paths) should call both tools, with `regression_gate.py`'s `2` treated as *not a
-  pass* rather than as green.
+* **These tests are collected by `pytest` now — CLOSED.** `pyproject.toml`'s `testpaths` now
+  lists `infra/ci/gates/tests` alongside `apps/api/tests`, `packages/vision/tests`,
+  `evals/tests` and `evals/telemetry/tests`, so a plain `pytest` collects all 65 cases
+  (793 = 728 + 65). The explicit `unittest discover -s infra/ci/gates/tests -t
+  infra/ci/gates/tests` command above still works as a legacy runner. `.github/workflows/ci.yml`
+  now calls both tools from the `gates_report` step, with `regression_gate.py`'s `2` treated as
+  *not a pass* rather than as green; see `docs/QA.md §13.6` for the new named residual.
 * **The gate imports the harness in-process**, so it inherits whatever `measurements()` does:
   with the segmentation weights present that means one local ONNX inference pass over the
   masked set. The gate itself adds no I/O — no subprocess, no network, no provider call, and it
   writes nothing under `evals/`.
+
+## Named residual (E0-T4 wiring)
+
+Both tools are wired into `.github/workflows/ci.yml` via the `gates_report` step, but as a
+**non-blocking report step**, not a gate: `regression_gate.py` exits `2` (empty baseline) and
+`cost_dashboard.py --fail-on-unmeasured` exits `2` (`evals/reports/cost.md` absent), and only
+those two `2`s are downgraded to `::warning::` annotations that literally say
+"this is NOT a pass". CI green means "both reports were rendered", not "either gate passed".
+The residual is deliberately temporary; the three mechanical upgrade conditions (U1/U2/U3),
+the exact lines to change, and the step rename to `regression_cost_gates` all live in
+**`docs/QA.md §13.6`**.

@@ -88,12 +88,24 @@ parity test reads).
 | 7 | `test_py` | `.venv/bin/python -m pytest` | `make test` (2/2) | blocking; includes parity + telemetry suites |
 | 8 | `evals` | `.venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive` | `make evals` | blocking; **real rc preserved**, plus a non-blocking `::warning::` when `GATE NOT EVALUATED` is printed |
 | 9 | `evals_report` | `.venv/bin/python -m evals.telemetry --since 7d` | `make evals-report` | report-only; the command itself exits 0 |
-| 10 | `dirty_check` | `git status --porcelain --untracked-files=all` | — | blocking; exact filename whitelist — **collapsed directory-level lines are no longer accepted**; no tracked-file pollution, no unexpected artefacts |
+| 10 | `gates_report` | `.venv/bin/python infra/ci/gates/regression_gate.py` ; `.venv/bin/python infra/ci/gates/cost_dashboard.py --fail-on-unmeasured` | — | NON-BLOCKING REPORT: real rc preserved; rc=2 -> ::warning::; rc=1/>=3 fail |
+| 11 | `dirty_check` | `git status --porcelain --untracked-files=all` | — | blocking; exact filename whitelist — **collapsed directory-level lines are no longer accepted**; no tracked-file pollution, no unexpected artefacts |
 
 `evals` captures the gate's output to a temp file **outside the repo**, `cat`s
 it for the log, then returns the captured original rc — no pipe anywhere, so
 `pipefail` cannot be asked to rescue a swallowed status. The `::warning::` is
 emitted by `grep` on that file and never changes the exit code.
+
+`gates_report` is the second non-blocking report step, and its rc whitelist is
+**narrow — not "accept any non-1 code"**. Both E0-T4 tools run in their
+strictest form, their real rcs are captured (no pipe, no swallow construct,
+temp files outside the repo), and both full reports are `cat`ed into the log.
+**Only** `rc=2` together with the tool's own `GATE INCONCLUSIVE` /
+`COST BUDGET NOT EVALUATED` marker becomes a visible `::warning::` that
+literally says `this is NOT a pass`. `rc=1` (regression / budget breach),
+`rc>=3` (unexpected) and `rc=2` without that marker still fail the job. A green
+`gates_report` means "both reports were rendered", never "either gate passed" —
+see `docs/QA.md §13.6` for the named residual and the upgrade conditions.
 
 `dirty_check`, `--untracked-files=all` and `.kilo/`: plain
 `git status --porcelain` **collapses** untracked directories into a single line
@@ -584,7 +596,7 @@ These are all deliberately **outside** the blocking chain:
 
 | command | why it is not in CI |
 |---|---|
-| `make golden` | exits 2 by design until the 40 real garment photos + manifest + 20 hand masks land (E0-T1). An empty set must not look like a passing one. |
+| `make golden` | `make golden` 当前 rc=0 但只验证文件/计数，不验证来源 — currently rc=0, but it validates only file presence / counts, NOT mask provenance (`mask_source`). The 20 mask files present are 18 `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana`, 0 hand; E0-T1's hand-drawn requirement stays UNVERIFIED and rc=0 is NOT a golden-set DoD verdict. |
 | `make fetch-models` | downloads 176 MB over the network on every fresh runner. Worse: with torch present, `runtime.probe()` used to select BiRefNet (unimplemented), so the default vision path started refusing on a machine that had not changed — the exact "installing a dependency changes default behaviour" incident recorded in `docs/DEPS.md`. CI must never download model weights. |
 | `make evals-strict` | the release gate omits `--allow-inconclusive`, so an unmeasured/empty database exits **3**. On today's empty DB it is guaranteed non-zero. A red-by-default gate is disabled within a week; `evals` (dev/CI gate) is the correct blocking form. |
 | `python -m evals.run --suite vision --fail-under-threshold` | E0-T2's acceptance command is **designed to exit 1 today** ("exit 1 today, by design", PLAN.md:220). The E0-T2 vision harness is deliberately not wired into CI; the ticket name's "evals" here refers to the R4-wired `evals.telemetry` dev/CI gate. |
@@ -592,5 +604,7 @@ These are all deliberately **outside** the blocking chain:
 | `make fetch-sdxl` | 6.9 GB of fp16 weights for `mode=SDXL_INPAINT`, a mode known not to be shippable; must stay an explicit act. |
 | `make test` / `make lint` / `make evals` as make targets | GNU Make 3.81 collapses any non-zero recipe exit to 2. CI calls the underlying commands directly to preserve real exit codes (and to keep `pnpm -w test` before pytest). |
 
-`evals_report` is the single non-blocking step, and only because its command
-itself always exits 0 — no `continue-on-error`, no `|| true`, no `if: always()`.
+`evals_report` 与 `gates_report` 都是非阻断报告步骤，前者命令恒 0，后者靠窄 rc 白名单 + 注解；二者都不宣称 gate 通过。
+Neither one declares a gate passed: `evals_report`'s command itself always exits 0, while
+`gates_report` uses the narrow rc whitelist + `::warning::` annotations described above —
+no `continue-on-error`, no `|| true`, no `if: always()`.

@@ -83,5 +83,10 @@ jobs:
         run: bash infra/ci/steps.sh evals
       - name: evals_report
         run: bash infra/ci/steps.sh evals_report
+      # E0-T4: both tools are REPORTED, not gated, in this checkout. steps.sh keeps their
+      # real exit codes, prints both reports, and turns only the documented "not evaluated"
+      # code into a visible warning. A definite regression or budget breach still fails.
+      - name: gates_report
+        run: bash infra/ci/steps.sh gates_report
       - name: dirty_check
         run: bash infra/ci/steps.sh dirty_check
