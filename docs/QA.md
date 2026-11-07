@@ -1143,21 +1143,299 @@ code. This is a make limitation, recorded here and in the Makefile, not a gate d
 `docs/QA.md`'s own md5 is reported in the handoff to team-lead (a document cannot freeze its
 own hash). 17 Python files + this document = the 18 whitelisted files.
 
-## 13. E0-T4 cost dashboard — reserved section
+## 13. E0-T4 — regression gate and cost dashboard
 
-*Reserved. E0-T4 owns this partition. Paste the cost-per-item dashboard transcript, its sample
-count, the `UNMEASURED` rows and the E1+E2+E3 `<= $0.03` threshold verdict here. E0-T5 does
-not fill it, does not borrow its numbers, and does not pre-judge its gate.*
+**Status 2026-11-06: both tools exist and were exercised; every cost cell is `UNMEASURED` and
+the `<= $0.03/item` verdict is UNREACHABLE, not passing.** No number in this section was
+estimated, and no cell was filled by hand.
 
-**Status 2026-11-06: UNMEASURED — not filled, and deliberately not fabricated.**
+PLAN E0-T4 owns `infra/ci/gates/**` plus this document. It asked for two artefacts: a regression
+gate over the metrics the eval harness actually measures, and a cost dashboard whose numbers are
+**read out of `evals/reports/cost.md`** rather than typed into a table. Both exist, with 65
+stdlib tests. What could not be delivered is a *number*: `evals/reports/cost.md` does not exist,
+no stage has ever run against a paid provider, and there are no production `usage_events`. That
+is the same blocker `packages/vision/BLOCKED.md` records for E4. E0-T5 did not fill this
+section, does not borrow its numbers, and does not pre-judge its gate.
 
-The dashboard reads a measured `evals/reports/cost.md`, which **does not exist**. There are no
-production `usage_events`, and no pipeline has ever run against a paid provider: E4 on-model is a
-stub and the FASHN/Modal keys are absent (`packages/vision/BLOCKED.md`). The `<= $0.03/item`
-verdict is therefore **unreachable**, not "passing". Unblock by (1) running E1/E2/E3 over the
-E0-T1 golden set with real providers, (2) writing measured `$/item` per stage to
-`evals/reports/cost.md`, (3) pasting the transcript + sample count here. Until then every cost
-cell stays `UNMEASURED`.
+### 13.1 What is on disk
+
+| file | what it does | exits |
+|---|---|---|
+| `infra/ci/gates/regression_gate.py` | compares `evals.run.measurements()` (imported in-process: no subprocess, no network, no provider call) against `baseline.json` | `0` compared and held · `1` regression · `2` inconclusive |
+| `infra/ci/gates/cost_dashboard.py` | parses per-stage `$/item` + sample counts out of `evals/reports/cost.md`; renders `UNMEASURED` when there is nothing to parse | `0` rendered · `1` over budget (fully measured + `--fail-on-unmeasured`) · `2` not evaluable |
+| `infra/ci/gates/baseline.json` | **deliberately empty** (`"metrics": {}`) — see §13.5 | — |
+| `infra/ci/gates/README.md` | baseline schema + `cost.md` format contract | — |
+| `infra/ci/gates/tests/` | 65 `unittest` cases, standard library only | — |
+
+Four refusals are the substance of the ticket, not decoration:
+
+* **The gate never exits 0 having compared nothing.** `compared == 0` is hard-wired to `2`, and
+  `2` prints `GATE INCONCLUSIVE … this is NOT a pass`.
+* **A hand-edited baseline cannot gate fewer metrics than it describes.** `sets` and
+  `mask_sources` must enumerate exactly the same metric names as `metrics`; deleting a row from
+  `metrics` alone is refused (`2`) instead of comparing one metric fewer and printing PASS. That
+  was QA finding 1 on this ticket, and it is fixed fail-closed with no schema change.
+* **A baseline is written on purpose or not at all.** `--update-baseline` stamps `git_sha`, the
+  timestamp, and the set + mask sources each number came from; it refuses a non-finite value,
+  refuses a metric whose own provenance says its references are machine-made (unless
+  `--allow-machine-references`), and refuses to drop a metric the previous baseline had (unless
+  `--allow-dropped-metrics`).
+* **The dashboard cannot be told a number.** There is no default, no `--assume`, no fallback
+  constant: every cell is either parsed out of the report or the literal `UNMEASURED` next to the
+  reason it is not a number.
+
+### 13.2 The exact commands, run on this checkout (`git_sha=1beee75`)
+
+```
+$ .venv/bin/python infra/ci/gates/regression_gate.py
+SnapList regression gate — E0-T4
+baseline: infra/ci/gates/baseline.json
+          no baselined metric — nothing to compare
+
+metric                                   baseline    current     delta     tol  verdict
+---------------------------------------------------------------------------------------
+prettify SSIM (inside mask)                     —     0.9936         —       —  NOT IN BASELINE
+segmentation mean IoU                           —     0.9299         —       —  NOT IN BASELINE
+---------------------------------------------------------------------------------------
+  NOT IN BASELINE · prettify SSIM (inside mask): measured in this run, but the baseline has no row to compare against
+  NOT IN BASELINE · segmentation mean IoU: measured in this run, but the baseline has no row to compare against
+  harness · prettify hallucinated-text rubric: UNMEASURED — the manual 1-5 rubric is E2-T3; no human has scored anything yet, and a machine cannot stand in for it
+
+GATE INCONCLUSIVE — exit 2: this is NOT a pass.
+  reason: infra/ci/gates/baseline.json is an explicitly empty baseline ("metrics": {}) — nothing to compare
+  the only two metrics measurable in this checkout (segmentation IoU on `ai:`/`algorithmic:` references, prettify SSIM on synthetic labels) are pipeline checks, not DoD numbers — see infra/ci/gates/README.md.
+  create a baseline on purpose: python infra/ci/gates/regression_gate.py --update-baseline
+rc=2
+```
+
+```
+$ .venv/bin/python infra/ci/gates/cost_dashboard.py
+SnapList cost dashboard — E0-T4
+report: evals/reports/cost.md (ABSENT)
+target: <= $0.03/item for E1+E2+E3
+
+| stage | what it covers | $/item | samples | status |
+|---|---|---|---|---|
+| E1 | segmentation | UNMEASURED | — | UNMEASURED |
+| E2 | rectify + prettify | UNMEASURED | — | UNMEASURED |
+| E3 | attributes + dedupe | UNMEASURED | — | UNMEASURED |
+| E4 | on-model render (per render, not per item) | UNMEASURED | — | UNMEASURED |
+| **E1+E2+E3** | **cost per item** | UNMEASURED | — | UNMEASURED |
+
+Why the UNMEASURED cells are UNMEASURED:
+  E1, E2, E3, E4: evals/reports/cost.md does not exist — no stage has ever run against a paid provider (E4 on-model is a stub; FASHN_API_KEY and MODAL_TOKEN are absent, packages/vision/BLOCKED.md) and there are no production usage_events, so no $/item has ever been billed
+
+E1+E2+E3 total: UNMEASURED
+  E1+E2+E3 total is UNMEASURED — evals/reports/cost.md does not exist — no stage has ever run against a paid provider (E4 on-model is a stub; FASHN_API_KEY and MODAL_TOKEN are absent, packages/vision/BLOCKED.md) and there are no production usage_events, so no $/item has ever been billed. E1/E2/E3 run locally on onnxruntime + classical CV: that produces wall-clock seconds, not a billed $/item
+verdict: UNMEASURED — the <= $0.03/item verdict is UNREACHABLE, not passing: no measured $/item exists for any stage
+
+E4 is listed for context only: it is priced per render, is BLOCKED in this build (packages/vision/BLOCKED.md), and is not part of the per-item total.
+
+Parse notes:
+  - the file does not exist, so nothing could be parsed
+rc=0
+```
+
+```
+$ .venv/bin/python infra/ci/gates/cost_dashboard.py --fail-on-unmeasured
+… (same table) …
+COST BUDGET NOT EVALUATED — exit 2. This is NOT a pass: the <= $0.03/item verdict was never computed.
+rc=2
+```
+
+```
+$ .venv/bin/python -m unittest discover -s infra/ci/gates/tests -t infra/ci/gates/tests
+.................................................................
+----------------------------------------------------------------------
+Ran 65 tests in 1.273s
+
+OK
+rc=0
+```
+
+**All three gate codes are reachable, measured on the real harness** (temp baseline under
+`$TMPDIR`, real measurements, nothing written into the repo):
+
+```
+$ python infra/ci/gates/regression_gate.py --baseline $T/baseline.json --update-baseline
+refusing to write a baseline: these metrics were measured against references that are not hand-made: segmentation mean IoU
+BASELINE NOT WRITTEN — nothing was changed.
+rc=2
+
+$ python infra/ci/gates/regression_gate.py --baseline $T/baseline.json --update-baseline --allow-machine-references
+wrote baseline: $T/baseline.json
+  generated_at=2026-11-06T23:32:21+00:00 git_sha=1beee75e5df0 metrics=2
+  prettify SSIM (inside mask): 0.9936 (n=9, fixtures/prettify, tolerance 0.0100) [new metric]
+  segmentation mean IoU: 0.9299 (n=20, golden, tolerance 0.0100) [new metric]  [machine references acknowledged]
+  WARNING: this baseline gates a pipeline check only. It does not satisfy the E1-T4 hand-mask DoD and must not be quoted as one.
+BASELINE WRITTEN — the gate compares against it from the next run on.
+rc=0
+
+$ python infra/ci/gates/regression_gate.py --baseline $T/baseline.json
+prettify SSIM (inside mask)                0.9936     0.9936   +0.0000  0.0100  PASS
+segmentation mean IoU                      0.9299     0.9299   +0.0000  0.0100  PASS
+GATE PASS — exit 0: 2 metric(s) compared, none below baseline - tolerance. …
+rc=0
+
+# the same baseline with segmentation inflated to 0.99 — a synthetic regression
+$ python infra/ci/gates/regression_gate.py --baseline $T/baseline.json
+segmentation mean IoU                      0.9900     0.9299   -0.0601  0.0100  REGRESSION
+GATE REGRESSION — exit 1: segmentation mean IoU came in below baseline - tolerance. …
+rc=1
+```
+
+**QA finding 1, fixed 2026-11-06 — a hand-deleted baseline row used to shrink the gate
+silently.** Deleting `prettify SSIM (inside mask)` from `metrics` while leaving `sets` and
+`mask_sources` alone compared one metric fewer and printed `PASS`. The three maps must now cover
+exactly the same names, so the file is rejected instead:
+
+```
+$ # delete that row from "metrics" only; sets/mask_sources still list it
+$ python infra/ci/gates/regression_gate.py --baseline $T/b.json
+… table …
+GATE INCONCLUSIVE — exit 2: this is NOT a pass.
+  reason: $T/b.json: sets does not describe the same metrics as metrics — missing from sets: [], not in metrics: ['prettify SSIM (inside mask)']. A metric row deleted by hand would otherwise shrink the gate silently; rebuild the file deliberately with --update-baseline --allow-dropped-metrics (that flag records the coverage you are giving up)
+  the file was rejected as a whole: no row in it was trusted, so none of the numbers above was gated. This is not the same as having no baseline.
+rc=2
+```
+
+The residual this cannot close: an edit that removes a metric from all three maps consistently is
+indistinguishable from a deliberately smaller baseline — no file-level check can see intent, so
+`--update-baseline`'s drop guard plus git history are what remain.
+
+That `$T` baseline is **not** committed: §13.5 explains why this ticket deliberately ships the
+baseline empty instead of shipping exactly the file the third command above just proved passes.
+
+`make evals` is pasted because the ticket's acceptance asks for it. It is the **E0-T5 telemetry
+gate, not this dashboard** — there is no cost gate to run — but it is the same absence, reported
+the same way (`n=0`, `GATE NOT EVALUATED`):
+
+```
+$ NO_COLOR=1 make evals
+exec /Users/bujin/Documents/Projects/snaplist/.venv/bin/python -m evals.telemetry --since 7d --gate --allow-inconclusive
+SnapList telemetry gate — E0-T5
+population=0 items (from 0 sellers)
+window=[2026-10-30T23:33:04.565759Z, 2026-11-06T23:33:04.565759Z)  half-open UTC on received_at
+percentile=nearest-rank
+git_sha=1beee75
+source=sqlite:<unset>
+backend=local-dev
+refund_attribution=sqlite-only
+source_state=SOURCE_ABSENT_3A
+
+GATE NOT EVALUATED — n=0. This is NOT a pass.
+
+gate                 n  value          threshold      verdict
+prettify_p50         0  -              <= 20000 ms    UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+prettify_p90         0  -              <= 35000 ms    UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+tooltime_p50         0  -              <= 35000 ms    UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+tooltime_p90         0  -              <= 60000 ms    UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+attrs_p90            0  -              <= 8000 ms     UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+export_p90           0  -              <= 5000 ms     UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+fields_mean          0  -              <= 5           UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+fields_p90           0  -              <= 12          UNMEASURED (n=0 < 30)  n=0 items (from 0 sellers)
+
+fields_p50=- (report only)
+activation_7d=UNMEASURED (n=0 sellers < 20), n=0 sellers (reported, not gated)
+export_burst_60m=UNMEASURED (no producer in CONTRACTS.md §7; QA proxy only)
+completeness=- (mirror of excluded_rate; printed, never judged)
+excluded_refunded=0 (n=0 refund rows)
+failure_mix_unattributable=0
+orphan_item_ids=0
+failure_mix: bad_photo=0 no_garment=0 low_confidence=0 vton_rejected=0
+
+VERDICTS: PASS=0 FAIL=0 INCONCLUSIVE=8 DATA_UNAVAILABLE=0 REFUND_ATTRIBUTION=INTACT
+rc=0
+```
+
+`make evals` exiting 0 here is the documented `--allow-inconclusive` downgrade, not a pass —
+same rule as §11: CI green is not a gate pass.
+
+### 13.3 The cost table (generated by `cost_dashboard.py --update-doc` — do not hand-edit)
+
+The block below is machine-written. Running
+`.venv/bin/python infra/ci/gates/cost_dashboard.py --update-doc` replaces everything between the
+two markers from `evals/reports/cost.md`; if the file does not exist the block is regenerated
+with `UNMEASURED` in every cell and the reason. Nothing inside the markers is ever typed by hand.
+
+<!-- E0-T4:COST-DASHBOARD:START -->
+<!-- generated by infra/ci/gates/cost_dashboard.py --update-doc at 2026-11-06T23:54:38+00:00 git_sha=1beee75e5df0 · source: evals/reports/cost.md (ABSENT) -->
+
+**Source:** `evals/reports/cost.md` — ABSENT. Target: `<= $0.03/item` for E1+E2+E3.
+
+| stage | what it covers | $/item | samples | status |
+|---|---|---|---|---|
+| E1 | segmentation | UNMEASURED | — | UNMEASURED |
+| E2 | rectify + prettify | UNMEASURED | — | UNMEASURED |
+| E3 | attributes + dedupe | UNMEASURED | — | UNMEASURED |
+| E4 | on-model render (per render, not per item) | UNMEASURED | — | UNMEASURED |
+| **E1+E2+E3** | **cost per item** | UNMEASURED | — | UNMEASURED |
+
+**E1+E2+E3 total:** `UNMEASURED`
+
+> E1+E2+E3 total is UNMEASURED — evals/reports/cost.md does not exist — no stage has ever run against a paid provider (E4 on-model is a stub; FASHN_API_KEY and MODAL_TOKEN are absent, packages/vision/BLOCKED.md) and there are no production usage_events, so no $/item has ever been billed. E1/E2/E3 run locally on onnxruntime + classical CV: that produces wall-clock seconds, not a billed $/item
+
+**Verdict:** **UNMEASURED — the <= $0.03/item verdict is UNREACHABLE, not passing: no measured $/item exists for any stage**
+
+E4 is listed for context only: it is priced per render, is BLOCKED in this build (`packages/vision/BLOCKED.md`), and is not part of the per-item total.
+
+Parse notes:
+- the file does not exist, so nothing could be parsed
+
+<!-- E0-T4:COST-DASHBOARD:END -->
+
+### 13.4 What has to exist before any cell can hold a number
+
+Nothing about this is blocked on code; all of it is blocked on credentials, paid runs, or data
+nobody has produced yet.
+
+1. **A paid provider path that actually runs.** `evals/reports/cost.md` is the dashboard's only
+   input and it does not exist. It needs one row per stage (`E1`, `E2`, `E3`) carrying a billed
+   `$/item` **and** the sample count behind it. Format contract:
+   `infra/ci/gates/README.md`.
+2. **A per-item billing basis for E1/E2/E3.** These stages currently run locally
+   (`onnxruntime` u2net + classical CV), which produces wall-clock seconds, not a billed
+   `$/item`. A local run's cost is not `$0.00/item` — it is *not a billed quantity*, and the
+   dashboard refuses to publish the former as if it were the latter.
+3. **E4 unblocked, separately.** `FASHN_API_KEY` / `MODAL_TOKEN` are absent and
+   `infra/modal_vton.py` is a stub (`packages/vision/BLOCKED.md`). E4 is excluded from the
+   `<= $0.03/item` total by construction — it is priced per render — so unblocking E4 is not a
+   prerequisite for the E1+E2+E3 verdict.
+4. **Then, and only then:** `cost_dashboard.py --update-doc` fills §13.3, and
+   `cost_dashboard.py --fail-on-unmeasured` starts returning `0` (within budget) or `1` (over)
+   instead of `2`.
+5. **A regression baseline, decided on purpose.** See §13.5.
+
+### 13.5 Why the cells are `UNMEASURED` and why the baseline ships empty
+
+`infra/ci/gates/baseline.json` ships with `"metrics": {}`, and the gate therefore exits `2` with
+the reason and the command to fix it. That is the delivered decision, not an oversight. The only
+two metrics this checkout can measure are:
+
+| metric | value | n | why it is not a bar |
+|---|---|---|---|
+| segmentation mean IoU | 0.9299 | 20 | references are `ai:google-ai-mode-nano-banana` + `algorithmic:matting`, not hand masks — a pipeline check, not the E1-T4 DoD number (worst case 0.6053) |
+| prettify SSIM (inside mask) | 0.9936 | 9 | SSIM of the output against its own input on fixtures with synthetic labels; 1.0 means nothing changed, so it is a destruction budget, not a cleaning score |
+
+Baselining either one would convert a self-referential measurement into "the bar", and every
+later `PASS` would hide the caveat that the report body carries. The same reasoning applies to
+the cost cells: with no `cost.md`, no paid run and no production `usage_events`, the honest
+value of every `$/item` cell is `UNMEASURED`, and **the `<= $0.03/item` verdict is UNREACHABLE —
+not passing, not failing, simply never computed.**
+
+Three named residuals in this section's scope:
+
+* `pyproject.toml`'s `testpaths` does not list `infra/ci/gates/tests`, so a plain `pytest` does
+  **not** collect the 65 cases. They are run with the explicit `unittest discover` command in
+  §13.2. Editing `pyproject.toml` is outside E0-T4's allowed paths.
+* `.github/workflows/ci.yml` (also outside this ticket's paths) does not call either tool, so
+  neither runs on a PR yet. When it is wired: `regression_gate.py`'s `2` must be treated as
+  *not a pass* — a `|| true`, or accepting any non-1 code, would restore exactly the false green
+  this ticket removes. `--fail-on-unmeasured` is the flag for the blocking form.
+* **`cost_dashboard.py` exits 0 in report mode even when the verdict is `FAIL`** — a report is not
+  a gate — so any CI wiring must pass `--fail-on-unmeasured`, or a breached `$0.03/item` budget
+  prints `FAIL` and returns green: the same false green as the regression gate's `2`, one flag
+  away.
 
 ## 14. Handoff state
 
