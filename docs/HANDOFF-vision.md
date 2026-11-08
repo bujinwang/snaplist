@@ -48,10 +48,22 @@ Consequently:
 
 * `attributes.json` from the CLI is now a `{"status": "measured", "provider": "http"}` record
   (see the measured run below). It IS a real result.
-* E3-T2's real acceptance command **has** produced a measured attribute set. Accuracy
-  (E3-T3: category ≥ 0.95, colour ≥ 0.90, pattern ≥ 0.85, material ≥ 0.80) is still
-  **UNMEASURED**, blocked on E0-T1's 40 real photos / 20 hand masks — those are needed to score
-  the accuracy, not to run the pipeline.
+* E3-T2's real acceptance command **has** produced a measured attribute set, and E3-T3
+  accuracy **HAS now been measured on this machine** (2026-11-08). `evals/reports/vision.md`
+  (a gitignored local report) records: `attr category accuracy` **0.9250** (≥ 0.95, **NOT met**),
+  `attr colour accuracy` **0.6500** (≥ 0.90, **NOT met**), `attr pattern accuracy` **0.9750**
+  (≥ 0.85, met), `attr material accuracy` **0.2750** (≥ 0.80, **NOT met**), and
+  `dedupe false-merge rate` **0.0000** (≤ 0.05, met).
+  **Three of the four attribute targets are NOT met.** `material` is `[]` for most catalogue
+  photos under the current evidence-only
+  policy, so ≥ 0.80 is unreachable without a product decision; the policy was **not** relaxed
+  to chase the number. These are LOCAL, UNCOMMITTED numbers from the local golden set — on a
+  clean clone they fall back to `UNMEASURED`. Still `UNMEASURED`: rectify SSIM, the prettify
+  hallucinated-text rubric, and `cost per item`.
+* The 20 masks on disk are **not hand-drawn** (`mask_source`: 18 `algorithmic:matting`,
+  2 `ai:google-ai-mode-nano-banana`; hand-drawn 0/20), so E1-T4's hand-mask DoD is
+  **still NOT met**. The 40 real photos are what made the local accuracy measurement possible;
+  hand masks were never a prerequisite for running the pipeline.
 * `cost_usd` stays `None` in the live output by design; the rate of truth is ADR-006, not code.
   Real `prompt_tokens`/`completion_tokens` (1025/192 on the measured call) are surfaced in
   `attributes.json`; at ADR-006's off-peak rate that is ≈ $0.00027/item (~110× under the
@@ -82,16 +94,28 @@ exceptions that the worker would mislabel `internal` (CONTRACTS §4). Image MIME
 ## Escalation — what is still needed
 
 The provider decision is done (ADR-006) and a real `VLM_API_KEY` is now present, so E3-T2's
-acceptance has produced a measured record. Two things remain:
+acceptance has produced a measured record. Current status and what remains, as of 2026-11-08:
 
 1. **Legal sign-off on the OPEN items in ADR-006** before any seller photo is sent. The privacy
    policy places personal-data processing/storage in the PRC and the terms are PRC-governed;
    `prompts/08-legal.md` §7 needs a subprocessor table with region. This is the one place where
    "cheapest model" is not the only axis — do not treat it as settled.
-2. **E3-T3 accuracy report** is still UNMEASURED — it needs E0-T1's 40 real photos / 20 hand
-   masks as the golden set. The pipeline runs; the score does not exist yet.
+2. **E3-T3 accuracy report** HAS been measured on this machine (2026-11-08) — it is no longer
+   UNMEASURED here. `evals/reports/vision.md` records category 0.9250 (≥ 0.95, NOT met), colour
+   0.6500 (≥ 0.90, NOT met), pattern 0.9750 (≥ 0.85, met), material 0.2750 (≥ 0.80, NOT met)
+   and dedupe false-merge 0.0000 (≤ 0.05, met).
+   **Three of the four attribute targets are NOT met.** `material` is unreachable under the
+   current evidence-only policy, which was NOT relaxed to chase the number. These are
+   LOCAL, UNCOMMITTED numbers from the local golden set; on a clean clone they fall back to `UNMEASURED`.
+3. **20 hand-drawn masks are still missing** (0/20; 18 `algorithmic:matting` + 2
+   `ai:google-ai-mode-nano-banana`), so E1-T4's hand-mask DoD is still NOT met.
+4. Still `UNMEASURED`: rectify SSIM, the prettify hallucinated-text rubric, and cost per item.
 
 ## Exact next commands
+
+**Dated record (2026-11-04): the key-setup instructions below describe the state before the
+provider key was filled in. A non-empty `VLM_API_KEY` is already configured in the local `.env`
+as of 2026-11-08, so these are not current setup steps. They are kept verbatim for provenance.**
 
 Put the key in the repo-root `.env` — gitignored (`.gitignore:19`), so it never reaches the
 repo or the chat. Copy the values from `.env.example`; only `VLM_API_KEY` needs filling in.

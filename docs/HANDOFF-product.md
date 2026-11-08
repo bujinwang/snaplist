@@ -931,12 +931,40 @@ seller-facing material, and I read "11 minutes saved" as covered by the same ban
 | D | `make evals` (no gate) vs `make evals --strict` (gate) | **已裁决** — global rule, my `--allow-inconclusive` design superseded; adopted theirs | §13.3 |
 | E | exit-code semantics 0/1/2/3 + percentile definition + tool-time join/completeness | **已裁决 in principle, not yet landed** — spec ready at §12.2, architect frozen | §12.2 |
 | F | interview incentive **$600** (12 × $50) | **待 Bert 拍** — `INTERVIEWS §1.4` marked `AWAITING-APPROVAL`; interviews cannot start until cleared | §1.4 |
-| G | VLM provider selection | **待 Bert 拍** — named by the lead. **No detail exists in my documents and I add no assumption here**; it is a vision/architect decision that reaches me only as an accuracy input to `METRICS §3.2` | — |
+| G | VLM provider selection | **待 Bert 拍** — named by the lead. **No detail exists in my documents and I add no assumption here**; it is a vision/architect decision that reaches me only as an accuracy input to `METRICS §3.2` | — · **see §13.2.1 (2026-11-08)** |
 
 **Nothing else is pending on the product side.** The two `待 Bert` items are both outside my
 authority, and neither blocks E1.
 
-### 13.3 The `make evals` / `--strict` split — adopted, with two consequences
+### 13.2.1 状态更新（2026-11-08）
+
+**This dated addendum is the current status. The ruling text in the §13.2 table and the
+sentence immediately preceding it are preserved verbatim as the 2026-10-28 closing record;
+only a dated pointer marker was added to the G-row reference (`where`) cell. No original ruling
+was silently rewritten or deleted.**
+
+* **G is no longer `待 Bert 拍`.** Bert ruled the VLM provider selection on **2026-11-04**:
+  **DeepSeek V4.1 Flash**, recorded in `docs/ADR-006-attributes-vlm-provider.md` (API model id
+  `deepseek-flash`, base URL `https://api.deepseek.com`). A non-empty `VLM_API_KEY` is configured
+  in the local `.env`, a real provider call has run, and E3-T3 accuracy was measured on this
+  machine (`evals/reports/vision.md`, a gitignored local report): category 0.9250, colour 0.6500,
+  pattern 0.9750, material 0.2750, dedupe false-merge 0.0000. Three of the four attribute
+  targets are NOT met; the figures are local, uncommitted, and fall back to `UNMEASURED` on a
+  clean checkout. This is a measured accuracy input to `METRICS §3.2`, not a product decision
+  reopened here.
+* **F is still `待 Bert 拍`.** The **$600** interview incentive (12 × $50) remains
+  `AWAITING-APPROVAL` in `INTERVIEWS §1.4`; interviews cannot start until Bert clears it.
+* **So the "two `待 Bert` items" sentence above describes 2026-10-28, not today:** as of this
+  addendum only **F** remains outside my authority. Neither F nor the resolved G ever blocked E1.
+* For the same provenance reason, §13.3's `make evals --strict` wording is left as the
+  2026-10-28 record; that flag does not exist in `Makefile`, where the release gate is the
+  separate target `make evals-strict` (`Makefile:139`). The E0-T5 telemetry gate **is**
+  implemented (`evals/telemetry/gate.py`); `make evals` now runs
+  `exec $(PY) -m evals.telemetry --since 7d --gate --allow-inconclusive`
+  (`Makefile:84`, with `PY` defined at `Makefile:9`), measured on this machine as
+  `PASS=0 FAIL=0 INCONCLUSIVE=8`, exit 0. It must not be described as unimplemented.
+
+### 13.3 The `make evals` / `--strict` split — adopted, with two consequences（2026-10-28 record; see §13.2.1）
 
 Ruled: dev/CI runs `make evals` (no gate; unmeasured exits 0 and "does not count as a pass"),
 release runs `make evals --strict` (unmeasured or over ⇒ exit 2). This replaces my

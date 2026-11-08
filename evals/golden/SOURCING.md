@@ -1,8 +1,18 @@
 # evals/golden — SOURCING PLAN (not the golden set)
 
-**This file is a sourcing plan only. It does NOT contain, and must not be mistaken for, the E0-T1 golden set.** Per `evals/golden/README.md` the golden set must be 40 **real** photos with 20 **hand-drawn** masks; synthetic stand-ins are forbidden. As of writing, `evals/golden/manifest.json` does not exist and the set is empty by design — every eval metric stays `UNMEASURED`.
+**This file is a sourcing plan only. It does NOT contain, and must not be mistaken for, the E0-T1 golden set.** Per `evals/golden/README.md` the golden set must be 40 **real** photos with 20 **hand-drawn** masks; synthetic stand-ins are forbidden.
 
-**No photos or masks were fabricated or downloaded.** The `manifest.draft.json` companion is a *staged, contract-shaped* draft. Do **not** rename it to `manifest.json` until the real files are physically present in `photos/` and `masks/` — `validate_golden.py` treats a missing photo as a broken promise, not a placeholder.
+**Status (2026-11-08): the sourcing plan HAS been executed on this machine, but not on a clean checkout.** 40 real photos were obtained from `~/Downloads`; `evals/golden/manifest.json` now exists locally with 40 entries and 20 non-null `mask_path` values. The 20 masks are 18 `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana` — **0 are hand-drawn**, so the E1-T4 hand-mask gate is still open. These files are local-only and deliberately NOT in git (public repo, all-rights-reserved photos); on a clean clone the set is empty again and the related metrics fall back to `UNMEASURED`.
+
+The original line "No photos or masks were fabricated or downloaded" recorded the
+**pre-execution** state; the status paragraph above is the current record. The
+`manifest.draft.json` companion is a *staged, contract-shaped* draft. Do **not** rename it to
+`manifest.json` until the real files are physically present in `photos/` and `masks/` —
+`validate_golden.py` treats a missing photo as a broken promise, not a placeholder.
+**That condition is now satisfied ON THIS MACHINE** (40 real photos and 20 masks present, and
+a local `manifest.json` exists), but the rule above is kept verbatim for provenance; the
+resulting `manifest.json` is deliberately NOT committed to this public repo and is still absent
+on a clean clone.
 
 ## How to use this plan
 

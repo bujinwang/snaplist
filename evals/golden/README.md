@@ -1,10 +1,22 @@
 # evals/golden — the golden set (E0-T1)
 
-**Current state: EMPTY. That is deliberate and it is not a failure of this tooling.** The
-golden set must be 40 *real* garment photos with 20 *hand-drawn* masks; synthetic stand-ins
-are forbidden by `docs/PLAN.md` E0-T1 ("a fake golden set makes every downstream number a
-lie"). Until the photos exist, every eval metric stays `UNMEASURED` — which is the honest
-value, not a bug.
+**Current state (2026-11-08): 40 real photos, 20 masks and `manifest.json` exist ON THIS
+MACHINE ONLY.** The repo is public and the downloaded photos are all-rights-reserved, so
+`photos/`, `masks/` and `manifest.json` are deliberately kept out of git by
+`.git/info/exclude`; the generated eval reports are excluded by `.gitignore`. They are
+**NOT committed** and must not be added. On a clean clone none of these files exist and every
+metric that depends on them falls back to `UNMEASURED` — the honest value, not a regression.
+
+The golden set contract still requires 40 *real* garment photos with 20 *hand-drawn* masks;
+synthetic stand-ins are forbidden by `docs/PLAN.md` E0-T1 ("a fake golden set makes every
+downstream number a lie"). **0/20** of the masks on disk are hand-drawn: `mask_source` is
+`algorithmic:matting` for 18 and `ai:google-ai-mode-nano-banana` for 2. The E0-T1 / E1-T4
+hand-mask DoD is therefore **NOT** met.
+
+`make golden` exits 0 on this machine, but the validator itself prints
+`STRUCTURE COMPLETE — … make golden exit 0 is NOT a golden-set DoD verdict`
+and `hand-drawn by mask_source convention: 0/20`. Exit 0 means the file/count checks hold;
+it is not a DoD verdict.
 
 This README plus `evals/tools/validate_golden.py` is the contract *around* the photos: drop
 the files in, fill the manifest, run `make golden`, and the tool tells you exactly what is

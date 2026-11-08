@@ -135,20 +135,32 @@ modal token current            # verify
 still develop and test the job runner locally (run the same function in-process against local
 Postgres) — do that first so the epic is not serialised on a token.
 
-## 6. Attributes VLM provider — `VLM_API_KEY` (name pending)
+## 6. Attributes VLM provider — `VLM_API_KEY`
 
 **Status: DECIDED 2026-11-04 — DeepSeek V4.1 Flash** (Bert's call). Full decision, official
 rate card, terms and the OPEN legal items are in **`docs/ADR-006-attributes-vlm-provider.md`**;
 the hosted-service row is in `docs/DEPS.md`. Exact config is in `.env.example`. API model id is
 `deepseek-flash`, base URL `https://api.deepseek.com`.
 
-Accuracy numbers stay `UNMEASURED` until E0-T1's 40 real photos / 20 hand masks exist (E3-T3),
-and no provider call has been made yet. **OPEN before seller photos are sent:** the DeepSeek
+**Run state (2026-11-08): the key is configured and real provider calls HAVE run.** A non-empty
+`VLM_API_KEY` is present in the local `.env` (its value is never printed here), 40 real
+attribute predictions were collected in `evals/reports/attrs_predictions.json` (39 measured,
+1 failed), and E3-T3 accuracy HAS been measured on this machine. See `evals/reports/vision.md`,
+a gitignored local report: category **0.9250** (≥ 0.95, **NOT met**), colour **0.6500**
+(≥ 0.90, **NOT met**), pattern **0.9750** (≥ 0.85, met), material **0.2750** (≥ 0.80,
+**NOT met**), dedupe false-merge **0.0000** (≤ 0.05, met). Three of the four attribute targets
+are NOT met. `material` is `[]` for most catalogue photos under the current evidence-only
+policy, so ≥ 0.80 is unreachable without a product decision; that policy was **not** relaxed to
+chase the number. These are LOCAL, UNCOMMITTED numbers from the local golden set: on a clean
+checkout they fall back to `UNMEASURED`. `cost per item` is still `UNMEASURED`.
+
+**OPEN before seller photos are sent:** the DeepSeek
 privacy policy puts personal-data processing and storage in the PRC and the terms are PRC-governed;
 `prompts/08-legal.md` §7 needs a subprocessor table with region and §5 a data map. Those are
 [COUNSEL] items owned by legal, listed in ADR-006 — not resolved here.
 
-**Do not** invent an accuracy figure or a measured `$/item` here.
+**Do not** invent an accuracy figure or a measured `$/item` here: the E3 numbers above are
+quoted from a local measured report, not invented, and `$/item` remains `UNMEASURED`.
 
 ## 7. Blocking matrix
 
@@ -162,7 +174,7 @@ privacy policy puts personal-data processing and storage in the PRC and the term
 | `STRIPE_WEBHOOK_SECRET` | E8-T2 | yes — `stripe listen` |
 | `FASHN_API_KEY` | E4-T1, E4-T3, any on-model demo | **no** |
 | `MODAL_TOKEN_ID/SECRET` | E5-T3 deploy, E4-T2 | partly — run the worker in-process |
-| `VLM_API_KEY` | E3-T2, E3-T3 | **no** |
+| `VLM_API_KEY` | E3-T2, E3-T3 | **no** on a clean checkout (the key is still required); **already unblocked on this machine** — non-empty value in local `.env`, 40 real provider calls run |
 | Apple Developer account | E6-T1 Apple sign-in, `expo export` to a device | partly — email magic link works without it |
 
 ## 8. Reporting rules that go with this file
