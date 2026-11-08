@@ -1488,3 +1488,147 @@ When U1 ∧ U2 ∧ U3 hold, the exact lines to change:
   removed, and no cleanup was performed.
 - The 18-file E0-T5 inventory (§12) is unchanged except for the md5 of
   `test_makefile_wiring.py` (the tripwire is gone, replaced by a real wiring assertion).
+
+---
+
+## 15. E3-T3 / E3-T4 — real measurements on the locally frozen golden set
+
+**Status: MEASURED on this machine; the numbers are local, not committed.** This round turned
+`attr category accuracy`, `attr colour accuracy`, `attr pattern accuracy`,
+`attr material accuracy` and `dedupe false-merge rate` from `UNMEASURED` into real numbers in
+`python -m evals.run --suite vision`. The four attribute numbers are read from a frozen
+predictions artifact; the harness itself never calls the network.
+
+### 15.1 Commands and the collection/computation split
+
+```
+python -m evals.tools.collect_attrs       # one-shot: 40 real VLM calls, writes the artifact
+python -m evals.metrics.attrs             # pure: writes evals/reports/attrs.md
+python -m evals.metrics.dedupe            # pure: writes evals/reports/dedupe.md
+python -m evals.run --suite vision        # acceptance command, zero network
+```
+
+`evals/tools/collect_attrs.py` is the ONLY module that touches the network or reads a
+credential. It parses `.env` line by line **in Python** (`k, v = line.split("=", 1)`) into
+`os.environ` — never `source .env`, which eats the quotes inside
+`SNAPLIST_VLM_EXTRA_BODY`. It writes `evals/reports/attrs_predictions.json` with predictions
+and metadata only: no photo bytes, no base64, no key, no authenticated URL fragment. Error
+strings are scrubbed of credential values. `evals/metrics/attrs.py` and
+`evals/metrics/dedupe.py` are pure functions over files on disk: no socket, no credential, no
+VLM. `evals/run.py` only reads the artifact and returns `UNMEASURED` with a named reason when
+it is absent or corrupt.
+
+### 15.2 What was actually collected
+
+| | |
+|---|---|
+| golden set | `evals/golden/manifest.json`, 40 entries, **read only** (copyright-frozen zone) |
+| provider / model | `http` / `deepseek-flash` (from `.env`; no key value recorded anywhere) |
+| n | 40 — the whole manifest, failures included |
+| n_measured / n_failed | **39 / 1** (`hard-04` failed schema validation after the adapter's one repair retry: `evidence.defects` was an extra input) |
+| prompt / completion / total tokens | **55320 / 10913 / 66233** |
+| provider round-trip total | 127.333 s over 40 calls |
+| adapter retry count | 16 (the adapter's built-in single schema-repair retry; no second retry layer was added, so token totals are not silently undercounted) |
+| artifact | `evals/reports/attrs_predictions.json` (gitignored) |
+
+The single failure is **not** skipped: `evals/metrics/attrs.py` counts it in `n` as a MISS on
+all four fields. `StageMeta` does not exist for a failed call, so any tokens it consumed are
+not observable; the artifact states this explicitly rather than estimating them.
+
+### 15.3 E3-T3 results — exact `hits/n`, no rounding up
+
+Matching rules (frozen, identical in shape for all four fields; full text in the module
+docstring and `evals/reports/attrs.md`): strings are `.strip().lower()`-normalised;
+`category` and `pattern` are exact string equality (`unknown` never matches a concrete value);
+`colors` is a **primary-colour hit** (first predicted colour occurs in the ground-truth list);
+`material` is a **non-empty list intersection** (empty prediction = MISS; `colors_exact_list`
+is reported separately as a stricter secondary statistic).
+
+| metric | target | hits/n | accuracy | verdict |
+|---|---|---|---|---|
+| attr category accuracy | >= 0.95 | 37/40 | **0.9250** | **DOES NOT MEET** (shortfall 0.0250) |
+| attr colour accuracy | >= 0.90 | 26/40 | **0.6500** | **DOES NOT MEET** (shortfall 0.2500) |
+| attr pattern accuracy | >= 0.85 | 39/40 | **0.9750** | **MEETS** |
+| attr material accuracy | >= 0.80 | 11/40 | **0.2750** | **DOES NOT MEET** (shortfall 0.5250) |
+
+Secondary statistics: `colors_exact_list` = 19/40 = 0.4750; `material` empty predictions =
+26 of 40 rows; failed rows with no prediction = 1. Three of four targets are missed. The
+numbers above are the measured numbers; nothing was rounded up, no failed or empty prediction
+was excluded, and no threshold was moved.
+
+### 15.4 The `material` verdict is an evidence-policy consequence, not a bug
+
+`apps/api/schemas.py::ItemAttributes` and `packages/vision/attrs_adapters/base.py` require
+`material` to contain ONLY fibres with visual or care-label evidence; with no such evidence the
+adapter MUST emit `[]`. The golden photos are catalogue shots with no legible care labels, so
+`material=[]` is the CORRECT output for most of them (26 of 40 rows), and an empty list can
+never intersect a non-empty ground-truth material list. **`>= 0.80` is UNREACHABLE under the
+current evidence policy. This is NOT a bug and NOT a model defect.** This round did **NOT**
+relax the evidence policy, did **NOT** widen the adapter, did **NOT** change the VLM prompt,
+and did **NOT** edit any ground truth to chase the threshold. Reaching 0.80 would require a
+product decision to change the schema contract or a golden set with visible care labels —
+neither is in this ticket's scope.
+
+### 15.5 Confusion summary
+
+`evals/reports/attrs.md` contains the confusion list **verbatim**: 68 rows = 47 primary misses
++ 21 `colors_exact_list` secondary-statistic misses, each with id / field / ground truth /
+predicted / reason. Primary misses by field: `material` 29, `colors` 14, `category` 3,
+`pattern` 1. The dominant material pattern is `[]` against a single-fibre ground truth; the
+dominant colour pattern is a plausible but different primary colour (e.g. `tan` vs `brown`,
+`navy` vs `grey`); `hard-04` contributes four misses from one schema validation failure.
+The per-entry table in the same report shows all 40 rows, so the denominator is visible.
+
+### 15.6 E3-T4 result
+
+`python -m evals.metrics.dedupe` is a thin wrapper around
+`packages.vision.dedupe.run_fixture()` — the same `_score_candidate()` policy the API uses;
+no comparison logic, threshold or sha256 logic was rewritten. Over the 20 shipped fixture
+pairs (`n_pairs=20`, `n_duplicate=10`, `n_distinct=10`):
+
+**false_merge_rate = 0 / 10 = 0.0000 — MEETS the `<= 0.05` target.**
+
+The denominator is `n_distinct`, not `n_pairs`: a false merge can only occur on a distinct
+pair. `evals/reports/dedupe.md` lists all 20 per-pair verdicts plus the raw `run_fixture()`
+output. Caveats that travel with the number: `exact` pairs short-circuit on sha256 (their
+1.0 is the layer's definition, not a measured capability); `near` positives are same-source
+transforms, so near recall on this fixture is an upper bound and the thresholds are
+in-sample; the colour gate is defended by unit tests, not observable on these 20 pairs.
+
+### 15.7 The clean-CI caveat — UNMEASURED there is NOT a regression
+
+These four attribute numbers come from the **locally frozen, uncommitted** `evals/golden`
+photos (web-sourced, all rights reserved — `evals/golden/**` is a read-only copyright-frozen
+zone and was not touched). `evals/reports/*` is excluded by `.gitignore:35`, so a clean CI
+checkout has no `attrs_predictions.json`. On such a checkout the four attribute rows in
+`python -m evals.run --suite vision` are `UNMEASURED` with an explicit reason naming
+`python -m evals.tools.collect_attrs`. **That is the harness refusing to guess, not a
+regression and not a failing gate** (the gate itself is still E0-T5). The dedupe row is
+different: its fixtures ship with the repo, so it is measured on a clean checkout too.
+`evals/reports/cost.md` is deliberately not filled — no real billing rate was supplied — and
+the E2-T3 manual hallucination rubric stays `UNMEASURED` because a machine cannot stand in
+for a human scorer.
+
+### 15.8 Allowed-paths whitelist exception (recorded, as instructed)
+
+PLAN E3-T3 lists only `evals/metrics/attrs.py` and `evals/reports/attrs.md` as allowed paths,
+but its acceptance command is `python -m evals.run --suite vision`. To reach that command this
+round **deliberately crossed the whitelist**: it wired `evals/run.py` (two new `_measure_*`
+helpers inside `measurements()` only; `TARGETS`, `render()`, and all seg_iou/gate code are
+unchanged) and added `evals/tools/collect_attrs.py` as the one-shot collector. E3-T4 added
+`evals/metrics/dedupe.py`. Also touched: `evals/tools/__init__.py` (one docstring line, to
+record the collector as the single deliberate network exception), `evals/tests/
+test_attrs_metric.py`, `evals/tests/test_dedupe_metric.py`, and this document (the tracked
+handoff doc). No file under `evals/golden/**`, `.env`, `apps/api/schemas.py`,
+`packages/vision/attrs_adapters/**`, `packages/vision/dedupe.py`, `Makefile`, or
+`pyproject.toml` was modified. Nothing was committed, staged or pushed by this round.
+
+### 15.9 Tests and verification
+
+20 new unit tests (`evals/tests/test_attrs_metric.py`, `evals/tests/test_dedupe_metric.py`)
+cover the four matching rules, `unknown` pattern, primary-colour hit vs strict list equality,
+failed entries staying in the denominator as misses, empty `material` as a miss, raw `hits/n`
+floats, the verbatim confusion list, missing/corrupt artifact producing harness
+`UNMEASURED` with a named reason, `run_fixture` reuse (identity + call-count checks), the
+`n_distinct` denominator, and explicit socket guards. All tests use synthetic fixtures and
+are zero-network. `make test`, `ruff check .` and `git diff --check` are green.
