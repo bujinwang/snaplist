@@ -1,12 +1,19 @@
 """`python -m evals.run --suite vision` — the one eval entry point every role calls.
 
-It measures **two** metrics today: segmentation mean IoU, over whichever masked set exists
-(`evals/golden/` first, `evals/golden-provisional/` as a stand-in), and prettify SSIM over the
-flat-lay fixtures in `evals/fixtures/prettify/`. Everything else prints `UNMEASURED`, because
+It measures segmentation mean IoU (whichever masked set exists), prettify SSIM over the
+flat-lay fixtures, four E3 attribute accuracies over the frozen golden set, and the dedupe
+false-merge rate over `evals/fixtures/dedupe/`. Everything else prints `UNMEASURED`, because
 no other stage has both an implementation and reference fixtures on disk. The prerequisites are
-checked rather than assumed: no masked set, no model weights, or a failing measurement each
-produce an `UNMEASURED` row **plus a line naming the reason**, since "no number" and "no number
-because you have not run `make fetch-models`" are different fixes.
+checked rather than assumed: no masked set, no model weights, a missing predictions artifact,
+or a failing measurement each produce an `UNMEASURED` row **plus a line naming the reason**,
+since "no number" and "no number because you have not run `make fetch-models`" are different
+fixes.
+
+The four attribute rows are deliberately read from a FROZEN artifact
+(`evals/reports/attrs_predictions.json`), produced once by `python -m evals.tools.collect_attrs`
+(40 real VLM calls). This harness NEVER calls the network: on a clean checkout with no artifact
+those four rows are `UNMEASURED` with the collection command named in the reason. The dedupe
+row needs no such artifact — its fixtures ship with the repo and are scored locally.
 
 **`--gate` and `--allow-inconclusive` are PARSED BUT NOT IMPLEMENTED.** They exist so the
 Makefile targets (`make evals`, `make evals-strict`) have a stable interface, and so nobody
@@ -35,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import sys
@@ -48,7 +56,9 @@ ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "evals" / "golden" / "manifest.json"
 PROVISIONAL = ROOT / "evals" / "golden-provisional" / "manifest.json"
 PRETTIFY_FIXTURES = ROOT / "evals" / "fixtures" / "prettify"
+DEDUPE_FIXTURES = ROOT / "evals" / "fixtures" / "dedupe"
 REPORTS = ROOT / "evals" / "reports"
+ATTRS_PREDICTIONS = REPORTS / "attrs_predictions.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,15 +146,16 @@ def masked_set() -> Path | None:
 def measurements() -> tuple[dict[str, Measurement], list[str]]:
     """Every metric this harness can actually measure right now, plus the reasons it could not.
 
-    Two stages have both an implementation and reference fixtures on disk: segmentation IoU
-    (E1) and prettify SSIM (E2-T2). Everything else stays UNMEASURED — and a missing
-    prerequisite is named out loud rather than silently skipped, because "the number is
-    missing" and "the number is missing because you have not run `make fetch-models`" are
+    Four groups are measurable: segmentation IoU (E1), prettify SSIM (E2-T2), four E3
+    attribute accuracies (E3-T3, from a frozen predictions artifact), and the dedupe
+    false-merge rate (E3-T4, from shipped fixtures). Everything else stays UNMEASURED — and a
+    missing prerequisite is named out loud rather than silently skipped, because "the number
+    is missing" and "the number is missing because you have not run the collector" are
     different fixes.
 
-    The two measurements are independent: prettify runs on flat-lay fixtures that ship with
-    the repo, so it does not need the segmentation model weights, and a missing masked set
-    must not take the prettify row down with it (or the reverse).
+    Every group is independent: a missing masked set, a missing predictions artifact, or a
+    failing measurement costs only that group its number. None of them may call the network —
+    the attribute numbers are read from disk, never recomputed from a live VLM.
     """
     measured: dict[str, Measurement] = {}
     notes: list[str] = []
@@ -158,6 +169,16 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
     notes.extend(prettify_notes)
     if prettify_measurement is not None:
         measured["prettify SSIM (inside mask)"] = prettify_measurement
+
+    attrs_measurements, attrs_notes = _measure_attrs()
+    notes.extend(attrs_notes)
+    if attrs_measurements is not None:
+        measured.update(attrs_measurements)
+
+    dedupe_measurement, dedupe_notes = _measure_dedupe()
+    notes.extend(dedupe_notes)
+    if dedupe_measurement is not None:
+        measured["dedupe false-merge rate"] = dedupe_measurement
 
     # Stays UNMEASURED by design this round: a 1-5 "did it hallucinate text" score is a human
     # judgement, and E2-T3 owns the rubric, the images it is scored on and the report file.
@@ -308,6 +329,115 @@ def _measure_prettify() -> tuple[Measurement | None, list[str]]:
     return (
         Measurement(value=stats["mean"], n=meta["n"], set_name="fixtures/prettify", note=note),
         notes,
+    )
+
+
+def _measure_attrs() -> tuple[dict[str, Measurement] | None, list[str]]:
+    """E3-T3: four accuracies read from the FROZEN predictions artifact. NEVER a network call.
+
+    A missing or corrupt artifact returns `None` plus one note naming the collection command —
+    the harness refuses to guess a number. `evals/metrics/attrs.py` does the joining and
+    summing; this function only turns its four raw floats into `Measurement`s whose keys are
+    exactly the four `TARGETS` names.
+    """
+    if not ATTRS_PREDICTIONS.is_file():
+        return None, [
+            "attr category/colour/pattern/material accuracy: UNMEASURED — no "
+            "evals/reports/attrs_predictions.json on disk; this harness never calls the "
+            "network, so run `python -m evals.tools.collect_attrs` once (40 real VLM calls "
+            "against the locally frozen evals/golden photos) to produce it"
+        ]
+
+    from evals.metrics import attrs as attrs_metric
+
+    try:
+        rows, meta = attrs_metric.run(ATTRS_PREDICTIONS, GOLDEN)
+        stats = attrs_metric.summarise(rows)
+    except Exception as exc:  # noqa: BLE001 - report the reason, never a guessed number
+        return None, [
+            "attr category/colour/pattern/material accuracy: UNMEASURED — "
+            "evals/reports/attrs_predictions.json is unreadable or invalid "
+            f"({type(exc).__name__}: {exc}); regenerate it with "
+            "`python -m evals.tools.collect_attrs`"
+        ]
+
+    note = (
+        f"provider={meta['provider']} model={meta['model']} · "
+        f"{stats['n_measured']}/{stats['n']} measured, {stats['n_failed']} failed "
+        "(failed entries stay in n as misses) · "
+        "rules: category/pattern exact string, colour = primary-colour hit, "
+        "material = non-empty list intersection · "
+        "material is [] whenever the ItemAttributes evidence policy sees no visual or "
+        "care-label fibre evidence: the >= 0.80 target is unreachable under that policy, "
+        "which was NOT relaxed for this measurement · "
+        f"tokens prompt={stats['prompt_tokens_total']} "
+        f"completion={stats['completion_tokens_total']} · "
+        "full verbatim confusion list: evals/reports/attrs.md"
+    )
+    attrs_measurements = {
+        key: Measurement(
+            value=float(stats["accuracies"][key]),
+            n=int(stats["n"]),
+            set_name="evals/golden",
+            note=note,
+        )
+        for key in attrs_metric.METRIC_KEYS
+    }
+    return attrs_measurements, [
+        f"attrs: measured on evals/golden (n={stats['n']}, "
+        f"n_failed={stats['n_failed']}) from the frozen predictions artifact"
+    ]
+
+
+def _measure_dedupe() -> tuple[Measurement | None, list[str]]:
+    """E3-T4: false-merge rate over the shipped dedupe fixtures. Zero network, zero weights.
+
+    `evals/metrics/dedupe.py` is a thin wrapper: the scoring is `run_fixture()` itself, the
+    same `_score_candidate()` policy the API uses. No comparison logic is duplicated here.
+    """
+    if not (DEDUPE_FIXTURES / "manifest.json").is_file():
+        return None, [
+            "dedupe false-merge rate: UNMEASURED — no manifest at "
+            "evals/fixtures/dedupe/manifest.json"
+        ]
+
+    from evals.metrics import dedupe as dedupe_metric
+
+    try:
+        rows, meta = dedupe_metric.run(DEDUPE_FIXTURES)
+        stats = dedupe_metric.summarise(rows, meta)
+    except Exception as exc:  # noqa: BLE001 - report the reason, never a guessed number
+        return None, [
+            "dedupe false-merge rate: UNMEASURED — the measurement failed "
+            f"({type(exc).__name__}: {exc})"
+        ]
+
+    rate = float(stats["false_merge_rate"])
+    if not math.isfinite(rate):
+        return None, [
+            "dedupe false-merge rate: UNMEASURED — n_distinct=0, so there is no denominator"
+        ]
+    n_pairs = int(stats["n_pairs"])
+    n_distinct = int(stats["n_distinct"])
+    n_false_merges = int(stats["n_false_merges"])
+    thresholds = meta["thresholds"]
+    note = (
+        "packages.vision.dedupe.run_fixture(evals/fixtures/dedupe) · "
+        f"false_merge_rate = {n_false_merges}/{n_distinct} = {rate:.4f} "
+        "(denominator is n_distinct, NOT n_pairs: a false merge can only occur on a "
+        f"distinct pair) · n_pairs={n_pairs} · "
+        f"structure>={thresholds['structure_min']:.2f} "
+        f"colour>={thresholds['colour_min']:.2f} · "
+        f"gate <= {thresholds['false_merge_max']:.2f} · "
+        "exact pairs short-circuit on sha256; near positives are same-source transforms, "
+        "so near recall is an upper bound · per-pair verdicts: evals/reports/dedupe.md"
+    )
+    return (
+        Measurement(value=rate, n=n_pairs, set_name="fixtures/dedupe", note=note),
+        [
+            f"dedupe: measured on fixtures/dedupe (n_pairs={n_pairs}, "
+            f"n_distinct={n_distinct}, false_merge_rate={rate:.4f})"
+        ],
     )
 
 
