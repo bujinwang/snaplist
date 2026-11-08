@@ -37,9 +37,14 @@ def test_readyz_reports_repository_and_storage_as_separate_facts(
     client: TestClient,
 ) -> None:
     """Before E5-T4 the single `storage` key said `SqliteRepository` — a field that read like
-    an answer and was not one."""
+    an answer and was not one. The value must match whichever backend is actually wired in."""
     body = client.get("/readyz").json()
-    assert body["repository"] == "SqliteRepository"
+    expected_repo = type(client.app.state.repository).__name__
+    assert body["repository"] == expected_repo, (
+        f"/readyz must report the actually-wired repository, got {body['repository']!r}, "
+        f"expected {expected_repo!r}"
+    )
+    assert expected_repo in ("SqliteRepository", "PostgresRepository")
     assert body["storage"] == "LocalStorage", "an empty .env must land on the filesystem backend"
     assert body["storage_configured"] is True
     assert body["repository"] != body["storage"]

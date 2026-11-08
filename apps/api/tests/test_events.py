@@ -59,10 +59,50 @@ from fastapi.testclient import TestClient
 
 from apps.api import repository as repository_module
 from apps.api.main import create_app
-from apps.api.repository import EventRecord, SqliteRepository
+from apps.api.repository import EventRecord, Repository, SqliteRepository
 from apps.api.routers import events as ev
 from apps.api.settings import Settings
 from apps.api.tests.conftest import USER_A, USER_B, create_item
+
+# ---------------------------------------------------------------------------------------
+# Backend-agnostic helpers. The suite runs against both SQLite and Postgres when
+# SNAPLIST_TEST_PG is set, and the cross-backend invariants below (append-only events, the
+# item_id grade CHECKs) must be proven on *both* engines rather than skipped on one. The two
+# drivers differ in (a) their positional placeholder (`?` vs `%s`) and (b) the exception class a
+# CHECK violation raises; these helpers paper over exactly those two differences.
+# ---------------------------------------------------------------------------------------
+try:
+    import psycopg  # only present when the optional `pg` dependency group is installed
+
+    from apps.api.repository import PostgresRepository as _PostgresRepository
+
+    _HAS_PG = True
+except Exception:  # pragma: no cover - lean checkout without psycopg
+    psycopg = None
+    _PostgresRepository = None
+    _HAS_PG = False
+
+
+#: Whether the suite is configured to also run against Postgres (mirrors conftest's switch).
+IS_POSTGRES_CONFIGURED = bool(os.environ.get("SNAPLIST_TEST_PG"))
+
+
+def _is_postgres(repository: object) -> bool:
+    return _HAS_PG and _PostgresRepository is not None and isinstance(
+        repository, _PostgresRepository
+    )
+
+
+def _placeholder(repository: object) -> str:
+    """`?` for SQLite, `%s` for Postgres — the two drivers' positional markers."""
+    return "%s" if _is_postgres(repository) else "?"
+
+
+def _integrity_error() -> type[Exception] | tuple[type[Exception], ...]:
+    """Either driver's integrity error, so a CHECK violation is caught on both backends."""
+    if _HAS_PG and psycopg is not None:
+        return (sqlite3.IntegrityError, psycopg.IntegrityError)
+    return sqlite3.IntegrityError
 
 ROOT = Path(__file__).resolve().parents[3]
 MIGRATION = ROOT / "infra" / "migrations" / "0002_events.sql"
@@ -669,7 +709,7 @@ def test_the_sqlite_mirror_refuses_a_subscription_with_an_item(
         currency="USD",
         item_id=item.id,
     )
-    with pytest.raises(sqlite3.IntegrityError) as excinfo:
+    with pytest.raises(_integrity_error()) as excinfo:
         repository.append_analytics_event(record)
     assert "CHECK" in str(excinfo.value).upper()
 
@@ -694,7 +734,7 @@ def test_the_sqlite_mirror_refuses_an_item_event_without_an_item(
         delivery_latency_ms=5,
         item_id=None,
     )
-    with pytest.raises(sqlite3.IntegrityError) as excinfo:
+    with pytest.raises(_integrity_error()) as excinfo:
         repository.append_analytics_event(record)
     assert "CHECK" in str(excinfo.value).upper()
 
@@ -708,14 +748,16 @@ def test_the_sqlite_mirror_refuses_an_item_event_without_an_item(
 # test asserted only the SQL *text*, so 569 green tests proved nothing. Everything below hits
 # a real table.
 # ---------------------------------------------------------------------------------------
-def hard_delete_item(repository: SqliteRepository, item_id: str) -> None:
+def hard_delete_item(repository: Repository, item_id: str) -> None:
     """A real `delete from items`, not the API's soft delete.
 
     This is the admin / erasure path the withdrawn FK was supposed to serve. It has to be a raw
     statement: `DELETE /v1/items/{id}` only sets `deleted_at`, which cannot exercise a delete
     action at all.
     """
-    repository._execute("delete from items where id = ?", (item_id,))
+    repository._execute(
+        f"delete from items where id = {_placeholder(repository)}", (item_id,)
+    )
 
 
 def minimal_event_record(**overrides: object) -> EventRecord:
@@ -833,6 +875,12 @@ def test_a_paywall_impression_is_not_rewritten_by_a_hard_delete(
     assert after.item_id == (UUID(item_id) if with_item else None)
 
 
+@pytest.mark.skipif(
+    IS_POSTGRES_CONFIGURED,
+    reason="SQLite-only: `pragma foreign_keys` / `pragma foreign_key_list` have no Postgres "
+    "equivalent, and assets has no FK to items on Postgres. The append-only invariant this test "
+    "anchors is proven cross-backend by the hard-delete behaviour tests below.",
+)
 def test_foreign_keys_are_enabled_and_events_item_id_has_no_delete_action(
     repository: SqliteRepository,
 ) -> None:
@@ -875,9 +923,10 @@ def test_an_item_event_cannot_be_nulled_after_the_fact(
     assert post(client, headers_a, body).status_code == 202
     event_id = str(body["event_id"])
 
-    with pytest.raises(sqlite3.IntegrityError) as excinfo:
+    with pytest.raises(_integrity_error()) as excinfo:
         repository._execute(
-            "update events set item_id = null where event_id = ?", (event_id,)
+            f"update events set item_id = null where event_id = {_placeholder(repository)}",
+            (event_id,),
         )
     assert "CHECK" in str(excinfo.value).upper()
     record = repository.get_analytics_event(UUID(event_id))
@@ -885,6 +934,13 @@ def test_an_item_event_cannot_be_nulled_after_the_fact(
     assert record.item_id == UUID(item_id)
 
 
+@pytest.mark.skipif(
+    IS_POSTGRES_CONFIGURED,
+    reason="SQLite-only mechanism: SQLite has no uuid type, so the mirror spells the shape out as "
+    "a length + GLOB CHECK. Postgres enforces item_id shape via the `uuid` column type instead "
+    "(strictly stronger); see the module docstring. The route layer still refuses a bad uuid on "
+    "both backends.",
+)
 def test_the_sqlite_mirror_refuses_a_non_uuid_item_id(
     repository: SqliteRepository,
 ) -> None:
