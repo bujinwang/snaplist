@@ -26,18 +26,21 @@ number came from, and it refuses the two ways a baseline rots silently:
 
   * it will not write a metric that is not a finite measured number (there is no such thing as
     "UNMEASURED" in a baseline: an absent number is an absent row);
-  * it will not write a metric whose provenance says its references are machine-made
-    (`algorithmic:*`, `ai:*`, a provisional set) unless `--allow-machine-references` is passed,
-    and it will not silently drop a metric the previous baseline had unless
-    `--allow-dropped-metrics` is passed.
+  * it will not write a metric whose provenance names machine-made references
+    (`algorithmic:*`, `ai:*`, `provisional`) or an AI-assisted point-reviewed tier
+    (`ai-assisted:*`) unless `--allow-machine-references` is passed, and it will not silently
+    drop a metric the previous baseline had unless `--allow-dropped-metrics` is passed.
+    ADR-010's three tiers are hand-drawn / AI-assisted point-reviewed / machine-made; the
+    marker vocabulary is imported from `evals.mask_provenance`.
 
 This checkout ships an **explicitly empty** baseline: `infra/ci/gates/baseline.json` has
 `"metrics": {}`. That is deliberate. The only two numbers the harness can measure today are
-`0.9299` segmentation IoU (n=20, references are `ai:`/`algorithmic:`, so a pipeline check and
-not E1-T4's hand-mask number) and `0.9936` prettify SSIM (n=9, synthetic labels, a destruction
-budget rather than a cleaning score). Enshrining either as "the bar" would turn a self-referential
-number into release evidence. So the gate exits `2` with the command that would create a real
-baseline, and prints every metric it knows about next to that reason.
+`0.9299` segmentation IoU (n=20, references are `ai:`/`algorithmic:` — the machine tier, so a
+pipeline check and not E1-T4's hand-mask number) and `0.9936` prettify SSIM (n=9, synthetic
+labels, a destruction budget rather than a cleaning score). Enshrining either as "the bar"
+would turn a self-referential number into release evidence. So the gate exits `2` with the
+command that would create a real baseline, and prints every metric it knows about next to that
+reason.
 """
 
 from __future__ import annotations
@@ -55,6 +58,18 @@ GATE_DIR = Path(__file__).resolve().parent
 ROOT = GATE_DIR.parents[2]
 DEFAULT_BASELINE = GATE_DIR / "baseline.json"
 
+# This script is run by file path (`python infra/ci/gates/regression_gate.py`) and loaded by
+# path in its tests, so the repo root is NOT necessarily on sys.path. It must be inserted
+# BEFORE the top-level `evals.mask_provenance` import or 65 gate cases fail at import time.
+# `load_measurements()` keeps its own idempotent insert for the in-process harness import.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from evals.mask_provenance import (  # noqa: E402 - sys.path must be prepared first
+    MACHINE_REFERENCE_MARKERS,  # noqa: F401 - deliberate re-export for the public guard API
+    is_machine_reference,
+)
+
 SCHEMA_VERSION = 1
 DEFAULT_TOLERANCE = 0.01
 UNMEASURED = "UNMEASURED"
@@ -63,16 +78,11 @@ EXIT_PASS = 0
 EXIT_REGRESSION = 1
 EXIT_INCONCLUSIVE = 2
 
-# Substrings that mark a measurement's provenance as "the references are not human-made".
-# Deliberately the same vocabulary `evals/run.py` and `evals/tools/seg_iou.py` use, so the
-# baseline guard and the report's own caveat can never disagree about the same set.
-MACHINE_REFERENCE_MARKERS: tuple[str, ...] = (
-    "not hand-drawn",
-    "algorithmic",
-    "ai:",
-    "provisional",
-)
-
+# ADR-010: the marker vocabulary and the classifier live in `evals/mask_provenance.py`, the
+# single source of truth shared with `evals/run.py`, `evals/tools/seg_iou.py` and
+# `evals/tools/validate_golden.py`. `MACHINE_REFERENCE_MARKERS` is imported (same object), not
+# redefined, so the baseline guard and the reports can never disagree about the same set.
+# `ai:` and `ai-assisted:` are both required: the new tier does not contain `ai:`.
 _MASK_SOURCE_RE = re.compile(r"mask source:\s*([^.;]+)")
 
 
@@ -374,9 +384,12 @@ def read_baseline(path: Path, *, default_tolerance: float = DEFAULT_TOLERANCE) -
 
 
 def has_machine_references(entry: Entry) -> bool:
-    """Whether a measurement's own provenance says its references are not human-made."""
-    haystack = f"{entry.provenance} {entry.set_name}".lower()
-    return any(marker in haystack for marker in MACHINE_REFERENCE_MARKERS)
+    """Whether a measurement's own provenance says its references are not human-made.
+
+    Delegates to the shared `evals.mask_provenance.is_machine_reference` so the marker list
+    and the substring semantics have exactly one definition (ADR-010).
+    """
+    return is_machine_reference(entry.provenance, entry.set_name)
 
 
 def evaluate(
@@ -576,8 +589,9 @@ def render(
             lines.append(f"  reason: {reason}")
             lines.append(
                 "  the only two metrics measurable in this checkout (segmentation IoU on "
-                "`ai:`/`algorithmic:` references, prettify SSIM on synthetic labels) are "
-                "pipeline checks, not DoD numbers — see infra/ci/gates/README.md."
+                "`ai:`/`algorithmic:` references — the ADR-010 machine tier — and prettify "
+                "SSIM on synthetic labels) are pipeline checks, not DoD numbers — see "
+                "infra/ci/gates/README.md."
             )
             lines.append(
                 "  create a baseline on purpose: "
@@ -654,9 +668,10 @@ def update_baseline(
     1. nothing measured at all — an empty file is what this checkout already ships; rewriting it
        adds a timestamp and no information;
     2. a non-finite value — `nan` compares false against everything and would pass forever;
-    3. a metric whose provenance says its references are machine-made, unless acknowledged —
+    3. a metric whose provenance names the machine tier or the AI-assisted point-reviewed
+       tier (`ai:` / `algorithmic:` / `ai-assisted:` / `provisional`), unless acknowledged —
        this is what stops `0.9299` IoU against `ai:`/`algorithmic:` references from becoming
-       "the bar";
+       "the bar" (ADR-010 three-tier vocabulary);
     4. a metric the existing baseline had that this run could not measure, unless acknowledged —
        otherwise a transient failure quietly deletes coverage and every later run passes.
     """
@@ -732,8 +747,9 @@ def update_baseline(
         messages.append(f"  dropped: {name} (was {previous.entries[name].value:.4f})")
     if machine:
         messages.append(
-            "  WARNING: this baseline gates a pipeline check only. It does not satisfy the E1-T4 "
-            "hand-mask DoD and must not be quoted as one."
+            "  WARNING: this baseline gates a pipeline check only. Its references are in the "
+            "ADR-010 machine / AI-assisted tiers, not the hand-drawn tier; it does not satisfy "
+            "the E1-T4 hand-mask DoD and must not be quoted as one."
         )
     return EXIT_PASS, messages
 

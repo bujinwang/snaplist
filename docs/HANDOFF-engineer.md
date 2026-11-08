@@ -1335,6 +1335,18 @@ predicted coverage 0.495 against a reference 0.396) is the model pulling the sha
   for the *plumbing*, never for the measurement.
 * A dress and ten bottoms still do not exist from a clean-licence web source.
 
+**ADR-010 status note (2026-11-08) — three-tier mask provenance, not an unblock.** The old
+"20 hand masks" wording above is the 2026-10-28 record and stays. ADR-010 adds two more tiers
+besides hand-drawn: `ai-assisted:<model>+point-reviewed` (AI proposal + evidenced human point
+review) and machine-made. The current 20 local masks are all machine-made (18
+`algorithmic:matting`, 2 `ai:google-ai-mode-nano-banana`); they are **not** grandfathered and
+must be re-made under the new rules with the review recorded in
+`evals/golden-review/point_review_register.json`. That register is `0/20` reviewed with the
+edit-distance threshold `UNSET`, so U1 is UNMET, E1-T4's hand-mask gate stays open and E2 must
+not start. `evals/mask_provenance.py` is now the single source of truth for all four consumers;
+`python -m evals.tools.validate_point_reviews` exit 0 means only "register structurally valid".
+The IoU semantics after the re-make belong to a follow-up ticket.
+
 ---
 
 ## 19. Addendum — the harness measures segmentation, and the repo is on GitHub (same day, `7122c28`)

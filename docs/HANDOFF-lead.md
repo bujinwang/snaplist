@@ -235,7 +235,14 @@ parallel.
    and `evals/reports/` are where the real numbers will live; when PRD quotes one, name the file
    it came from. I have not touched your four files.
 2. **vision** — E0-T1 first, then E1. Do not start E2 until the 20 hand masks exist, or the IoU
-   number will be `UNMEASURED` forever.
+   number will be `UNMEASURED` forever. **ADR-010 status note (2026-11-08): this precondition is
+   NOT lifted.** The relaxed DoD replaces the pure `hand` prefix with three provenance tiers
+   (hand-drawn / AI-assisted point-reviewed / machine-made) plus a two-condition check of
+   source field + evidence record. The 20 existing machine-made masks are not grandfathered:
+   they must be re-made under the new rules and the point review evidenced in
+   `evals/golden-review/point_review_register.json`. That register is `0/20` reviewed with the
+   edit-distance threshold `UNSET`, so U1 is UNMET, E1-T4's hand-mask gate stays open and E2
+   still must not start.
 3. **backend** — `apps/api/schemas.py` is frozen at v1.0.0. Adding a field needs an ADR + version
    bump in both files; the parity test will fail the build otherwise, on purpose.
 4. **mobile** — `apps/mobile/index.ts` replaces `expo/AppEntry.js` because pnpm hoists `expo` to

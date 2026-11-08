@@ -51,6 +51,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from evals import UNMEASURED, git_sha
+from evals import mask_provenance as mp
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "evals" / "golden" / "manifest.json"
@@ -108,7 +109,7 @@ class Measurement:
     value: float
     n: int
     set_name: str
-    note: str  # e.g. "masks are algorithmic, not hand-drawn"
+    note: str  # e.g. "mask source: …" plus one of the three ADR-010 provenance tiers
 
     def cell(self) -> str:
         return f"{self.value:.4f} (n={self.n}, {self.set_name})"
@@ -190,15 +191,15 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
 
 
 def _is_hand_made_source(source: str) -> bool:
-    """Whether a `mask_source` string claims a human drew the mask.
+    """Whether a `mask_source` claims a human drew the mask (ADR-010 tier HAND).
 
-    Same convention as `evals/tools/seg_iou.py::_is_hand_made`, and deliberately kept in step
-    with it: the table row's note and that tool's own report must never disagree about whether
-    the same set is hand-masked. Anything that does not start with `hand` — `algorithmic:*`,
-    `ai:*`, an empty or unknown value — counts as machine-made, because a set that stays quiet
-    about its provenance must not be able to certify itself.
+    Delegates to the shared `evals.mask_provenance` module, exactly as
+    `evals/tools/seg_iou.py::_is_hand_made`, `validate_golden.py` and the regression gate do:
+    the harness note, the report, the validator tally and the baseline guard must never
+    disagree about the same set. `hand` keeps its meaning; AI-assisted point-reviewed is a
+    separate tier and is not hand. The sceptical default (unknown => machine) is unchanged.
     """
-    return source.strip().lower().startswith("hand")
+    return mp.is_hand_made(source)
 
 
 def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
@@ -231,17 +232,36 @@ def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
 
     stats = seg_iou.summarise(rows)
     sources = sorted({str(row.get("mask_source", "unspecified")) for row in rows})
-    machine_sources = [name for name in sources if not _is_hand_made_source(name)]
+    tiers = {name: mp.classify(name).tier for name in sources}
+    machine_sources = [name for name in sources if tiers[name] is mp.MaskSourceTier.MACHINE]
+    ai_assisted_sources = [
+        name for name in sources
+        if tiers[name] is mp.MaskSourceTier.AI_ASSISTED_REVIEWED
+    ]
+    hand_sources = [name for name in sources if _is_hand_made_source(name)]
+    # ADR-010: this function does NOT call the segmentation renderer and does not inject a
+    # ReviewState; only seg_iou.main() does that. The note states the register fact in prose.
     note = (
         f"backend {meta['backend']} on {meta['device']}, mask source: {', '.join(sources)}; "
         f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
     )
-    if machine_sources:
-        # The row is what gets quoted, so the caveat has to travel with it: a mean IoU taken
-        # against machine-made references is a pipeline check, not E1-T4's hand-mask number.
+    if machine_sources and not (ai_assisted_sources or hand_sources):
+        # All-machine tier, word for word unchanged: the caveat must travel with the row.
         note += (
             f"; references are not hand-drawn ({', '.join(machine_sources)}) — a pipeline check, "
             "not the E1-T4 DoD number; the hand-mask gate stays open"
+        )
+    else:
+        tier_summary = (
+            f"hand-drawn={len(hand_sources)}, "
+            f"AI-assisted point-reviewed={len(ai_assisted_sources)}, "
+            f"machine-made={len(machine_sources)}"
+        )
+        note += (
+            f"; ADR-010 tiers: {tier_summary}; the relaxed-DoD decision is the "
+            "\"source field + evidence record\" two-condition check in "
+            "python -m evals.tools.validate_point_reviews; for this run U1 is UNMET "
+            "(register 0/20 reviewed), so the hand-mask gate stays open"
         )
     measurement = Measurement(
         value=stats["mean"],

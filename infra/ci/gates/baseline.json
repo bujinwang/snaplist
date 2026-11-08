@@ -9,11 +9,11 @@
   "notes": [
     "DELIBERATELY EMPTY. \"metrics\": {} is the whole point of this file, not an oversight.",
     "The only two numbers evals.run.measurements() can produce in this checkout are 0.9299 segmentation mean IoU (n=20) and 0.9936 prettify SSIM (n=9).",
-    "The segmentation references are ai:google-ai-mode-nano-banana and algorithmic:matting, not hand masks — so that number is a pipeline check, not the E1-T4 DoD number, and enshrining it as \"the bar\" would turn a self-referential measurement into release evidence.",
+    "The segmentation references are in the ADR-010 machine tier (ai:google-ai-mode-nano-banana and algorithmic:matting; three-tier tally: hand-drawn 0/20, AI-assisted point-reviewed 0/20, machine-made 20/20) — so that number is a pipeline check, not the E1-T4 DoD number, and enshrining it as \"the bar\" would turn a self-referential measurement into release evidence.",
     "The prettify number is SSIM between the output and its own input on fixtures with synthetic labels: a destruction budget (1.0 = nothing changed), not a cleaning score.",
     "Consequence, by design: `python infra/ci/gates/regression_gate.py` exits 2 (INCONCLUSIVE) and says so. It never exits 0 having compared nothing.",
     "To create a real baseline on purpose: python infra/ci/gates/regression_gate.py --update-baseline (add --allow-machine-references only if a pipeline-regression baseline is what you actually want, and read infra/ci/gates/README.md first).",
-    "git_sha above is HEAD at the time this placeholder was authored; this file is untracked until the lead commits it."
+    "git_sha above is HEAD at the time this placeholder was authored; this file is tracked (committed) in git."
   ],
   "metrics": {}
 }

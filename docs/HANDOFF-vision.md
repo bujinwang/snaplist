@@ -64,6 +64,17 @@ Consequently:
   2 `ai:google-ai-mode-nano-banana`; hand-drawn 0/20), so E1-T4's hand-mask DoD is
   **still NOT met**. The 40 real photos are what made the local accuracy measurement possible;
   hand masks were never a prerequisite for running the pipeline.
+
+**ADR-010 status note (2026-11-08) — three mask-provenance tiers, still NOT unblocked.** The
+`mask_source` vocabulary is now classified by `evals/mask_provenance.py` into hand-drawn,
+`ai-assisted:<model>+point-reviewed` and machine-made; all 20 masks here are machine-made
+(hand-drawn 0/20, AI-assisted point-reviewed 0/20). Bert's ruling 1 does not grandfather them:
+they must be re-made under the new rules and the review evidenced in
+`evals/golden-review/point_review_register.json` (`0/20` reviewed, edit-distance threshold
+`UNSET`, **U1 UNMET**). The relaxed DoD is the two-condition check in
+`python -m evals.tools.validate_point_reviews`; its exit 0 means only "register structurally
+valid", and U1's last step is a human sign-off. E1-T4's hand-mask gate stays open, E2 must not
+start, and ADR-010 does not pre-adjudicate the IoU semantics after the 20 masks are re-made.
 * `cost_usd` stays `None` in the live output by design; the rate of truth is ADR-006, not code.
   Real `prompt_tokens`/`completion_tokens` (1025/192 on the measured call) are surfaced in
   `attributes.json`; at ADR-006's off-peak rate that is ≈ $0.00027/item (~110× under the
