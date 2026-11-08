@@ -1,0 +1,113 @@
+classDiagram
+    class Repository {
+        <<Protocol>>
+        +create_item(user_id, status) ItemRecord
+        +get_item(item_id, user_id, include_deleted) ItemRecord
+        +update_item_attributes(item_id, user_id, attributes) ItemRecord
+        +soft_delete_item(item_id, user_id) bool
+        +set_asset(item_id, user_id, kind, storage_path, position, byte_size, meta) None
+        +create_job(item_id, user_id, kind) JobRecord
+        +get_job(job_id, user_id) JobRecord
+        +update_job(job) JobRecord
+        +peek_next_queued_job() JobRecord
+        +has_finished_job(item_id) bool
+        +list_jobs_by_state(state) list~JobRecord~
+        +append_usage_event(event) None
+        +quota_units_used(user_id, start, end) int
+        +count_events(user_id, event, start, end) int
+        +has_event_for_job(job_id, event) bool
+        +get_plan(user_id) PlanTier
+        +set_plan(user_id, plan) None
+        +get_paywall_variant(user_id) str
+        +assign_paywall_variant(user_id) str
+        +plan_limit(plan) int
+        +set_plan_limit(plan, items_per_month) None
+        +get_idempotent_item(key, user_id, endpoint) tuple
+        +store_idempotent_item(key, user_id, endpoint, item_id, job_id) None
+        +append_analytics_event(event) bool
+        +get_analytics_event(event_id) EventRecord
+        +transaction() contextmanager
+    }
+
+    class PostgresRepository {
+        - _conn: psycopg.Connection
+        - _lock: threading.RLock
+        - _depth: int
+        + __init__(dsn)
+        + _execute(sql, params)
+        + _query(sql, params)
+        - _item_from_row(row) ItemRecord
+        - _job_from_row(row) JobRecord
+        - _analytics_event_from_row(row) EventRecord
+    }
+
+    class SqliteRepository {
+        - _conn: sqlite3.Connection
+        - _lock: threading.RLock
+        - _depth: int
+    }
+
+    Repository <|.. PostgresRepository
+    Repository <|.. SqliteRepository
+
+    PostgresRepository ..> ItemRecord : builds/reads
+    PostgresRepository ..> JobRecord : builds/reads
+    PostgresRepository ..> AssetRecord : builds
+    PostgresRepository ..> UsageEventRecord : builds
+    PostgresRepository ..> EventRecord : builds/reads
+
+    class ItemRecord {
+        + id: UUID
+        + user_id: UUID
+        + status: str
+        + attributes: ItemAttributes
+        + created_at: datetime
+        + updated_at: datetime
+        + deleted_at: datetime
+        + assets: tuple
+    }
+    class JobRecord {
+        + id: UUID
+        + item_id: UUID
+        + user_id: UUID
+        + kind: JobKind
+        + state: JobState
+        + attempts: int
+        + progress: float
+        + reason_code: ReasonCode
+        + claimed_by: str
+    }
+    class AssetRecord {
+        + kind: str
+        + position: int
+        + storage_path: str
+        + byte_size: int
+        + meta: Mapping
+    }
+    class UsageEventRecord {
+        + user_id: UUID
+        + event: str
+        + units: int
+        + created_at: datetime
+        + job_id: UUID
+        + item_id: UUID
+        + plan: PlanTier
+        + marketplace: str
+        + fields_touched: int
+        + edited_field_count: int
+        + metadata: Mapping
+    }
+    class EventRecord {
+        + event_id: UUID
+        + event: str
+        + client_ts: datetime
+        + received_at: datetime
+        + session_id: str
+        + subject: str
+        + payload_sha256: str
+        + item_id: UUID
+        + field_names: tuple
+    }
+
+    note for PostgresRepository "Reuses the SAME frozen record dataclasses.\nSingle psycopg Connection + RLock, mirrors\nSqliteRepository. RLS bypassed (service_role);\nisolation via explicit user_id predicate.\nupdated_at maintained by PG trigger."
+    note for Repository "26 protocol methods; same signatures as\nSqliteRepository so no router changes."

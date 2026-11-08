@@ -29,6 +29,7 @@ wire and the same format the zod mirror validates. One format, no timezone surpr
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import uuid
@@ -69,6 +70,19 @@ def from_wire(value: str | None) -> datetime | None:
     if value is None:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _coerce_dt(value: datetime | str | None) -> datetime | None:
+    """Normalise a stored timestamp to a `datetime`.
+
+    Postgres returns `timestamptz` as a tz-aware `datetime`; SQLite stores the same instant as
+    ISO-8601 `text`. One helper, so `_*_from_row` never has to know which backend produced it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return from_wire(value)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1265,13 +1279,575 @@ class SqliteRepository:
         )
 
 
-def build_repository(database: str | Path | None = None) -> SqliteRepository:
-    """Create the repository for a process. `SNAPLIST_DB` selects a file or `:memory:`.
+class PostgresRepository:
+    """One process's connection to Supabase/Postgres. Implements the same `Repository` protocol
+    as `SqliteRepository` — **no router changes** (see the module docstring, line 8).
 
-    A file database is what `make dev` uses so a curl session survives an uvicorn reload;
-    the test suite always passes `:memory:` explicitly through `create_app(repository=...)`.
+    Design notes
+    ------------
+    * psycopg is imported *inside* `__init__`, not at module top: the base install does not pull
+      the `pg` dependency group (`pyproject.toml`), and `import apps.api.repository` must keep
+      working on a lean checkout. Constructing this class without psycopg installed raises a clear
+      `ModuleNotFoundError`.
+    * The connection is opened as the URL's role. In this build that is the local superuser, which
+      **bypasses RLS** — exactly like the production API process talking to Postgres through the
+      service role. Isolation therefore comes from the explicit `user_id` predicate every query
+      carries (identical to `SqliteRepository`), and `test_isolation.py` proves it. RLS is the
+      *second* layer that protects a client that could reach the table directly (PostgREST); it is
+      proven separately in `test_rls_isolation_pg.py` by connecting as `authenticated`. So: do NOT
+      set `request.jwt.claim.sub` here — that is the shim's job and would only matter for a
+      non-privileged connection.
+    * A single connection is serialised by an `RLock` (mirroring `SqliteRepository`), because
+      psycopg connections are not thread-safe and the test `TestClient` may call from another
+      thread. `transaction()` is re-entrant via a depth counter + psycopg savepoints.
     """
-    import os
 
-    target = database if database is not None else os.environ.get("SNAPLIST_DB", ":memory:")
+    def __init__(self, url: str) -> None:
+        import psycopg
+        from psycopg.types.json import Json
+
+        self.url = url
+        self._lock = threading.RLock()
+        # psycopg3 does NOT auto-adapt a Python `dict` to `jsonb`; wrap dict params in `Json`.
+        self._Json = Json
+        # `row_factory` lets `_*_from_row` address columns by name.
+        self._conn = psycopg.connect(url, row_factory=psycopg.rows.dict_row)
+        # psycopg returns tz-aware `datetime` for `timestamptz`, `uuid.UUID` for `uuid`,
+        # `dict`/`list` for `jsonb`/`text[]`, and `Decimal` for `numeric` — all handled below.
+
+    # -- plumbing ----------------------------------------------------------------------
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """All-or-nothing block. Re-entrant: a nested call joins the outer transaction via a
+        psycopg savepoint (psycopg3 auto-creates one when called inside an active transaction)."""
+        with self._lock:
+            with self._conn.transaction():
+                yield
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def truncate_all(self) -> None:
+        """Test helper: wipe data (not schema) so each test starts clean.
+
+        `plan_limits` is **re-seeded to the canonical compile-time defaults** rather than left
+        alone: a test that calls `set_plan_limit` must not leak its override into the next test.
+        On SQLite every test gets a fresh `:memory:` database whose `_SCHEMA` seeds exactly these
+        numbers, so this is the Postgres analogue of that hermetic baseline — without it, an
+        override set by one postgres test silently changes another test's ceiling. `restart
+        identity cascade` resets any sequences and follows FKs.
+        """
+        from apps.api.usage import limits_from_settings
+
+        seed = limits_from_settings()
+        with self._lock:
+            with self._conn.transaction():
+                self._conn.execute(
+                    "truncate table items, assets, jobs, usage_events, events, profiles, "
+                    "idempotency_keys restart identity cascade"
+                )
+                for plan, value in (
+                    ("free", seed.free),
+                    ("starter", seed.starter),
+                    ("pro", seed.pro),
+                ):
+                    self._conn.execute(
+                        "insert into plan_limits (plan, items_per_month) values (%s, %s) "
+                        "on conflict (plan) do update "
+                        "set items_per_month = excluded.items_per_month",
+                        (plan, value),
+                    )
+
+    def _query(self, sql: str, params: Sequence[Any] = ()) -> list[dict]:
+        # Each standalone statement is its own committed transaction — mirrors SQLite's
+        # `isolation_level=None` (autocommit) so a mid-test error cannot leave the connection in
+        # an aborted-transaction state that poisons every later call.
+        with self._lock:
+            with self._conn.transaction():
+                return list(self._conn.execute(sql, tuple(params)).fetchall())
+
+    def _execute(self, sql: str, params: Sequence[Any] = ()) -> int:
+        """Run a write; returns the number of affected rows (useful for conditional updates)."""
+        with self._lock:
+            with self._conn.transaction():
+                return self._conn.execute(sql, tuple(params)).rowcount
+
+    # -- items -------------------------------------------------------------------------
+    def create_item(self, *, user_id: UUID, status: str = "draft") -> ItemRecord:
+        now = utcnow()
+        record = ItemRecord(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            status=status,
+            attributes=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self._execute(
+            "insert into items (id, user_id, status, attributes, created_at, updated_at) "
+            "values (%s, %s, %s, %s, %s, %s)",
+            (str(record.id), str(user_id), status, None, now, now),
+        )
+        return record
+
+    def get_item(
+        self, item_id: UUID, *, user_id: UUID, include_deleted: bool = False
+    ) -> ItemRecord | None:
+        rows = self._query(
+            "select * from items where id = %s and user_id = %s", (str(item_id), str(user_id))
+        )
+        if not rows:
+            return None
+        record = self._item_from_row(rows[0])
+        if record.deleted_at is not None and not include_deleted:
+            return None
+        assets = self._query(
+            "select kind, position, storage_path, byte_size, meta from assets "
+            "where item_id = %s order by kind, position",
+            (str(item_id),),
+        )
+        return ItemRecord(
+            id=record.id,
+            user_id=record.user_id,
+            status=record.status,
+            attributes=record.attributes,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            deleted_at=record.deleted_at,
+            assets=tuple(
+                AssetRecord(
+                    kind=row["kind"],
+                    position=int(row["position"]),
+                    storage_path=row["storage_path"],
+                    byte_size=int(row["byte_size"]) if row["byte_size"] is not None else None,
+                    meta=row["meta"] if row["meta"] else {},
+                )
+                for row in assets
+            ),
+        )
+
+    def update_item_attributes(
+        self, item_id: UUID, *, user_id: UUID, attributes: ItemAttributes
+    ) -> ItemRecord | None:
+        current = self.get_item(item_id, user_id=user_id)
+        if current is None:
+            return None
+        self._execute(
+            "update items set attributes = %s, updated_at = now() "
+            "where id = %s and user_id = %s",
+            (self._Json(attributes.model_dump(mode="json")), str(item_id), str(user_id)),
+        )
+        return self.get_item(item_id, user_id=user_id)
+
+    def soft_delete_item(self, item_id: UUID, *, user_id: UUID) -> bool:
+        current = self.get_item(item_id, user_id=user_id)
+        if current is None or current.deleted_at is not None:
+            return False
+        # status='deleted' and deleted_at=now() together satisfy the
+        # `items_deleted_agrees_with_status` CHECK (both sides flip at once).
+        affected = self._execute(
+            "update items set status = 'deleted', deleted_at = now() "
+            "where id = %s and user_id = %s and deleted_at is null",
+            (str(item_id), str(user_id)),
+        )
+        return affected == 1
+
+    def set_asset(
+        self,
+        item_id: UUID,
+        *,
+        user_id: UUID,
+        kind: str,
+        storage_path: str,
+        position: int = 0,
+        byte_size: int | None = None,
+        meta: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = dict(meta or {})
+        self._execute(
+            "insert into assets (item_id, user_id, kind, position, storage_path, byte_size, "
+            "meta, created_at) values (%s, %s, %s, %s, %s, %s, %s, now()) "
+            "on conflict (item_id, kind, position) do update set "
+            "storage_path = excluded.storage_path, "
+            "byte_size = excluded.byte_size, "
+            "meta = excluded.meta, "
+            "updated_at = now()",
+            (
+                str(item_id),
+                str(user_id),
+                kind,
+                position,
+                storage_path,
+                byte_size,
+                self._Json(payload),
+            ),
+        )
+
+    @staticmethod
+    def _item_from_row(row: dict) -> ItemRecord:
+        raw = row["attributes"]
+        attributes = ItemAttributes.model_validate(raw) if raw else None
+        return ItemRecord(
+            id=UUID(str(row["id"])),
+            user_id=UUID(str(row["user_id"])),
+            status=row["status"],
+            attributes=attributes,
+            created_at=_coerce_dt(row["created_at"]) or utcnow(),
+            updated_at=_coerce_dt(row["updated_at"]) or utcnow(),
+            deleted_at=_coerce_dt(row["deleted_at"]),
+        )
+
+    # -- jobs --------------------------------------------------------------------------
+    def create_job(self, *, item_id: UUID, user_id: UUID, kind: JobKind) -> JobRecord:
+        now = utcnow()
+        job = JobRecord(
+            id=uuid.uuid4(),
+            item_id=item_id,
+            user_id=user_id,
+            kind=kind,
+            state=JobState.QUEUED,
+            attempts=0,
+            progress=0.0,
+            created_at=now,
+            updated_at=now,
+        )
+        self._execute(
+            "insert into jobs (id, item_id, user_id, kind, state, attempts, progress, "
+            "provider, created_at, updated_at) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                str(job.id),
+                str(item_id),
+                str(user_id),
+                kind.value,
+                JobState.QUEUED.value,
+                0,
+                0.0,
+                "stub",
+                now,
+                now,
+            ),
+        )
+        return job
+
+    def get_job(self, job_id: UUID, *, user_id: UUID) -> JobRecord | None:
+        rows = self._query(
+            "select * from jobs where id = %s and user_id = %s", (str(job_id), str(user_id))
+        )
+        return self._job_from_row(rows[0]) if rows else None
+
+    def update_job(self, job: JobRecord) -> JobRecord:
+        self._execute(
+            "update jobs set state = %s, reason_code = %s, attempts = %s, progress = %s, "
+            "error_detail = %s, claimed_by = %s, updated_at = now(), "
+            "started_at = %s, finished_at = %s "
+            "where id = %s and user_id = %s",
+            (
+                job.state.value,
+                job.reason_code.value if job.reason_code else None,
+                job.attempts,
+                job.progress,
+                job.error_detail,
+                job.claimed_by,
+                job.started_at,
+                job.finished_at,
+                str(job.id),
+                str(job.user_id),
+            ),
+        )
+        return job
+
+    @staticmethod
+    def _job_from_row(row: dict) -> JobRecord:
+        return JobRecord(
+            id=UUID(str(row["id"])),
+            item_id=UUID(str(row["item_id"])),
+            user_id=UUID(str(row["user_id"])),
+            kind=JobKind(row["kind"]),
+            state=JobState(row["state"]),
+            reason_code=ReasonCode(row["reason_code"]) if row["reason_code"] else None,
+            attempts=int(row["attempts"]),
+            progress=float(row["progress"]),
+            error_detail=row["error_detail"],
+            claimed_by=row["claimed_by"],
+            created_at=_coerce_dt(row["created_at"]) or utcnow(),
+            updated_at=_coerce_dt(row["updated_at"]) or utcnow(),
+            started_at=_coerce_dt(row["started_at"]),
+            finished_at=_coerce_dt(row["finished_at"]),
+        )
+
+    def peek_next_queued_job(self) -> JobRecord | None:
+        """Oldest queued job whose item has its source bytes, without claiming it.
+
+        Mirrors `SqliteRepository.peek_next_queued_job`: the claim (queued->running) is the
+        caller's transaction + the state machine, not this method. The Postgres form uses the
+        production claim query form — `for update skip locked` (see `0001_init.sql` §10) — inside
+        its own transaction, so the lock is released when this method returns (single-worker local
+        build, same as SQLite's `begin immediate`).
+        """
+        with self.transaction():
+            rows = self._query(
+                "select * from jobs j where j.state = 'queued' "
+                "and exists (select 1 from assets a "
+                "            where a.item_id = j.item_id and a.kind = 'source') "
+                "order by j.created_at, j.id for update skip locked limit 1"
+            )
+        return self._job_from_row(rows[0]) if rows else None
+
+    def list_jobs_by_state(self, state: JobState) -> list[JobRecord]:
+        rows = self._query(
+            "select * from jobs where state = %s order by created_at, id", (state.value,)
+        )
+        return [self._job_from_row(row) for row in rows]
+
+    def has_finished_job(self, item_id: UUID) -> bool:
+        rows = self._query(
+            "select 1 from jobs where item_id = %s and state = 'done' limit 1", (str(item_id),)
+        )
+        return bool(rows)
+
+    # -- usage ledger ------------------------------------------------------------------
+    def append_usage_event(self, event: UsageEventRecord) -> None:
+        self._execute(
+            "insert into usage_events (user_id, event, units, job_id, item_id, plan, "
+            "marketplace, fields_touched, edited_field_count, metadata, created_at) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                str(event.user_id),
+                event.event,
+                event.units,
+                str(event.job_id) if event.job_id else None,
+                str(event.item_id) if event.item_id else None,
+                event.plan.value if event.plan else None,
+                event.marketplace,
+                event.fields_touched,
+                event.edited_field_count,
+                self._Json(dict(event.metadata or {})),
+                event.created_at,
+            ),
+        )
+
+    def quota_units_used(self, user_id: UUID, *, start: datetime, end: datetime) -> int:
+        """Units spent in [start, end): spends are -1, refunds +1, so used = -sum."""
+        rows = self._query(
+            "select coalesce(sum(units), 0) as total from usage_events "
+            "where user_id = %s and event in ('item_enqueued', 'job_refunded') "
+            "and created_at >= %s and created_at < %s",
+            (str(user_id), start, end),
+        )
+        spent = -int(rows[0]["total"]) if rows else 0
+        return max(spent, 0)
+
+    def count_events(
+        self, user_id: UUID, event: str, *, start: datetime, end: datetime
+    ) -> int:
+        rows = self._query(
+            "select count(*) as n from usage_events where user_id = %s and event = %s "
+            "and created_at >= %s and created_at < %s",
+            (str(user_id), event, start, end),
+        )
+        return int(rows[0]["n"]) if rows else 0
+
+    def has_event_for_job(self, job_id: UUID, event: str) -> bool:
+        rows = self._query(
+            "select 1 from usage_events where job_id = %s and event = %s limit 1",
+            (str(job_id), event),
+        )
+        return bool(rows)
+
+    # -- analytics funnel (public.events) ----------------------------------------------
+    def append_analytics_event(self, event: EventRecord) -> bool:
+        """Insert one funnel row. True if written, False if that `event_id` already exists.
+
+        `on conflict (event_id) do nothing returning event_id`: a returned row means the insert
+        happened; no row means the conflict was skipped (the same idempotency guarantee as the
+        SQLite `on conflict do nothing` + `rowcount`). `field_names` is a `text[]` here (SQLite
+        stores JSON text); order is preserved by the array. `item_id` is written as `uuid`/`NULL`.
+        """
+        row = self._query(
+            "insert into events ("
+            "event_id, event, client_ts, received_at, session_id, subject, app_version, "
+            "platform, source, capture_mode, batch_index, decision, job_latency_ms, "
+            "prettify_latency_ms, attrs_latency_ms, edited_field_count, fields_touched, "
+            "field_names, marketplace, row_count, export_latency_ms, bytes, "
+            "delivery_latency_ms, plan, paywall_variant, amount_cents, currency, "
+            "paywall_trigger, plan_offered, payload_sha256, item_id) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "on conflict (event_id) do nothing returning event_id",
+            (
+                str(event.event_id),
+                event.event,
+                event.client_ts,
+                event.received_at,
+                event.session_id,
+                event.subject,
+                event.app_version,
+                event.platform,
+                event.source,
+                event.capture_mode,
+                event.batch_index,
+                event.decision,
+                event.job_latency_ms,
+                event.prettify_latency_ms,
+                event.attrs_latency_ms,
+                event.edited_field_count,
+                event.fields_touched,
+                None if event.field_names is None else list(event.field_names),
+                event.marketplace,
+                event.row_count,
+                event.export_latency_ms,
+                event.bytes,
+                event.delivery_latency_ms,
+                event.plan,
+                event.paywall_variant,
+                event.amount_cents,
+                event.currency,
+                event.paywall_trigger,
+                event.plan_offered,
+                event.payload_sha256,
+                None if event.item_id is None else str(event.item_id),
+            ),
+        )
+        return bool(row)
+
+    def get_analytics_event(self, event_id: UUID) -> EventRecord | None:
+        rows = self._query("select * from events where event_id = %s", (str(event_id),))
+        return self._analytics_event_from_row(rows[0]) if rows else None
+
+    @staticmethod
+    def _analytics_event_from_row(row: dict) -> EventRecord:
+        raw_names = row["field_names"]
+        return EventRecord(
+            event_id=UUID(str(row["event_id"])),
+            event=row["event"],
+            client_ts=_coerce_dt(row["client_ts"]) or utcnow(),
+            received_at=_coerce_dt(row["received_at"]) or utcnow(),
+            session_id=row["session_id"],
+            subject=row["subject"],
+            app_version=row["app_version"],
+            platform=row["platform"],
+            payload_sha256=row["payload_sha256"],
+            item_id=None if row["item_id"] is None else UUID(str(row["item_id"])),
+            source=row["source"],
+            capture_mode=row["capture_mode"],
+            batch_index=row["batch_index"],
+            decision=row["decision"],
+            job_latency_ms=row["job_latency_ms"],
+            prettify_latency_ms=row["prettify_latency_ms"],
+            attrs_latency_ms=row["attrs_latency_ms"],
+            edited_field_count=row["edited_field_count"],
+            fields_touched=row["fields_touched"],
+            field_names=None if raw_names is None else tuple(raw_names),
+            marketplace=row["marketplace"],
+            row_count=row["row_count"],
+            export_latency_ms=row["export_latency_ms"],
+            bytes=row["bytes"],
+            delivery_latency_ms=row["delivery_latency_ms"],
+            plan=row["plan"],
+            paywall_variant=row["paywall_variant"],
+            amount_cents=row["amount_cents"],
+            currency=row["currency"],
+            paywall_trigger=row["paywall_trigger"],
+            plan_offered=row["plan_offered"],
+        )
+
+    # -- plans -------------------------------------------------------------------------
+    def get_plan(self, user_id: UUID) -> PlanTier:
+        rows = self._query("select plan from profiles where user_id = %s", (str(user_id),))
+        if not rows:
+            return PlanTier.FREE
+        try:
+            return PlanTier(rows[0]["plan"])
+        except ValueError:
+            return PlanTier.FREE
+
+    def set_plan(self, user_id: UUID, plan: PlanTier) -> None:
+        self._execute(
+            "insert into profiles (user_id, plan, created_at) values (%s, %s, now()) "
+            "on conflict (user_id) do update set plan = excluded.plan",
+            (str(user_id), plan.value),
+        )
+
+    def get_paywall_variant(self, user_id: UUID) -> str:
+        rows = self._query(
+            "select paywall_variant from profiles where user_id = %s", (str(user_id),)
+        )
+        if not rows or not rows[0]["paywall_variant"]:
+            return "a"
+        return str(rows[0]["paywall_variant"])
+
+    def assign_paywall_variant(self, user_id: UUID) -> str:
+        variant = _paywall_variant_for(user_id)
+        self._execute(
+            "insert into profiles (user_id, plan, paywall_variant, created_at) "
+            "values (%s, 'free', %s, now()) "
+            "on conflict (user_id) do update set paywall_variant = excluded.paywall_variant",
+            (str(user_id), variant),
+        )
+        return variant
+
+    # -- plan ceilings (runtime override of apps/api/settings.py) -----------------------
+    def plan_limit(self, plan: PlanTier) -> int | None:
+        rows = self._query(
+            "select items_per_month from plan_limits where plan = %s", (plan.value,)
+        )
+        return int(rows[0]["items_per_month"]) if rows else None
+
+    def set_plan_limit(self, plan: PlanTier, items_per_month: int) -> None:
+        if items_per_month <= 0:
+            raise ValueError("items_per_month must be positive")
+        self._execute(
+            "insert into plan_limits (plan, items_per_month) values (%s, %s) "
+            "on conflict (plan) do update set items_per_month = excluded.items_per_month",
+            (plan.value, items_per_month),
+        )
+
+    # -- idempotency -------------------------------------------------------------------
+    def get_idempotent_item(
+        self, key: str, *, user_id: UUID, endpoint: str
+    ) -> tuple[UUID, UUID] | None:
+        rows = self._query(
+            "select item_id, job_id from idempotency_keys "
+            "where user_id = %s and endpoint = %s and key = %s",
+            (str(user_id), endpoint, key),
+        )
+        if not rows:
+            return None
+        return UUID(str(rows[0]["item_id"])), UUID(str(rows[0]["job_id"]))
+
+    def store_idempotent_item(
+        self, key: str, *, user_id: UUID, endpoint: str, item_id: UUID, job_id: UUID
+    ) -> None:
+        self._execute(
+            "insert into idempotency_keys "
+            "(user_id, endpoint, key, item_id, job_id, created_at) "
+            "values (%s, %s, %s, %s, %s, now()) "
+            "on conflict (user_id, endpoint, key) do update set "
+            "item_id = excluded.item_id, "
+            "job_id = excluded.job_id, "
+            "created_at = excluded.created_at",
+            (str(user_id), endpoint, key, str(item_id), str(job_id)),
+        )
+
+
+def build_repository(database: str | Path | None = None) -> SqliteRepository | PostgresRepository:
+    """Create the repository for a process. `SNAPLIST_DB` selects the backend.
+
+    * unset / `:memory:` / a file path  -> `SqliteRepository` (the default dev + test backend)
+    * a `postgresql://` or `postgres://` URL -> `PostgresRepository` (E5-T4/T5 deployment)
+
+    A file database is what `make dev` uses so a curl session survives an uvicorn reload; the test
+    suite always passes `:memory:` explicitly through `create_app(repository=...)`. The default
+    checkout has no Postgres driver (`pyproject.toml` `pg` group), so the Postgres branch is only
+    reached when a Postgres URL is actually configured — importing this module never requires
+    psycopg.
+    """
+    target = database if database is not None else os.environ.get("SNAPLIST_DB")
+    if target is None:
+        return SqliteRepository(":memory:")
+    if isinstance(target, str) and (
+        target.startswith("postgresql://") or target.startswith("postgres://")
+    ):
+        return PostgresRepository(target)
     return SqliteRepository(target)

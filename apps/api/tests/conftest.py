@@ -10,6 +10,7 @@ No credentials, no network, no filesystem database.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from uuid import UUID
 
@@ -17,12 +18,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
-from apps.api.repository import SqliteRepository
+from apps.api.repository import PostgresRepository, SqliteRepository
 from apps.api.settings import Settings
 
 USER_A = UUID("11111111-1111-4111-8111-111111111111")
 USER_B = UUID("22222222-2222-4222-8222-222222222222")
 MISSING = UUID("00000000-0000-4000-8000-000000000000")
+
+# The Postgres backend is opt-in: set SNAPLIST_TEST_PG to a `postgresql://` URL and the whole
+# API suite runs against both backends. Without it, only SQLite runs — keeping `make test`
+# offline and fast (the lean checkout has no psycopg). The URL points at a scratch database
+# built from infra/migrations behind verify/local_supabase_shim.sql.
+_PG_URL = os.environ.get("SNAPLIST_TEST_PG")
+_PG_AVAILABLE = bool(_PG_URL)
+_REPOSITORY_PARAMS = ["sqlite"] + (["postgres"] if _PG_AVAILABLE else [])
 
 
 @pytest.fixture
@@ -31,10 +40,20 @@ def settings() -> Settings:
     return Settings(env="local", supabase_jwt_secret="")
 
 
-@pytest.fixture
-def repository() -> Iterator[SqliteRepository]:
-    store = SqliteRepository(":memory:")
+@pytest.fixture(params=_REPOSITORY_PARAMS)
+def repository(request) -> Iterator[SqliteRepository | PostgresRepository]:
+    if request.param == "sqlite":
+        store: SqliteRepository | PostgresRepository = SqliteRepository(":memory:")
+        try:
+            yield store
+        finally:
+            store.close()
+        return
+    # Postgres: a fresh connection per test, wiped between tests so two "users" never share state
+    # (test_isolation.py depends on this). See PostgresRepository.truncate_all.
+    store = PostgresRepository(_PG_URL)
     try:
+        store.truncate_all()
         yield store
     finally:
         store.close()

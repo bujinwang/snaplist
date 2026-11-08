@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant R as Router (POST /v1/items)
+    participant TX as repository.transaction()
+    participant PG as PostgresRepository
+    participant DB as Postgres (RLS bypassed)
+
+    rect rgb(235,245,255)
+    note over R,DB: Flow A — create item (atomic spend), mirrors SqliteRepository
+    R->>TX: with repository.transaction():
+    TX->>DB: BEGIN
+    R->>PG: get_idempotent_item(key) [optional]
+    PG->>DB: SELECT item_id, job_id FROM idempotency_keys WHERE user_id=%s AND endpoint=%s AND key=%s
+    DB-->>PG: (item_id, job_id) | None
+    alt not a replay
+        R->>PG: create_item(user_id, 'draft')
+        PG->>DB: INSERT INTO items (id,user_id,status,attributes,created_at,updated_at) VALUES (...,NULL,...)
+        R->>PG: create_job(item_id, user_id, kind=FULL)
+        PG->>DB: INSERT INTO jobs (...,'queued',0,0.0,'stub',...)  -- provider='stub' explicit
+        R->>PG: append_usage_event(UsageEventRecord item_enqueued units=-1)
+        PG->>DB: INSERT INTO usage_events (user_id,event,units,...) VALUES (...,'item_enqueued',-1,...)
+        R->>PG: store_idempotent_item(key)
+        PG->>DB: INSERT INTO idempotency_keys (...) ON CONFLICT DO UPDATE ...
+    end
+    TX->>DB: COMMIT
+    end
+
+    rect rgb(255,245,235)
+    note over R,DB: Flow B — job claim (the Postgres behavioral advantage: FOR UPDATE SKIP LOCKED)
+    participant W as Worker.claim_next()
+    W->>TX: with repository.transaction():
+    TX->>DB: BEGIN
+    W->>PG: peek_next_queued_job()
+    PG->>DB: SELECT j.* FROM jobs j\n  WHERE j.state='queued'\n  AND EXISTS (SELECT 1 FROM assets a WHERE a.item_id=j.item_id AND a.kind='source')\n  ORDER BY j.created_at, j.id\n  FOR UPDATE SKIP LOCKED LIMIT 1
+    DB-->>PG: oldest claimable job (row locked, others skipped)
+    W->>PG: apply_transition -> update_job(running)
+    PG->>DB: UPDATE jobs SET state='running', ... (NO updated_at; trigger sets it) WHERE id=%s
+    TX->>DB: COMMIT  -- releases the row lock
+    end
+    note right of DB: SQLite uses 'begin immediate' (single writer).\nPostgres uses FOR UPDATE SKIP LOCKED so multiple\nworkers never claim the same row.
