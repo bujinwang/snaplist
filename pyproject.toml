@@ -45,6 +45,14 @@ pg = [
   "psycopg[binary]>=3.2,<4",
 ]
 
+# PEP 735 OPTIONAL group for the generate_proposals google-nano-banana backend. NOT pulled by a
+# plain `uv sync`: the default vision pipeline uses the zero-dep floodfill-border backend. Install
+# explicitly with `uv sync --group gen` only where the Gemini image model is actually called, and
+# supply GOOGLE_API_KEY at runtime.
+gen = [
+  "google-genai>=0.3,<1",
+]
+
 # Virtual project: this root is a workspace container, not an installable package.
 # Python packages live at apps/api, packages/vision, evals and are imported from the
 # repo root (pythonpath = "."), which keeps `python -m packages.vision.cli` working
