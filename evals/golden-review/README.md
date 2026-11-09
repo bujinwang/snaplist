@@ -131,6 +131,42 @@ JSON.
    closes U1. ADR-010 does not pre-adjudicate what the IoU verdict means after that; the
    future-state semantics belong to a follow-up ticket.
 
+## Companion tool (mechanical help only)
+
+`python -m evals.tools.mask_review_kit` removes the arithmetic from steps 2–3 of the SOP above.
+It is a **local, human-run helper**: not a CI gate, not part of `make golden`, and not wired
+into `ci.yml` or `steps.sh`. It reads the copyright-frozen PNGs but never copies, stages or
+commits any binary.
+
+```bash
+# Read-only: hashes of both raw PNGs, xor@128 changed_pixels / changed_ratio, format info
+python -m evals.tools.mask_review_kit measure --id top-01
+python -m evals.tools.mask_review_kit measure --all
+
+# Read-only batch format check: L mode, photo size, 20 ids reconciled, files present
+python -m evals.tools.mask_review_kit check
+python -m evals.tools.mask_review_kit --strict-binary check   # opt-in: require only {0,255}
+
+# Build a reviewed record (prints it; add --write to update the register)
+python -m evals.tools.mask_review_kit record --id top-01 \
+    --model sam2 --model-version 2.1 --reviewer bert \
+    --review-id PR-010-top-01 --points-reviewed 412 --attest [--write]
+```
+
+**What the tool deliberately will not do** (ADR-010 §6): `--attest` is a human's explicit
+statement that they reviewed that mask point by point; `reviewer`, `review_id` and
+`points_reviewed` are required arguments the tool never infers. Without `--attest` the record
+stays `pending` and the tool writes nothing. It never sets the edit-distance threshold, never
+sets `u1_met`, never produces an IoU number, and never changes `manifest.json`. While the
+threshold is `UNSET`, 20 `reviewed` rows still leave U1 UNMET by construction — the last step
+of U1 is a **human sign-off**, not an exit code.
+
+`check` is stricter than `validate_golden.py` on **mode** (`L` only; the validator also accepts
+`"1"`), but not on pixel values: `evals/golden/README.md` allows soft edges and B2 binarises
+at 128, so anti-aliased greys are **INFO by default**. `--strict-binary` is the opt-in for a
+strictly `{0,255}` mask. On a clean clone the binaries are absent; missing files are reported,
+never fabricated. `exit 0` means only "the mechanical checks passed on the files present".
+
 ## Limitations (deliberately not solved here)
 
 * **N2 — pixel-equivalent artefacts are forbidden as evidence.** A re-encoded copy with the
