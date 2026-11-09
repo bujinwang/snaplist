@@ -7,16 +7,23 @@ MACHINE ONLY.** The repo is public and the downloaded photos are all-rights-rese
 **NOT committed** and must not be added. On a clean clone none of these files exist and every
 metric that depends on them falls back to `UNMEASURED` — the honest value, not a regression.
 
-The golden set contract still requires 40 *real* garment photos with 20 *hand-drawn* masks;
-synthetic stand-ins are forbidden by `docs/PLAN.md` E0-T1 ("a fake golden set makes every
-downstream number a lie"). **0/20** of the masks on disk are hand-drawn: `mask_source` is
-`algorithmic:matting` for 18 and `ai:google-ai-mode-nano-banana` for 2. The E0-T1 / E1-T4
-hand-mask DoD is therefore **NOT** met.
+Under ADR-010 the golden set contract requires 40 *real* garment photos with 20 reference
+masks in one of three provenance tiers: **hand-drawn**, **AI-assisted point-reviewed**
+(`ai-assisted:<model>+point-reviewed`) or **machine-made**. Synthetic stand-ins are still
+forbidden by `docs/PLAN.md` E0-T1 ("a fake golden set makes every downstream number a lie") —
+that rule forbids fabricated photos and placeholder masks, not an AI proposal followed by an
+evidenced human point review. On this machine all 20 masks are in the **machine tier**
+(`algorithmic:matting` ×18, `ai:google-ai-mode-nano-banana` ×2); hand-drawn 0/20 and
+AI-assisted point-reviewed 0/20. Bert's ruling 1 does **not** grandfather them: they must be
+re-made under the new rules and the review evidenced in
+`evals/golden-review/point_review_register.json`. The E0-T1 / E1-T4 hand-mask DoD is therefore
+**NOT** met, **U1 is UNMET**, E1-T4 stays blocked and E2 must not start.
 
 `make golden` exits 0 on this machine, but the validator itself prints
 `STRUCTURE COMPLETE — … make golden exit 0 is NOT a golden-set DoD verdict`
-and `hand-drawn by mask_source convention: 0/20`. Exit 0 means the file/count checks hold;
-it is not a DoD verdict.
+and a three-tier `mask provenance (reported, not gated)` tally. Exit 0 means the file/count
+checks hold; it is not a DoD verdict, and `validate_point_reviews.py` exit 0 means only that
+the register is structurally valid.
 
 This README plus `evals/tools/validate_golden.py` is the contract *around* the photos: drop
 the files in, fill the manifest, run `make golden`, and the tool tells you exactly what is
@@ -42,6 +49,9 @@ evals/golden/
   "id": "top-01",
   "path": "photos/top-01.jpg",
   "mask_path": "masks/top-01.png",
+  "mask_source": "ai-assisted:sam2+point-reviewed",
+  "mask_draft": "masks_draft/top-01.png",
+  "mask_quality": "ok",
   "category": "top",
   "colors": ["charcoal"],
   "pattern": "solid",
@@ -56,7 +66,10 @@ evals/golden/
 |---|---|
 | `id` | unique, lowercase slug; the file names should match it |
 | `path` | relative to `evals/golden/`; must exist and decode as an image |
-| `mask_path` | `null` for the 20 entries without a hand mask, a path for the 20 with one |
+| `mask_path` | `null` for the 20 entries without a reference mask, a path for the 20 with one |
+| `mask_source` | present on all 20 masked entries; one of the three ADR-010 tiers, classified by `evals/mask_provenance.py`. The current local values (`algorithmic:matting`, `ai:google-ai-mode-nano-banana`) are **machine tier** and are not grandfathered |
+| `mask_draft` | present on the 20 masked entries; relative path of the AI proposal PNG (`masks_draft/<id>.png`) that the reviewed mask was edited from |
+| `mask_quality` | present on the 20 masked entries; free-text note. `ok (visually checked as red overlay)` is a historical visual check, **not** point-review evidence under ADR-010 |
 | `category` | exactly one of `top`, `bottom`, `dress`, `outerwear`, `shoe`, `accessory`, `other` (the `GarmentCategory` contract values) |
 | `colors` | 1–3 lowercase strings, primary first (`ItemAttributes.colors` contract) |
 | `pattern` | one of the `Pattern` contract values (`solid`, `striped`, `plaid`, `floral`, `graphic`, `animal`, `geometric`, `tie_dye`, `knit`, `other`, `unknown`) |
@@ -74,7 +87,8 @@ entries**, so that is the interpretation `validate_golden.py` enforces:
   5 shoe, 5 accessory**;
 - exactly **5 entries with `hard_case: true`** — any category, but still a real photo of a
   real garment;
-- **20 of the 40 entries carry a hand mask** (`mask_path`), the rest are `null`.
+- **20 of the 40 entries carry a reference mask** (`mask_path`) that must satisfy ADR-010's
+  two-condition check; the rest are `null`.
 
 Hard cases are the photos that break naive pipelines: black garment on a black chair, busy
 patterned bedspread, garment on a wire hanger, strong window backlight, a strap or sleeve
@@ -95,9 +109,21 @@ enforces the new rule instead of a stale one.
 
 ## Masks
 
-Drawn by hand (any tool that writes an 8-bit PNG: Photoshop, GIMP, labelme export, macOS
-Preview is not enough). 255 = garment, 0 = background, soft edges welcome but not required.
-Masks are what turn "the cutout looks fine" into an IoU number (E1-T4).
+ADR-010 keeps **three** `mask_source` tiers, and the report must keep them distinct:
+
+| tier | `mask_source` | how it is evidenced |
+|---|---|---|
+| hand-drawn | `hand`, `hand-drawn`, `hand:<tool>` | a human drew the 8-bit PNG (Photoshop, GIMP, labelme export; macOS Preview is not enough) |
+| AI-assisted point-reviewed | `ai-assisted:<model>+point-reviewed` | an AI **proposal** PNG plus a human point-by-point review recorded in `evals/golden-review/point_review_register.json` (proposal model + full version, both sha256, XOR@128 edit distance, review record). A bare `ai-assisted:sam2` is machine tier — a proposal is not a review |
+| machine-made | `algorithmic:*`, `ai:*`, `provisional`, `unspecified` | no human review; a pipeline check only |
+
+255 = garment, 0 = background; soft edges welcome but not required. Masks are what turn "the
+cutout looks fine" into an IoU number (E1-T4). The structured review register **replaces** the
+old red-overlay visual check: `PHOTO_QC.md:20`'s red-overlay inspection and
+`mask_quality: ok (visually checked as red overlay)` **no longer constitute review evidence**.
+A pixel-equivalent artefact (re-encoded copy, duplicate hash, size-only comparison) is not a
+point review either (ADR-010, N2). On this machine all 20 are machine tier and the register is
+`0/20` reviewed with the edit-distance threshold `UNSET`, so the hand-mask gate stays open.
 
 ## Running the check
 

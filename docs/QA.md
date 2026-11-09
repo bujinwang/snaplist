@@ -1414,7 +1414,7 @@ two metrics this checkout can measure are:
 
 | metric | value | n | why it is not a bar |
 |---|---|---|---|
-| segmentation mean IoU | 0.9299 | 20 | references are `ai:google-ai-mode-nano-banana` + `algorithmic:matting`, not hand masks — a pipeline check, not the E1-T4 DoD number (worst case 0.6053) |
+| segmentation mean IoU | 0.9299 | 20 | references are in the ADR-010 **machine tier** (`ai:google-ai-mode-nano-banana` + `algorithmic:matting`; three-tier tally: hand-drawn 0/20, AI-assisted point-reviewed 0/20, machine-made 20/20) — a pipeline check, not the E1-T4 DoD number (worst case 0.6053) |
 | prettify SSIM (inside mask) | 0.9936 | 9 | SSIM of the output against its own input on fixtures with synthetic labels; 1.0 means nothing changed, so it is a destruction budget, not a cleaning score |
 
 Baselining either one would convert a self-referential measurement into "the bar", and every
@@ -1452,12 +1452,28 @@ downgraded to a `::warning::`. A green `gates_report` never means a gate passed.
 
 Upgrade to a blocking gate — **all three must hold simultaneously**, each mechanically decidable:
 
-* **U1 — hand masks land.** `evals/golden/manifest.json` contains hand-drawn masks
-  (`mask_source` starts with `hand`, following the `evals/run.py::_is_hand_made_source` /
-  `evals/tools/seg_iou.py::_is_hand_made` convention) and the count meets E0-T1's 20.
-  **`evals/golden/**` is a copyright-frozen zone; this ticket does not touch it.** U1 can only be
+* **U1 — the 20 masks satisfy ADR-010's two-condition check (2026-11-08 update).** The old
+  reading was "hand masks land" (`mask_source` starts with `hand`, per the former
+  `evals/run.py::_is_hand_made_source` / `evals/tools/seg_iou.py::_is_hand_made` convention).
+  ADR-010 upgrades it to **source field + evidence record**: `evals/golden/manifest.json`
+  carries a `mask_source` in one of the three tiers classified by `evals/mask_provenance.py`
+  (hand-drawn / `ai-assisted:<model>+point-reviewed` / machine-made), **AND**
+  `evals/golden-review/point_review_register.json` evidences all 20 point reviews with the
+  proposal model and full version, both sha256 digests, the XOR@128 edit distance and the review
+  record, with the edit-distance threshold **decided and signed off**. The count still meets
+  E0-T1's 20. `python -m evals.tools.validate_point_reviews` exit 0 means only that the
+  register is structurally valid; **U1's last step is a human sign-off**, and while the
+  threshold is `UNSET`, `u1_met` is False even if all 20 rows are `reviewed`. ADR-010 does not
+  pre-adjudicate the IoU semantics after the 20 masks are re-made; that is a follow-up ticket.
+  **`evals/golden/**` is a copyright-frozen zone; ADR-010 does not touch it.** U1 can only be
   triggered by a future ticket that owns permission over that directory — otherwise this
-  residual becomes a **permanent** residual by construction.
+  residual becomes a **permanent** residual by construction. **CI residual:** the register is
+  committed so CI can mechanically judge register completeness, but CI cannot independently
+  verify that the committable `expected_ids` index matches the local `manifest.json`; that
+  reconciliation is the local read-only `--cross-check-manifest` plus PR human review. In this
+  checkout all 20 slots are `pending`, `0/20` point-reviewed and the threshold is `UNSET`, so
+  **U1 is UNMET**, E1-T4 stays blocked, E2 must not start and `gates_report` remains a
+  non-blocking report step.
 * **U2 — the baseline is filled on purpose.** `infra/ci/gates/baseline.json` is populated via
   `--update-baseline` (if the references are still machine-sourced, that requires an explicit
   `--allow-machine-references` plus a recorded audit note), and `metrics` is non-empty.

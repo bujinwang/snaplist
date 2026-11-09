@@ -1,8 +1,8 @@
 # evals/golden — SOURCING PLAN (not the golden set)
 
-**This file is a sourcing plan only. It does NOT contain, and must not be mistaken for, the E0-T1 golden set.** Per `evals/golden/README.md` the golden set must be 40 **real** photos with 20 **hand-drawn** masks; synthetic stand-ins are forbidden.
+**This file is a sourcing plan only. It does NOT contain, and must not be mistaken for, the E0-T1 golden set.** Per `evals/golden/README.md` the golden set must be 40 **real** photos with 20 reference masks in one of ADR-010's three provenance tiers (hand-drawn / AI-assisted point-reviewed / machine-made); synthetic stand-ins are forbidden. ADR-010 (2026-11-08) relaxes *how a mask may be produced* — an AI proposal followed by an evidenced human point review — not the ban on fabricated photos or placeholder masks.
 
-**Status (2026-11-08): the sourcing plan HAS been executed on this machine, but not on a clean checkout.** 40 real photos were obtained from `~/Downloads`; `evals/golden/manifest.json` now exists locally with 40 entries and 20 non-null `mask_path` values. The 20 masks are 18 `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana` — **0 are hand-drawn**, so the E1-T4 hand-mask gate is still open. These files are local-only and deliberately NOT in git (public repo, all-rights-reserved photos); on a clean clone the set is empty again and the related metrics fall back to `UNMEASURED`.
+**Status (2026-11-08): the sourcing plan HAS been executed on this machine, but not on a clean checkout.** 40 real photos were obtained from `~/Downloads`; `evals/golden/manifest.json` now exists locally with 40 entries and 20 non-null `mask_path` values. ADR-010 three-tier tally: **machine-made 20/20** (18 `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana`), **hand-drawn 0/20**, **AI-assisted point-reviewed 0/20**. Bert's ruling 1 does not grandfather them: they must be re-made under the new rules and the review evidenced in `evals/golden-review/point_review_register.json` (currently `0/20` reviewed, edit-distance threshold `UNSET`, **U1 UNMET**). So E1-T4 stays blocked and E2 must not start. These files are local-only and deliberately NOT in git (public repo, all-rights-reserved photos); on a clean clone the set is empty again and the related metrics fall back to `UNMEASURED`.
 
 The original line "No photos or masks were fabricated or downloaded" recorded the
 **pre-execution** state; the status paragraph above is the current record. The
@@ -18,7 +18,7 @@ on a clean clone.
 
 1. For each slot, run the **search prompt** in a licensed stock library (e.g. a paid royalty-free source) or hand it to a photographer. The prompt is written to be paste-ready.
 2. Save the accepted real photo to `evals/golden/photos/<id>.jpg` (or `.png`).
-3. For the 20 slots flagged **MASK**, draw an 8-bit single-channel PNG (255 = garment, 0 = background) at the same pixel size, save to `evals/golden/masks/<id>.png`.
+3. For the 20 slots flagged **MASK**, produce an 8-bit single-channel PNG (255 = garment, 0 = background) at the same pixel size, save to `evals/golden/masks/<id>.png`. Under ADR-010 it may be drawn by hand (`hand`), or produced as an AI proposal (`ai-assisted:<model>+point-reviewed`) that a human then reviews point by point with the evidence recorded in `evals/golden-review/point_review_register.json`; a machine-made mask is the third, non-qualifying tier. A red-overlay visual check is **not** a point review.
 4. When all 40 photos + 20 masks exist, copy `manifest.draft.json` to `manifest.json` and run `make golden`.
 
 ## Composition & mask allocation
@@ -29,7 +29,7 @@ on a clean clone.
 
 ## Licensing note
 
-Do not pull images from Google Images and commit them as golden photos: most are all-rights-reserved and the downloaded file will not actually match the precise brief (e.g. 'slight pilling at the cuffs', 'black knit on a black chair shot at night'). The existing `evals/golden-provisional/` set proves web sourcing cannot even satisfy the composition (17 entries, no dresses, **algorithmic** not hand masks) — it is explicitly *not* the golden set. Prefer: photos Bert shoots himself, or a paid royalty-free licence with the exact garment/background specified.
+Do not pull images from Google Images and commit them as golden photos: most are all-rights-reserved and the downloaded file will not actually match the precise brief (e.g. 'slight pilling at the cuffs', 'black knit on a black chair shot at night'). The existing `evals/golden-provisional/` set proves web sourcing cannot even satisfy the composition (17 entries, no dresses, **machine-tier algorithmic** masks, i.e. neither hand-drawn nor AI-assisted point-reviewed) — it is explicitly *not* the golden set. Prefer: photos Bert shoots himself, or a paid royalty-free licence with the exact garment/background specified.
 
 ## TOPS (top-01 … top-10)
 

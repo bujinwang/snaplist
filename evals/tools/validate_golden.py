@@ -1,11 +1,13 @@
 """E0-T1 tooling: validate the golden set before anyone quotes a number from it.
 
-The E0-T1 golden set is 40 real garment photos with 20 hand-drawn masks and a manifest.
-This tool checks that 20 mask files are present; it does NOT verify they were drawn by hand
-(see mask_source in manifest.json). The photos are not something this tool can produce — and
-fabricating them is exactly what `docs/PLAN.md` E0-T1 forbids. What the tool *can* do is make
-the contract mechanical: given the directory, it says PASS/FAIL for every rule, names the counts,
-and refuses to let a half-valid set become the base of an eval report.
+The E0-T1 golden set is 40 real garment photos with 20 reference masks and a manifest.
+ADR-010 recognises three `mask_source` tiers — hand-drawn, AI-assisted point-reviewed, and
+machine-made — and this tool reports the tally for all three. It checks that 20 mask files are
+present; it does NOT verify provenance or the point-review evidence (that is
+`evals/tools/validate_point_reviews.py`). The photos are not something this tool can produce —
+and fabricating them is exactly what `docs/PLAN.md` E0-T1 forbids. What the tool *can* do is
+make the contract mechanical: given the directory, it says PASS/FAIL for every rule, names the
+counts, and refuses to let a half-valid set become the base of an eval report.
 
     python -m evals.tools.validate_golden [--golden-dir PATH]
 
@@ -27,6 +29,7 @@ from typing import Any
 from PIL import Image
 
 from apps.api.schemas import GarmentCategory, Pattern
+from evals import mask_provenance as mp
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GOLDEN = ROOT / "evals" / "golden"
@@ -99,8 +102,9 @@ class Report:
             if self.profile == "golden":
                 lines.append(
                     "summary: STRUCTURE COMPLETE — the file/count checks above hold. "
-                    "Mask provenance is NOT verified by this tool (see the reported "
-                    "mask_source tally); E0-T1's hand-drawn requirement is UNVERIFIED and "
+                    "Mask provenance is NOT verified by this tool (see the reported three-tier "
+                    "mask_source tally: hand-drawn / AI-assisted point-reviewed / "
+                    "machine-made); the E0-T1 / ADR-010 mask requirement is UNVERIFIED and "
                     "make golden exit 0 is NOT a golden-set DoD verdict."
                 )
             else:
@@ -376,17 +380,20 @@ def validate(golden_dir: Path, profile: str = "golden") -> Report:
         sources = sorted(
             {str(entry.get("mask_source") or "unspecified") for entry in mask_entries}
         )
-        hand = sum(
-            1
-            for entry in mask_entries
-            if str(entry.get("mask_source") or "").strip().lower().startswith("hand")
+        tiers = [mp.classify(entry.get("mask_source")).tier for entry in mask_entries]
+        hand = sum(1 for tier in tiers if tier is mp.MaskSourceTier.HAND)
+        ai_assisted = sum(
+            1 for tier in tiers if tier is mp.MaskSourceTier.AI_ASSISTED_REVIEWED
         )
+        machine = sum(1 for tier in tiers if tier is mp.MaskSourceTier.MACHINE)
         report.record(
             "mask provenance (reported, not gated)",
             True,
             f"{len(mask_entries)} masks: {', '.join(sources) or 'none'}; "
-            f"hand-drawn by mask_source convention: {hand}/{len(mask_entries)}. "
-            "This tool does not gate provenance; E0-T1's hand-drawn requirement is "
+            f"ADR-010 tiers — hand-drawn {hand}/{len(mask_entries)}, "
+            f"AI-assisted point-reviewed {ai_assisted}/{len(mask_entries)}, "
+            f"machine-made {machine}/{len(mask_entries)}. "
+            "This tool does not gate provenance; the E0-T1 / ADR-010 mask requirement is "
             "UNVERIFIED here.",
         )
     else:

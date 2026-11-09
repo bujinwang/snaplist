@@ -23,6 +23,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 GATES = Path(__file__).resolve().parents[1]
+# ADR-010: regression_gate.py now imports evals.mask_provenance at module scope. It is loaded
+# here by file path from an arbitrary cwd, so the repo root must be on sys.path BEFORE _load().
+# (regression_gate.py also inserts it itself; this keeps the by-path test loading robust.)
+if str(GATES.parents[2]) not in sys.path:
+    sys.path.insert(0, str(GATES.parents[2]))
 
 
 def _load(name: str):
@@ -613,6 +618,24 @@ class HelperTest(unittest.TestCase):
     def test_resolve_git_sha_is_a_sha_or_the_word_unknown(self) -> None:
         sha = rg.resolve_git_sha()
         self.assertTrue(sha == "unknown" or len(sha) == 12, sha)
+
+    def test_markers_are_the_shared_module_object(self) -> None:
+        """ADR-010: no local marker tuple; the gate and the classifier cannot drift apart."""
+        from evals import mask_provenance as mp
+
+        self.assertIs(rg.MACHINE_REFERENCE_MARKERS, mp.MACHINE_REFERENCE_MARKERS)
+        self.assertIn("ai:", rg.MACHINE_REFERENCE_MARKERS)
+        self.assertIn("ai-assisted:", rg.MACHINE_REFERENCE_MARKERS)
+
+    def test_ai_assisted_tier_is_not_silently_baselined(self) -> None:
+        """D3: `ai:` does not match `ai-assisted:` — the new marker is load-bearing."""
+        from evals import mask_provenance as mp
+
+        value = "ai-assisted:sam2+point-reviewed"
+        self.assertTrue(mp.is_machine_reference(value))
+        measured = entry(0.93, provenance=f"mask source: {value}; median 0.98")
+        self.assertTrue(rg.has_machine_references(measured))
+        self.assertEqual(rg.mask_sources(measured), [value])
 
 
 if __name__ == "__main__":

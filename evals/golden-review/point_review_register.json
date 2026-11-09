@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "policy": "ADR-010",
+  "expected_ids": [
+    "top-01",
+    "top-04",
+    "top-07",
+    "top-09",
+    "top-10",
+    "bottom-02",
+    "bottom-04",
+    "bottom-06",
+    "bottom-09",
+    "dress-02",
+    "dress-04",
+    "shoe-01",
+    "shoe-05",
+    "acc-02",
+    "acc-05",
+    "hard-01",
+    "hard-02",
+    "hard-03",
+    "hard-04",
+    "hard-05"
+  ],
+  "expected_ids_source": "evals/golden/SOURCING.md:28 (20 MASK slots) — a committable CI-side substitute index; on this machine --cross-check-manifest reconciles it with the 20 manifest.json entries whose mask_path != null (CI cannot independently verify this consistency)",
+  "edit_distance_threshold": {
+    "method": "xor@128",
+    "min_changed_pixels": null,
+    "max_changed_pixels": null,
+    "max_changed_ratio": null,
+    "decided_by": "ADR-010 / Bert ruling 2",
+    "value_status": "UNSET — see ADR-010; until it is decided the validator judges structure only, not the threshold"
+  },
+  "records": [
+    {
+      "id": "top-01",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/top-01.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/top-01.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "top-04",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/top-04.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/top-04.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "top-07",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/top-07.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/top-07.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "top-09",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/top-09.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/top-09.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "top-10",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/top-10.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/top-10.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "bottom-02",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/bottom-02.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/bottom-02.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "bottom-04",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/bottom-04.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/bottom-04.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "bottom-06",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/bottom-06.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/bottom-06.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "bottom-09",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/bottom-09.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/bottom-09.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "dress-02",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/dress-02.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/dress-02.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "dress-04",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/dress-04.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/dress-04.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "shoe-01",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/shoe-01.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/shoe-01.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "shoe-05",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/shoe-05.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/shoe-05.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "acc-02",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/acc-02.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/acc-02.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "acc-05",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/acc-05.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/acc-05.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "hard-01",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/hard-01.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/hard-01.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "hard-02",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/hard-02.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/hard-02.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "hard-03",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/hard-03.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/hard-03.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "hard-04",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/hard-04.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/hard-04.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    },
+    {
+      "id": "hard-05",
+      "status": "pending",
+      "provenance": null,
+      "proposal": {"model": null, "model_version": null, "mask_path": "masks_draft/hard-05.png", "sha256": null},
+      "reviewed": {"mask_path": "masks/hard-05.png", "sha256": null},
+      "edit_distance": null,
+      "review": null
+    }
+  ],
+  "notes": [
+    "ADR-010 / Bert ruling 1: the 20 existing masks (18 algorithmic:matting + 2 ai:google-ai-mode-nano-banana, only a red-overlay visual check) are NOT grandfathered. Their old values are void; this ticket does not re-make them and does not edit manifest.json.",
+    "All 20 slots start as pending. 0/20 point-reviewed and the edit-distance threshold is UNSET, so U1 is UNMET and E1-T4 stays blocked. Changing a status is not what unblocks U1: the last step is a human sign-off, and exit 0 from the validator only means the register is structurally valid.",
+    "A reviewed record must satisfy BOTH conditions: mask_source fully matches ^ai-assisted:(?P<model>[a-z0-9_-]+)\\+point-reviewed$ AND this register carries the proposal model/version, both sha256 digests, the edit-distance record and the review record. A hand prefix with an AI proposal is a hard conflict.",
+    "The model slug forbids '.', ';', ',' and ':'; regression_gate.py's _MASK_SOURCE_RE truncates at those characters. Full version strings (e.g. 2.1) belong in proposal.model_version, never in the prefix.",
+    "Pixel-equivalent artefacts (a hash of a re-encoded copy, a size-only comparison, a red-overlay screenshot) are NOT evidence of a point review. See ADR-010, N2.",
+    "Field semantics for B2: edit_distance.method=xor@128; changed_pixels=count_nonzero((proposal>=128) XOR (reviewed>=128)), written as XOR not an IoU union/intersection expression; changed_ratio=changed_pixels/(H*W) with the WHOLE FRAME as denominator (not union, not garment region); both sha256 values are hashlib.sha256(Path(mask_path).read_bytes()).hexdigest() over the raw PNG file bytes (RAW PNG BYTES), never a binarised ndarray. File hash proves identity, XOR proves pixel change; re-encoding changes bytes but not pixels, so the hash is not a pixel-equivalence judgement. A shape mismatch is a named failing check, never a silent resize. See ADR-010 section 5.",
+    "CI has no manifest.json, so the default validator run checks only the register's own consistency and the expected_ids<->records reconciliation. --cross-check-manifest is a local-only, read-only addition; CI cannot independently verify that this committable index matches the local manifest (D1 residual).",
+    "D2 residual (distinct from D1): CI can never independently recompute the pixel edit distance. Its baseline is the AI-proposed mask's pixels at masks_draft/<id>.png, excluded by .git/info/exclude and absent from a clean clone; committing pixels or any pixel-equivalent (RLE, base64 bitmap, downsampled array) is ruled out by N2. B1 declarative summary is the CI default, B2 --verify-local-masks is local/human-run only; neither cryptographically proves a human review. See ADR-010 section 3.",
+    "No binary, photo, mask or manifest.json value is stored in this directory. It ships in git so a clean clone can mechanically judge register completeness."
+  ]
+}

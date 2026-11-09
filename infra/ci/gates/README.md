@@ -61,7 +61,7 @@ Two rules that are not negotiable, and are covered by tests:
   "tool": "infra/ci/gates/regression_gate.py --update-baseline",
   "default_tolerance": 0.01,
   "sets": {"<metric>": "<set name the number came from>"},
-  "mask_sources": {"<metric>": ["ai:…", "algorithmic:…"]},
+  "mask_sources": {"<metric>": ["ai:…", "algorithmic:…", "ai-assisted:sam2+point-reviewed"]},
   "metrics": {
     "<metric name>": {
       "value": 0.9299,
@@ -101,9 +101,14 @@ Two rules that are not negotiable, and are covered by tests:
 2. **Non-finite value** (`nan`, `inf`) → `2`. `nan` compares false against everything and would
    pass forever.
 3. **Machine-made references**, unless `--allow-machine-references` → `2`, no file written. The
-   markers are `not hand-drawn`, `algorithmic`, `ai:`, `provisional` — the same vocabulary
-   `evals/run.py` and `evals/tools/seg_iou.py` use, so the guard and the report's caveat cannot
-   disagree about a set.
+   markers are `not hand-drawn`, `algorithmic`, `ai:`, `ai-assisted:`, `provisional` — the same
+   vocabulary `evals/mask_provenance.py` exports for `evals/run.py`, `evals/tools/seg_iou.py`
+   and the validator, so the guard cannot disagree with the report. **`ai:` and `ai-assisted:`
+   do not conflict:** the frozen manifest still carries old `ai:*` values, while
+   `ai-assisted:sam2+point-reviewed` does not contain `ai:` (the next character is `-`), so
+   dropping the new marker would let that ADR-010 tier slip past the guard. ADR-010 keeps three
+   tiers — hand-drawn / AI-assisted point-reviewed / machine-made — and U1 stays UNMET while
+   the point-review register is `0/20` and its threshold is `UNSET`.
 4. **Dropping a metric the previous baseline had**, unless `--allow-dropped-metrics` → `2`. A
    transient measurement failure would otherwise delete coverage permanently, and every later
    run would look green.

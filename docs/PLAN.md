@@ -199,7 +199,7 @@ wrong — use one of the rows above or drop the claim.
 
 | id | ticket | owner | priority | files it may touch | depends on |
 |---|---|---|---|---|---|
-| E0-T1 | Golden set: 40 real garment photos + manifest + 20 hand masks | vision | P0 | `evals/golden/**`, `evals/fixtures/**` | — |
+| E0-T1 | Golden set: 40 real garment photos + manifest + 20 reference masks (ADR-010 three-tier provenance: hand-drawn / AI-assisted point-reviewed / machine-made) | vision | P0 | `evals/golden/**`, `evals/fixtures/**` | — |
 | E0-T2 | Harness runner: suites, thresholds, report writer | vision | P0 | `evals/run.py`, `evals/suites/**`, `evals/tests/**` | E0-T1 |
 | E0-T3 | CI pipeline: lint + test + evals on every PR | qa | P0 | `.github/workflows/**`, `infra/ci/**` | E0-T2 |
 | E0-T4 | Regression gate + cost dashboard | qa | P1 | `infra/ci/gates/**`, `docs/QA.md` | E0-T3 |
@@ -214,6 +214,15 @@ ls evals/golden/masks | wc -l             # 20
 DoD: categories are exactly 10 tops / 10 bottoms / 5 dresses / 5 shoes / 5 accessories / 5 hard
 cases; every entry has path, category, color, pattern, material and 3 hard attributes; **zero
 synthetic placeholders** (a fake golden set makes every downstream number a lie).
+
+**Applicability boundary of that rule (ADR-010, 2026-11-08):** "zero synthetic placeholders"
+forbids fabricated *photos* and placeholder *masks* — files that were never produced from the
+real garment. It does not forbid an AI-generated **proposal** mask that a human then reviews
+point by point, provided the review is evidenced in
+`evals/golden-review/point_review_register.json` under the `ai-assisted:<model>+point-reviewed`
+tier. A self-declared string is not evidence; a red-overlay visual check is not a point review.
+The 20 existing machine-made masks are **not** grandfathered by this clarification: they must
+be re-made under the new rules, so U1 remains UNMET and E1-T4/E2 stay blocked.
 
 **E0-T2 acceptance**
 ```bash
@@ -342,7 +351,7 @@ a gate to pass it is how a project loses the ability to notice anything.
 | E1-T1 | Runtime probe: device + backend policy, no silent model swap | vision | P0 | `packages/vision/runtime.py`, `packages/vision/types.py`, `packages/vision/tests/**` | E0-T2 |
 | E1-T2 | `segment()` — SAM 2.1 hosted, BiRefNet/U²-Net fallback, soft mask | vision | P0 | `packages/vision/segment.py` | E1-T1 |
 | E1-T3 | `matte()` — alpha refinement, no network call | vision | P0 | `packages/vision/matte.py` | E1-T2 |
-| E1-T4 | Segmentation IoU report on the 20 hand masks | vision | P0 | `packages/vision/segment.py`, `evals/reports/seglab.md` (generated) | E1-T2, E0-T1 |
+| E1-T4 | Segmentation IoU report on the 20 masks that satisfy ADR-010 | vision | P0 | `packages/vision/segment.py`, `evals/reports/seglab.md` (generated) | E1-T2, E0-T1 |
 
 **E1-T1 acceptance**
 ```bash
@@ -371,9 +380,10 @@ socket-blocking fixture).
 ```bash
 python -m evals.run --suite vision && grep -A2 "segmentation mean IoU" evals/reports/vision.md
 ```
-DoD: the report states the IoU per fixture *and* the mean over the 20 hand-masked ones, with the
-mask paths listed. An unreachable threshold prints the number anyway — the threshold is the gate,
-not the measurement.
+DoD: the report states the IoU per fixture *and* the mean over the 20 masks that satisfy
+ADR-010, with the mask paths listed. An unreachable threshold prints the number anyway — the
+threshold is the gate, not the measurement. ADR-010 does not pre-adjudicate the IoU semantics
+after those 20 masks are re-made; that is a follow-up ticket.
 
 ---
 

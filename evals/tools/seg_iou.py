@@ -49,12 +49,35 @@ import numpy as np
 from PIL import Image
 
 from evals import git_sha
+from evals import mask_provenance as mp
+from evals.mask_provenance import ReviewState
 from packages.vision.runtime import probe
 from packages.vision.segment import segment
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GOLDEN = ROOT / "evals" / "golden-provisional"
 DEFAULT_REPORT = ROOT / "evals" / "reports" / "seglab.md"
+
+#: Sceptical default when no register state is supplied to `render()`. ADR-010: a renderer
+#: must never read the register itself; it only consumes this immutable summary.
+DEFAULT_REVIEW_STATE = ReviewState(0, 20, False, "UNSET")
+
+
+def current_review_state() -> ReviewState:
+    """The register's present-tense state, or the sceptical default if it cannot be read.
+
+    ADR-010: `main()` is the ONLY injection point — it passes this summary to `render()`.
+    `evals/run.py::_measure_segmentation()` never calls `render()` and never injects a state;
+    it writes the three-tier caveat straight into `Measurement.note`. Other `render()` callers
+    (the 5-positional-argument test) fall back to `DEFAULT_REVIEW_STATE`. Any failure here
+    also falls back, so a report stays printable on a broken checkout.
+    """
+    try:
+        from evals.tools import validate_point_reviews as validator
+
+        return validator.validate_structure(validator.load_register()).as_state()
+    except Exception:  # noqa: BLE001 - a broken register must not stop a report
+        return DEFAULT_REVIEW_STATE
 
 
 def _git_sha() -> str:
@@ -203,14 +226,13 @@ def summarise(rows: list[dict]) -> dict:
 
 
 def _is_hand_made(source: str) -> bool:
-    """Whether a `mask_source` string claims a human drew the mask.
+    """Whether a `mask_source` claims a human drew the mask (ADR-010 tier HAND).
 
-    The convention is the one the manifest already uses: `hand`, `hand-drawn`, `hand:<tool>`.
-    Anything else — `algorithmic:matting`, `ai:google-ai-mode-nano-banana`, `unspecified` — is
-    machine-made as far as this report is concerned. Defaulting an unknown source to "hand"
-    would let a set certify itself by staying quiet, so the default is the sceptical one.
+    Delegates to `evals.mask_provenance.is_hand_made` so this report, `evals/run.py`,
+    `validate_golden.py` and the regression gate can never disagree. The `hand` prefix keeps
+    its old meaning; the AI-assisted and machine tiers are deliberately NOT hand.
     """
-    return source.strip().lower().startswith("hand")
+    return mp.is_hand_made(source)
 
 
 def _source_counts(rows: list[dict]) -> Counter:
@@ -223,11 +245,35 @@ def _describe_sources(counts: Counter, names: list[str]) -> str:
     return ", ".join(f"`{name}` ({counts[name]})" for name in names)
 
 
-def render(rows: list[dict], meta: dict, stats: dict, golden_dir: Path, threshold: float) -> str:
+def render(
+    rows: list[dict],
+    meta: dict,
+    stats: dict,
+    golden_dir: Path,
+    threshold: float,
+    *,
+    review_state: ReviewState | None = None,
+) -> str:
+    """Render the report. `review_state` is the ONLY evidence input: no register, no judging.
+
+    The five positional arguments are unchanged for existing callers; when `review_state` is
+    omitted the sceptical default (`0/20`, U1 UNMET, threshold UNSET) applies.
+    """
+    state = review_state or DEFAULT_REVIEW_STATE
     counts = _source_counts(rows)
     sources = sorted(counts)
-    hand_sources = [name for name in sources if _is_hand_made(name)]
-    machine_sources = [name for name in sources if not _is_hand_made(name)]
+    hand_sources = [
+        name for name in sources
+        if mp.classify(name).tier is mp.MaskSourceTier.HAND
+    ]
+    ai_assisted_sources = [
+        name for name in sources
+        if mp.classify(name).tier is mp.MaskSourceTier.AI_ASSISTED_REVIEWED
+    ]
+    machine_sources = [
+        name for name in sources
+        if mp.classify(name).tier is mp.MaskSourceTier.MACHINE
+    ]
     manifest_entries = int(meta.get("manifest_entries", len(rows)))
     unscored = [str(entry_id) for entry_id in meta.get("unscored", [])]
     lines = [
@@ -245,17 +291,25 @@ def render(rows: list[dict], meta: dict, stats: dict, golden_dir: Path, threshol
     # a set can drift from algorithmic to hand-drawn one file at a time, and a report that
     # decided its honesty from a path substring would keep saying "provisional" afterwards — or,
     # as `evals/golden` did until this line existed, say nothing at all.
-    if hand_sources and machine_sources:
-        mask_line = (
-            f"hand-drawn: {_describe_sources(counts, hand_sources)}; machine-made: "
-            f"{_describe_sources(counts, machine_sources)} — **mixed set**"
+    tier_parts: list[str] = []
+    if hand_sources:
+        tier_parts.append(f"hand-drawn: {_describe_sources(counts, hand_sources)}")
+    if ai_assisted_sources:
+        tier_parts.append(
+            f"AI-assisted point-reviewed: {_describe_sources(counts, ai_assisted_sources)}"
         )
-    elif machine_sources:
-        mask_line = f"{_describe_sources(counts, machine_sources)} — **not hand-drawn**"
-    elif hand_sources:
-        mask_line = f"{_describe_sources(counts, hand_sources)} — **hand-drawn**"
-    else:
+    if machine_sources:
+        tier_parts.append(f"machine-made: {_describe_sources(counts, machine_sources)}")
+    if not tier_parts:
         mask_line = "no scored entries"
+    elif len(tier_parts) > 1:
+        mask_line = "; ".join(tier_parts) + " — **mixed set**"
+    elif machine_sources:
+        mask_line = f"{tier_parts[0]} — **not hand-drawn**"
+    elif hand_sources:
+        mask_line = f"{tier_parts[0]} — **hand-drawn**"
+    else:
+        mask_line = f"{tier_parts[0]} — **AI-assisted point-reviewed**"
     lines += [f"Masks: {mask_line}.", ""]
 
     if "provisional" in golden_dir.name:
@@ -265,7 +319,7 @@ def render(rows: list[dict], meta: dict, stats: dict, golden_dir: Path, threshol
             "> were chosen because a colour mask could isolate them. The number below answers",
             "> \"does the pipeline work\", not \"is the model good enough\". The DoD gate",
             f"> (`mean IoU ≥ {threshold}`) is quoted for orientation only; it belongs to the",
-            "> golden set with 20 hand masks.",
+            "> golden set with 20 masks that satisfy ADR-010.",
             "",
         ]
     elif machine_sources:
@@ -276,6 +330,18 @@ def render(rows: list[dict], meta: dict, stats: dict, golden_dir: Path, threshol
             "> below is a pipeline check, **not the E1-T4 DoD number**: the hand-mask gate",
             f"> (`mean IoU ≥ {threshold}`) stays open until these photos carry hand-drawn masks,",
             "> and the comparison at the end of this report is orientation only.",
+            "",
+        ]
+    elif ai_assisted_sources or hand_sources:
+        described = _describe_sources(counts, ai_assisted_sources or hand_sources)
+        tier_word = "AI-assisted point-reviewed" if ai_assisted_sources else "hand-drawn"
+        lines += [
+            f"> **Reference masks are {tier_word}:** {described}.",
+            "> The relaxed-DoD decision is the \"source field + evidence record\" two-condition",
+            "> check in `python -m evals.tools.validate_point_reviews` (ADR-010). For this run the",
+            f"> register is {state.reviewed}/{state.slots} point-reviewed (U1 UNMET), so the",
+            "> hand-mask gate stays open. ADR-010 does not pre-adjudicate the IoU semantics after",
+            "> the 20 masks are re-made; that is a follow-up ticket.",
             "",
         ]
     if unscored:
@@ -323,21 +389,56 @@ def render(rows: list[dict], meta: dict, stats: dict, golden_dir: Path, threshol
     for name, value in stats["by_category"].items():
         lines.append(f"| {name} | {value:.4f} |")
     comparison = "≥" if stats["mean"] >= threshold else "<"
-    if machine_sources:
-        # No `**PASS**` here, ever: the threshold is E0-T1's *hand-mask* line, and a mean taken
-        # over machine-made references cannot clear it, only approach it. Printing PASS would
-        # hand somebody a green word to quote into a handoff with the caveat three paragraphs up.
-        verdict = (
+
+    def machine_verdict() -> str:
+        """The machine-tier sentence, byte-for-byte unchanged (ADR-010 / Bert ruling 5)."""
+        return (
             f"Against the E0-T1 threshold of {threshold}: {stats['mean']:.4f} {comparison} "
             f"{threshold} on non-hand references — **not a PASS**, and not the E1-T4 DoD "
             "number; the hand-mask gate stays open."
         )
+
+    if not state.u1_met:
+        # The **not a PASS** verdict is grounded in the PRESENT-TENSE register state, not in
+        # the mask-source tier. ADR-010 deliberately does not pre-adjudicate the future.
+        lines += [
+            "",
+            f"Register state: {state.reviewed}/{state.slots} point-reviewed; U1 is UNMET; "
+            f"edit-distance threshold is {state.threshold_status}. The **not a PASS** verdict "
+            "below follows from this present-tense register state, not from the mask-source tier.",
+        ]
+        if machine_sources:
+            verdict = machine_verdict()
+        elif ai_assisted_sources:
+            verdict = (
+                f"Against the E0-T1 threshold of {threshold}: {stats['mean']:.4f} "
+                f"{comparison} {threshold} on AI-assisted point-reviewed references — "
+                "**not a PASS** (see register state above). The relaxed-DoD decision is the "
+                "\"source field + evidence record\" two-condition check in "
+                "python -m evals.tools.validate_point_reviews (ADR-010); the hand-mask gate "
+                "stays open for this run."
+            )
+        else:
+            verdict = (
+                f"Against the E0-T1 threshold of {threshold}: {stats['mean']:.4f} "
+                f"{comparison} {threshold} on hand-drawn references — **not a PASS** "
+                "(see register state above). The relaxed-DoD decision is likewise the "
+                "two-condition check in validate_point_reviews; the hand-mask gate stays open "
+                "for this run."
+            )
+    elif machine_sources:
+        # Original `:330-334` branch, unchanged: a machine-made reference cannot clear the
+        # hand-mask line, only approach it.
+        verdict = machine_verdict()
     else:
+        # Reachable on purpose: ADR-010 does not pre-adjudicate the IoU semantics of a fully
+        # registered set. A follow-up ticket owns that decision.
         outcome = "PASS" if stats["mean"] >= threshold else "BELOW"
         verdict = (
             f"Against the E0-T1 threshold of {threshold}: **{outcome}** "
             f"({stats['mean']:.4f} {comparison} {threshold}) — informational on this set, a gate "
-            "only on the golden set."
+            "only on the golden set. DoD semantics for a fully registered set are defined by a "
+            "follow-up ticket; ADR-010 does not pre-adjudicate them."
         )
     lines += ["", verdict, ""]
     return "\n".join(lines)
@@ -369,7 +470,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cannot measure {args.golden_dir}: {exc}", file=sys.stderr)
         return 2
     stats = summarise(rows)
-    text = render(rows, meta, stats, args.golden_dir, args.threshold)
+    # ADR-010: main() owns the register read; render() receives only the immutable summary.
+    text = render(
+        rows,
+        meta,
+        stats,
+        args.golden_dir,
+        args.threshold,
+        review_state=current_review_state(),
+    )
     print(text)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(text)
