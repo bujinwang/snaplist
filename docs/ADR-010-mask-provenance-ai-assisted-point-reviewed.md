@@ -310,6 +310,27 @@ check is a **pre-merge condition**, not a completed step, and belongs to the lea
 and the `.git/info/exclude` rules themselves were not modified. `gates_report` remains a
 non-blocking report step; this ADR does not upgrade it.
 
+### 9.1 Merge status update (2026-11-09 UTC)
+
+**The paragraph above records the state at authoring time of commit `dffcfce` (2026-11-08),
+not the state of the repository today.** It is kept verbatim for provenance; this dated
+addendum is the current record of the pre-merge condition it names.
+
+* PR **#5** (`ADR-010: three-tier mask provenance without unblocking U1`) was opened against
+  `master` from `feat/mask-provenance-adr-010`.
+* The required `ci` status check ran and passed (`ci:SUCCESS`, run `42543676689`). Keep in
+  mind what that means: `gates_report` stayed a non-blocking report step, `regression_gate.py`
+  still exited `2` (`GATE INCONCLUSIVE`) and `evals.run` printed `GATE NOT EVALUATED`.
+  **CI green is not a gate pass** (`docs/QA.md` §13.6).
+* PR #5 was merged into `master` as `fbd3896ea288b90357269ccee47e6a4ddee4b1b2` at
+  `2026-11-09T01:08:28Z`. The merged tree is byte-identical to `dffcfce^{tree}`
+  (`4d0f7e2f5d52d0b1c987e12858984fd284fc1f0f`); no unreviewed change was carried in.
+
+**Nothing in §0 changes.** U1 is still UNMET, E1-T4 is still blocked, E2 must not start, the
+20 existing masks are still not grandfathered, the point-review register is still `0/20`
+reviewed, and the edit-distance threshold is still `UNSET`. Merging a contract is not the same
+as producing the evidence the contract asks for.
+
 ---
 
 ## 10. Explicitly NOT decided here
