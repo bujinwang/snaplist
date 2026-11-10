@@ -44,7 +44,10 @@ DEFAULT_REGISTER = ROOT / "evals" / "golden-review" / "point_review_register.jso
 DEFAULT_MANIFEST = DEFAULT_GOLDEN / "manifest.draft.json"
 DEFAULT_OUT_DIR = DEFAULT_GOLDEN / "masks_draft"
 
-GNB_DEFAULT_MODEL = "gemini-2.5-flash-image"
+# gemini-2.5-flash-image was deprecated (shutdown 2027-03-15); gemini-nano-banana-2.1 is
+# Google's recommended replacement and supports image-to-image (reference photos) prompts.
+# gemini-3.1-flash-lite-image is the cheaper alternative named in the deprecation notice.
+GNB_DEFAULT_MODEL = "gemini-nano-banana-2.1"
 GNB_DEFAULT_PROMPT = (
     "Return ONLY a black-and-white segmentation mask of the main garment in this product "
     "photo. White pixels = the garment, black pixels = everything else. No text, no border, "
@@ -123,7 +126,7 @@ def floodfill_border(photo, *, tolerance: int = 32):
 def _extract_generated_image_bytes(response):
     """Pull raw image bytes out of a Gemini image-generation response.
 
-    For the `gemini-2.5-flash-image` model, `client.models.generate_content` returns a
+    For the `gemini-nano-banana-2.1` model, `client.models.generate_content` returns a
     `GenerateContentResponse` whose image data arrives as an `inline_data` Blob inside the
     first candidate's `content.parts` -- NOT as a `generated_images` attribute (that field
     belongs to the separate `client.models.generate_images` API and is absent here). Walk the
