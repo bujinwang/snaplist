@@ -7,6 +7,16 @@ MACHINE ONLY.** The repo is public and the downloaded photos are all-rights-rese
 **NOT committed** and must not be added. On a clean clone none of these files exist and every
 metric that depends on them falls back to `UNMEASURED` — the honest value, not a regression.
 
+> **Status update (2026-11-10)** — The paragraph above records the state of the 2026-11-08
+> machine and is kept verbatim for provenance; it does **not** describe this clone. This local
+> clone was rebuilt on 2026-11-09 and `.git/info/exclude` no longer contains the
+> `evals/golden/**` exclusion rules that paragraph names. The exclusion is now provided by the
+> tracked `.gitignore` instead, so it travels with every clone: `evals/golden/photos/*`,
+> `evals/golden/masks/*`, `evals/golden/masks_draft/*` and `evals/golden/manifest.json` are
+> ignored, while the two `.gitkeep` files are re-included. Dated-addendum convention:
+> `docs/ADR-010-mask-provenance-ai-assisted-point-reviewed.md` §9.1, `docs/QA.md` §15.8.
+> The all-rights-reserved photos, masks and manifest are **still never committed**.
+
 Under ADR-010 the golden set contract requires 40 *real* garment photos with 20 reference
 masks in one of three provenance tiers: **hand-drawn**, **AI-assisted point-reviewed**
 (`ai-assisted:<model>+point-reviewed`) or **machine-made**. Synthetic stand-ins are still
