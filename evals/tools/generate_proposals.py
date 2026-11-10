@@ -121,17 +121,28 @@ def floodfill_border(photo, *, tolerance: int = 32):
 # Backend 2: google-nano-banana (Gemini image model)
 # --------------------------------------------------------------------------- #
 def _extract_generated_image_bytes(response):
-    """Pull raw PNG bytes out of a Gemini image-generation response."""
-    images = getattr(response, "generated_images", None)
-    if not images:
-        raise RuntimeError(
-            "google-nano-banana: model response had no generated_images"
-        )
-    img = getattr(images[0], "image", None)
-    data = getattr(img, "image_bytes", None) if img is not None else None
-    if not data:
-        raise RuntimeError("google-nano-banana: generated image had no image_bytes")
-    return data
+    """Pull raw image bytes out of a Gemini image-generation response.
+
+    For the `gemini-2.5-flash-image` model, `client.models.generate_content` returns a
+    `GenerateContentResponse` whose image data arrives as an `inline_data` Blob inside the
+    first candidate's `content.parts` -- NOT as a `generated_images` attribute (that field
+    belongs to the separate `client.models.generate_images` API and is absent here). Walk the
+    candidates and return the first image part's bytes; raise a clear error if there is none.
+    """
+    candidates = getattr(response, "candidates", None) or []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        if content is None:
+            continue
+        for part in getattr(content, "parts", []) or []:
+            blob = getattr(part, "inline_data", None)
+            data = getattr(blob, "data", None) if blob is not None else None
+            if data:
+                return data
+    raise RuntimeError(
+        "google-nano-banana: model response contained no image part "
+        "(was the prompt answered with text, or was the image RAI-filtered?)"
+    )
 
 
 def google_nano_banana(

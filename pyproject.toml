@@ -50,7 +50,7 @@ pg = [
 # explicitly with `uv sync --group gen` only where the Gemini image model is actually called, and
 # supply GOOGLE_API_KEY at runtime.
 gen = [
-  "google-genai>=0.3,<1",
+  "google-genai>=3,<4",
 ]
 
 # Virtual project: this root is a workspace container, not an installable package.

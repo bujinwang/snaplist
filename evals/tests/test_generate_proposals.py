@@ -45,23 +45,41 @@ def _mask_bytes(pattern):
 def _make_fake_genai(mask_bytes):
     """Build a fake `google.genai` module whose model returns `mask_bytes`.
 
+    The fake's response object mirrors the REAL google-genai 3.x shape for an image returned
+    by `client.models.generate_content`: the bytes live at
+    `response.candidates[0].content.parts[0].inline_data.data` -- NOT a `generated_images`
+    attribute. Using the real shape keeps the unit test honest (an earlier version asserted
+    the fictional `.generated_images` path, which would have crashed against the actual SDK).
+
     Does NOT touch sys.modules; the caller registers it (and the `google` parent) via
     monkeypatch so cleanup is automatic.
     """
     mod = types.ModuleType("google.genai")
 
-    class _Image:
-        image_bytes = mask_bytes
+    class _Blob:
+        def __init__(self, data):
+            self.data = data
+            self.mime_type = "image/png"
 
-    class _GenImg:
-        image = _Image()
+    class _Part:
+        def __init__(self, data):
+            self.inline_data = _Blob(data)
+
+    class _Content:
+        def __init__(self, data):
+            self.parts = [_Part(data)]
+
+    class _Candidate:
+        def __init__(self, data):
+            self.content = _Content(data)
 
     class _Response:
-        generated_images = [_GenImg()]
+        def __init__(self, data):
+            self.candidates = [_Candidate(data)]
 
     class _Models:
         def generate_content(self, model, contents):
-            return _Response()
+            return _Response(mask_bytes)
 
     class Client:
         def __init__(self, api_key):
