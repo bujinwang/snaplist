@@ -31,10 +31,18 @@ docs/research/
 .idea/
 .vscode/
 
-# generated eval artifacts (reports are regenerated; golden fixtures are committed)
+# generated eval artifacts (reports are regenerated; golden binaries are NEVER committed)
 evals/reports/*
 !evals/reports/.gitkeep
 logs/*
 !logs/.gitkeep
+
+# copyright-frozen golden binaries — NEVER commit (ADR-010 §3, evals/golden/SOURCING.md:30-32)
+evals/golden/photos/*
+!evals/golden/photos/.gitkeep
+evals/golden/masks/*
+!evals/golden/masks/.gitkeep
+evals/golden/masks_draft/*
+evals/golden/manifest.json
 
 # NOTE: uv.lock and pnpm-lock.yaml are always committed — reproducible installs.
