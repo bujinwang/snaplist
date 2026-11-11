@@ -13,7 +13,8 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 .DEFAULT_GOAL := help
 
 .PHONY: help install test lint fmt evals evals-strict evals-report evals-vision \
-        golden golden-provisional masks-provisional seg-iou fetch-models fetch-sdxl \
+        golden golden-provisional masks-provisional seg-iou golden-proposals \
+        fetch-models fetch-sdxl \
         install-sdxl dev dev-web dev-mobile contract clean
 
 MODEL_DIR ?= $(if $(SNAPLIST_MODEL_DIR),$(SNAPLIST_MODEL_DIR),$(HOME)/.cache/snaplist/models)
@@ -35,6 +36,7 @@ help:
 	@echo "  make golden-provisional  structure check of the web-sourced stand-in set"
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
 	@echo "  make seg-iou    segment the provisional set and report IoU (evals/reports/seglab.md)"
+	@echo "  make golden-proposals  regenerate the 20 ADR-010 proposal drafts (floodfill-border, zero-dep)"
 	@echo "  make fetch-models  download the u2net weights (176 MB) into $(MODEL_DIR)"
 	@echo "  make fetch-sdxl download the SDXL inpainting weights (6.9 GB, fp16) for mode=sdxl_inpaint"
 	@echo "  make dev        FastAPI on :8000 (uvicorn --reload)"
@@ -102,6 +104,13 @@ masks-provisional:
 # it does not gate — the denominator is algorithmic masks, so the number is a smoke signal.
 seg-iou:
 	$(PY) -m evals.tools.seg_iou --golden-dir evals/golden-provisional
+
+# ADR-010 golden-mask SOP step 1 (the automated half): regenerate the 20 proposal drafts with the
+# zero-dependency floodfill-border backend. The Gemini google-nano-banana backend is opt-in:
+# `uv sync --group gen` + GOOGLE_API_KEY, then `--backend google-nano-banana`. Human point-by-point
+# review + sign-off (steps 2-5) are NOT automated — see evals/golden-review/README.md.
+golden-proposals:
+	$(PY) -m evals.tools.generate_proposals --backend floodfill-border
 
 # Model weights (docs/PLAN.md E1-T2). Deliberately NOT part of `install`: 176 MB and a
 # network call must be an explicit act, not a side effect of a clone — and segment() refuses
