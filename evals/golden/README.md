@@ -145,3 +145,12 @@ make golden                                   # the checklist, exit 0 only when 
 Exit codes: `0` complete, `1` incomplete (something is missing), `2` the manifest itself is
 unusable (absent, not JSON, not an array). A missing photo fails the run even if the count is
 right — the manifest is a promise about files that exist.
+
+> **Status update (2026-11-11 UTC).** The paragraphs above are kept verbatim for provenance but
+> no longer describe this machine. In particular: line 3–4 ("40 real photos, 20 masks and
+> `manifest.json` exist ON THIS MACHINE ONLY"), line 25–27 ("all 20 masks are in the **machine
+> tier**") and line 135–136 ("all 20 are machine tier … register is `0/20`") refer to the
+> contract's 20 MASK slots in `evals/golden-review/point_review_register.json`, not to files
+> present here. The true local state is: `evals/golden/photos/` holds 40 JPEGs (git-ignored via
+> the tracked `.gitignore`), `evals/golden/masks/` holds **0** PNGs, and
+> `evals/golden/manifest.json` is **ABSENT**. There are no mask files to tier.

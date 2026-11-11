@@ -1972,6 +1972,12 @@ the one place where the brief and `analytics.ts` conflicted and I followed `anal
    events as fast as the process answers; the only bound is the 8 KB ceiling. A `subject` bound
    to an account does not stop that account from writing a million rows. Needs a token bucket
    keyed on `subject` (or a gateway limit) before the funnel is load-bearing.
+   *Superseded 2026-11-11 UTC:* `POST /v1/events` now has an in-process token bucket keyed on
+   `caller.user_id` (not `subject`), burst 120, refill 1 token / 12 s, returning 429 with
+   `retry_after_seconds` / `Retry-After` and `ErrorCode.INVALID_REQUEST`; it is created per
+   `create_app()` instance on `app.state`. See `docs/QA.md` §10 R8. The original concern
+   (coordination across workers/instances, and the `subject`-vs-`user_id` keying choice) is
+   captured there as acknowledged limitations.
 3. **`client_ts` is whatever the phone says.** Stored, shape-validated, normalised to UTC — and
    still forgeable. Every report must order and window on `received_at`; a dashboard that uses
    `client_ts` for "events in the last 7 days" is trivially gamed and also wrong for a device

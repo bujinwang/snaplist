@@ -143,6 +143,16 @@ re-made masks' measured distribution — see the Threshold paragraph in §5; tha
 This ADR does not claim that satisfying those conditions will or will not turn an IoU number
 into release evidence — that is the future ticket.
 
+### 3.2 Exclusion mechanism — factual correction (2026-11-11 UTC)
+
+PR #8 (`c07c396`, `fix/golden-gitignore-protection`) moved the four golden exclusion rules —
+`evals/golden/photos/*`, `masks/*`, `masks_draft/*` and `manifest.json` — into the tracked
+`.gitignore:40-46`. `.git/info/exclude` is now the default git template and holds **no** golden
+rule (verified: it contains only the standard comment block). The change relocates the rule; it
+does not alter what is excluded, and no binary/mask/manifest value is now or was ever committed.
+D2's conclusion in §3 — that CI cannot recompute the pixel edit distance on a clean clone —
+stands unchanged; only the rule's *location* changed.
+
 ---
 
 ## 4. Decision — vocabulary and single source of truth

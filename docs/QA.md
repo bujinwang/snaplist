@@ -1067,6 +1067,14 @@ exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
   cases, 0 xfailed). The explicit acceptance command `python -m pytest evals/telemetry/tests -q`
   still works and is now redundant with the default collection; both paths run the same 99
   tests. R4's old tripwire never covered `testpaths`; that gap is closed here, independently.
+- **R8 — `POST /v1/events` in-process rate limit (added 2026-11-11).** The token bucket is
+  per-process, per-`create_app()` instance and does NOT coordinate across multiple workers or
+  deployed instances (a client hitting N instances gets ~N× burst). In `local_dev` mode
+  `user_id` is self-declared (`X-SnapList-User-Id`), so a re-install with a fresh uuid resets
+  its bucket (no reset under `supabase_jwt`). The limit is enforced in prose + tests, not by a
+  continuous gate. Mobile emitter `Retry-After` adaptation is follow-up. The 120 / 12 s threshold
+  is a product decision, not an observed load number. CI green ≠ gate passed; local `make test`
+  cannot run here (conftest imports fastapi), so rate-limit behaviour is CI-only.
 
 ## 11. The `make` targets — now the E0-T5 gate (R4 closed)
 
