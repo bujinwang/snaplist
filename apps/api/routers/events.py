@@ -70,6 +70,7 @@ What this endpoint does not do, and will not pretend to
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
@@ -633,7 +634,7 @@ async def ingest_event(
     # on `app.state`, so the test suite's per-test app owns its own full bucket.
     event_limiter: EventRateLimiter = request.app.state.event_rate_limiter
     if not event_limiter.allow(caller.user_id):
-        retry_after = event_limiter.retry_after_seconds(caller.user_id)
+        retry_after = int(math.ceil(event_limiter.retry_after_seconds(caller.user_id)))
         raise errors.ApiError(
             STATUS_TOO_MANY_REQUESTS,
             ErrorCode.INVALID_REQUEST,  # reuse the existing code; NOT a new code, NOT quota_exceeded
