@@ -25,8 +25,8 @@ proposal. If the model returns a red-overlay or a full render instead of a clean
 binarise step is meaningless and the draft must be discarded. See ADR-010 N2: pixel-equivalent
 artefacts are not evidence of a point review.
 
-The draft directory (evals/golden/masks_draft) is intentionally excluded from git (see
-.git/info/exclude in the register notes); this tool writes PNGs there but never commits them.
+The draft directory (evals/golden/masks_draft) is excluded from git by the tracked .gitignore,
+so that exclusion follows every clone; this tool writes PNGs there but never commits binaries.
 """
 
 from __future__ import annotations
