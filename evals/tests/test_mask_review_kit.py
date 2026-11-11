@@ -313,9 +313,18 @@ def test_historical_ai_prefix_is_refused(workspace: Path) -> None:
     golden, _, payload = _fixture(workspace)
     measured = kit.measure(_ID, golden, payload)
     base = payload["records"][0]
-    with pytest.raises(ValueError, match="ADR-010 N2"):
+    # Pin the MACHINE-tier error SEMANTICS, not just a shared boilerplate suffix: every
+    # ValueError in build_record ends with "ADR-010 N2", so matching only that string lets
+    # this test stay green even when the MACHINE guard is deleted and a later slug check
+    # happens to raise instead (QA finding #7, mutation B in the PR #10 review).
+    with pytest.raises(ValueError) as excinfo:
         kit.build_record(base, measured,
                          **_record_kwargs("ai:google-ai-mode-nano-banana"))
+    message = str(excinfo.value)
+    assert "MACHINE tier" in message
+    assert "machine-tier proposal cannot be recorded as ai-assisted point-reviewed" in message
+    assert "ADR-010 N2" in message
+    assert "ai:google-ai-mode-nano-banana" in message
     assert "ai-assisted:" not in json.dumps(payload)
 
 
