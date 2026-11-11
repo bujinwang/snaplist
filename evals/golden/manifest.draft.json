@@ -13,12 +13,12 @@
     ],
     "hard_attributes": [
       "slight wrinkles at the hem",
-      "ribbed neckline",
-      "no print or logo"
+      "no print or logo",
+      "laid flat on a pure black background"
     ],
     "hard_case": false,
-    "notes": "White cotton t-shirt, laid flat on plain light grey surface, diffuse daylight, full frame, slight wrinkles at hem.",
-    "search_prompt": "white cotton t-shirt flat lay plain light grey background soft daylight wrinkled hem"
+    "notes": "White cotton-jersey crew-neck t-shirt laid flat, short sleeves spread out, plain black seamless background, even diffuse light, slight wrinkles at hem. (metadata corrected 2026-11-11 to match the actual photo: background is black, not light grey)",
+    "search_prompt": "white cotton t-shirt flat lay plain black background diffuse light wrinkles hem"
   },
   {
     "id": "top-02",
@@ -75,13 +75,13 @@
       "cotton"
     ],
     "hard_attributes": [
-      "hood folded back over the shoulders",
+      "hood up over the head, not folded back",
       "kangaroo pocket at centre",
-      "drawstrings resting asymmetric"
+      "drawstrings hanging loose"
     ],
     "hard_case": false,
-    "notes": "Black hoodie laid flat, hood folded back, plain off-white background, diffuse softbox light.",
-    "search_prompt": "black hoodie flat lay hood folded back off white background softbox"
+    "notes": "Black cotton hoodie shown on an invisible ghost mannequin, front view, hood up, kangaroo pocket and loose drawstrings visible, off-white background, soft studio light. (metadata corrected 2026-11-11: hood is up, not folded back; ghost-mannequin presentation, not a flat-lay)",
+    "search_prompt": "black hoodie ghost mannequin hood up kangaroo pocket off white background studio"
   },
   {
     "id": "top-05",
@@ -140,13 +140,13 @@
       "denim"
     ],
     "hard_attributes": [
-      "open flat, lapels splayed",
-      "visible topstitching on pockets",
-      "two chest patch pockets"
+      "back view on a ghost mannequin",
+      "yoke and centre-back seams visible",
+      "sleeves hanging with cuffs fastened"
     ],
     "hard_case": false,
-    "notes": "Denim jacket laid flat open on light grey surface, natural diffuse light, visible stitching and pockets.",
-    "search_prompt": "denim jacket open flat lay light grey background visible stitching pockets"
+    "notes": "Blue denim jacket shown from the BACK on an invisible ghost mannequin, light grey background, soft studio shadow, topstitching and cuffs visible; chest pockets not visible from this angle. (metadata corrected 2026-11-11: photo is the back view on a ghost mannequin, not a front flat-lay)",
+    "search_prompt": "blue denim jacket back view ghost mannequin light grey background topstitching cuffs"
   },
   {
     "id": "top-08",
@@ -182,13 +182,13 @@
       "cotton"
     ],
     "hard_attributes": [
-      "faded graphic print, low contrast",
-      "slight pilling under the arms",
-      "stretched neckline"
+      "bold graphic print, high contrast against the red",
+      "on a wooden hanger on a white clothes rail",
+      "styled frame: dry branches and vase in shot"
     ],
     "hard_case": false,
-    "notes": "Red graphic tee with faded print, laid flat on white surface, diffuse light, slight pilling visible.",
-    "search_prompt": "red graphic t-shirt faded print flat lay white pilling"
+    "notes": "Red cotton t-shirt with a bold multicolour graphic print, hanging on a wooden hanger from a white metal clothes rail against a plain white wall; decorative dry branches in a vase at the left of frame, soft daylight. (metadata corrected 2026-11-11: photo is a styled hanging shot, not a flat-lay; the print is bold, not faded, and no pilling is visible)",
+    "search_prompt": "red graphic t-shirt wooden hanger clothes rail plain white wall branches vase styled"
   },
   {
     "id": "top-10",
@@ -203,13 +203,13 @@
       "linen"
     ],
     "hard_attributes": [
-      "sleeves rolled to the elbow",
+      "sleeves hanging straight, not rolled",
       "linen slubs and wrinkles",
-      "laid on light wood, warm tone"
+      "one chest patch pocket"
     ],
     "hard_case": false,
-    "notes": "Beige linen shirt, sleeves rolled, flat-lay on light wood, soft window light, no colour cast.",
-    "search_prompt": "beige linen shirt sleeves rolled flat lay light wood window light"
+    "notes": "Beige linen button-up shirt shown on an invisible ghost mannequin, front view, sleeves hanging straight (not rolled), chest patch pocket and brand label at the collar, plain white background, soft studio light. (metadata corrected 2026-11-11: ghost-mannequin front view on white, sleeves not rolled — not a flat-lay on light wood)",
+    "search_prompt": "beige linen shirt ghost mannequin front view white background chest pocket button placket"
   },
   {
     "id": "bottom-01",
@@ -394,13 +394,13 @@
       "denim"
     ],
     "hard_attributes": [
-      "on a hanger by the waistband",
-      "short inseam, frayed hem",
-      "five-pocket front"
+      "laid flat, front view",
+      "heavy distressing, ripped pockets",
+      "frayed fringe hem"
     ],
     "hard_case": false,
-    "notes": "Black denim shorts on hanger against cream wall, diffuse light.",
-    "search_prompt": "black denim shorts hanger cream wall diffuse light"
+    "notes": "Black denim shorts laid flat, front view, on a plain white background: heavy distressing with ripped pockets, frayed fringe hem, five-pocket front with buttoned waistband. (metadata corrected 2026-11-11: photo is a flat-lay on white, not on a hanger against a cream wall)",
+    "search_prompt": "black distressed denim shorts flat lay front view white background ripped frayed hem"
   },
   {
     "id": "bottom-10",
@@ -542,13 +542,13 @@
       "leather"
     ],
     "hard_attributes": [
-      "pair, laces untied",
-      "slight scuffs on the toe",
-      "rubber sole contrast"
+      "pair, laces tied",
+      "greige studio surface on stacked books",
+      "gum-tone sole, tan heel lining"
     ],
     "hard_case": false,
-    "notes": "White leather sneakers pair on plain white surface, soft light, slight scuffs visible.",
-    "search_prompt": "white leather sneakers pair plain white surface soft light scuffs"
+    "notes": "White leather low-top sneakers, pair angled on stacked books, greige studio background with warm-toned props behind, soft light, laces tied. (metadata corrected 2026-11-11: laces are tied and the surface is books on greige, not a plain white surface)",
+    "search_prompt": "white leather sneakers pair laces tied stacked books greige studio background"
   },
   {
     "id": "shoe-02",
@@ -620,20 +620,20 @@
     "mask_path": "masks/shoe-05.png",
     "category": "shoe",
     "colors": [
-      "brown"
+      "black"
     ],
     "pattern": "solid",
     "material": [
       "leather"
     ],
     "hard_attributes": [
-      "lace-up front",
-      "creases across the vamp",
-      "pair, ankle height"
+      "no laces, elastic side gore panels",
+      "heel pull tab",
+      "chunky block heel with ridged platform sole"
     ],
     "hard_case": false,
-    "notes": "Leather ankle boots with laces pair on grey surface, diffuse light, creasing visible.",
-    "search_prompt": "leather ankle boots laces pair grey surface creasing"
+    "notes": "Black leather platform ankle boots, chelsea style with elastic side gore and heel pull tab, chunky block heel and ridged platform sole, pair angled on a plain white background. (metadata corrected 2026-11-11: boots are BLACK and lace-free, not brown lace-ups)",
+    "search_prompt": "black leather platform ankle boots chelsea elastic gore block heel ridged sole pair"
   },
   {
     "id": "acc-01",
@@ -662,21 +662,20 @@
     "mask_path": "masks/acc-02.png",
     "category": "accessory",
     "colors": [
-      "natural",
-      "blue"
+      "natural"
     ],
-    "pattern": "graphic",
+    "pattern": "solid",
     "material": [
       "canvas"
     ],
     "hard_attributes": [
-      "screen-printed logo on the front",
-      "handle casts shadow on the cloth",
-      "bag sags, not full"
+      "no print or logo",
+      "front slip pocket",
+      "stands upright, flat bottom"
     ],
     "hard_case": false,
-    "notes": "Canvas tote bag printed logo on dark purple backdrop, handle shadow visible.",
-    "search_prompt": "canvas tote bag printed logo dark purple backdrop handle shadow"
+    "notes": "Plain ecru canvas tote bag standing upright on a plain white background: no print or logo, front slip pocket, flat bottom, long parallel handles. (metadata corrected 2026-11-11: bag is plain natural canvas on white, not a printed logo tote on a dark purple backdrop)",
+    "search_prompt": "plain ecru canvas tote bag standing white background front slip pocket no logo"
   },
   {
     "id": "acc-03",
@@ -735,13 +734,13 @@
       "leather"
     ],
     "hard_attributes": [
-      "flap open, interior visible",
-      "long adjustable strap coiled",
-      "on white, soft shadow"
+      "double rolled top handles",
+      "long adjustable shoulder strap with brass buckle",
+      "zip-top closure, no flap"
     ],
     "hard_case": false,
-    "notes": "Leather crossbody bag flap open on white surface, soft even lighting.",
-    "search_prompt": "leather crossbody bag flap open white surface soft lighting"
+    "notes": "Brown leather satchel with double rolled top handles, a long adjustable shoulder strap with brass buckle crossing the front, and a zip-top closure, standing upright on a plain white background with soft shadow. (metadata corrected 2026-11-11: this is a zip-top satchel — there is no flap, so 'flap open, interior visible' was wrong)",
+    "search_prompt": "brown leather satchel double handles shoulder strap brass buckle zip top white background"
   },
   {
     "id": "hard-01",
