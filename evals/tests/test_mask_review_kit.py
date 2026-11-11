@@ -165,12 +165,14 @@ def test_clean_clone_reports_missing_files_never_fabricates(workspace: Path) -> 
 
 
 def _record_args(golden: Path, register: Path, *, attest: bool = False,
-                 write: bool = False, model: str = "sam2") -> list[str]:
+                 write: bool = False, model: str = "sam2",
+                 proposal_source: str = "ai-assisted:sam2+point-reviewed") -> list[str]:
     args = [
         "--register", str(register), "--golden-dir", str(golden),
         "record", "--id", _ID, "--model", model, "--model-version", "2.1",
         "--reviewer", "bert", "--review-id", "PR-010-top-01",
         "--points-reviewed", "1",
+        "--proposal-source", proposal_source,
     ]
     if attest:
         args.append("--attest")
@@ -236,11 +238,13 @@ def test_human_supplied_fields_are_never_inferred(workspace: Path) -> None:
     with pytest.raises(ValueError, match="reviewer"):
         kit.build_record(base, measured, model="sam2", model_version="2.1",
                          reviewer="", review_id="x", points_reviewed=1,
-                         reviewed_at="2026-11-09T00:00:00Z")
+                         reviewed_at="2026-11-09T00:00:00Z",
+                         proposal_source="ai-assisted:sam2+point-reviewed")
     with pytest.raises(ValueError, match="points_reviewed"):
         kit.build_record(base, measured, model="sam2", model_version="2.1",
                          reviewer="bert", review_id="x", points_reviewed=0,
-                         reviewed_at="2026-11-09T00:00:00Z")
+                         reviewed_at="2026-11-09T00:00:00Z",
+                         proposal_source="ai-assisted:sam2+point-reviewed")
 
 
 # --------------------------------------------------------------------------- check
@@ -276,3 +280,106 @@ def test_zero_network_and_no_secret_reads() -> None:
     for forbidden in ("socket", "requests", "httpx", "urllib", "urlopen", "API_KEY",
                       "SECRET", "PASSWORD", "os.environ"):
         assert forbidden not in source, f"unexpected {forbidden!r} in the kit"
+
+
+# --------------------------------------------------------------------------- provenance gate
+
+
+def _record_kwargs(proposal_source: str) -> dict:
+    """Common human-supplied fields for a direct build_record() call."""
+    return dict(
+        model="sam2", model_version="2.1", reviewer="bert",
+        review_id="PR-010-top-01", points_reviewed=412,
+        reviewed_at="2026-11-11T00:00:00Z", proposal_source=proposal_source,
+    )
+
+
+def test_machine_tier_proposal_cannot_be_recorded(workspace: Path) -> None:
+    golden, _, payload = _fixture(workspace)
+    measured = kit.measure(_ID, golden, payload)
+    base = payload["records"][0]
+    with pytest.raises(ValueError) as excinfo:
+        kit.build_record(base, measured,
+                         **_record_kwargs("algorithmic:floodfill-border"))
+    message = str(excinfo.value)
+    assert "machine-tier proposal cannot be recorded as ai-assisted point-reviewed" in message
+    assert "ADR-010 N2" in message
+    # No ai-assisted string may be fabricated anywhere in the register.
+    assert base["status"] == "pending" and base["provenance"] is None
+    assert "ai-assisted:" not in json.dumps(payload)
+
+
+def test_historical_ai_prefix_is_refused(workspace: Path) -> None:
+    golden, _, payload = _fixture(workspace)
+    measured = kit.measure(_ID, golden, payload)
+    base = payload["records"][0]
+    with pytest.raises(ValueError, match="ADR-010 N2"):
+        kit.build_record(base, measured,
+                         **_record_kwargs("ai:google-ai-mode-nano-banana"))
+    assert "ai-assisted:" not in json.dumps(payload)
+
+
+def test_bare_proposal_stage_string_is_machine_tier_and_refused(workspace: Path) -> None:
+    golden, _, payload = _fixture(workspace)
+    measured = kit.measure(_ID, golden, payload)
+    base = payload["records"][0]
+    # A proposal without +point-reviewed is deliberately MACHINE (mask_provenance.py:26-27).
+    with pytest.raises(ValueError, match="machine-tier proposal cannot be recorded"):
+        kit.build_record(base, measured,
+                         **_record_kwargs("ai-assisted:google-nano-banana"))
+    assert "ai-assisted:" not in json.dumps(payload)
+
+
+def test_hand_tier_proposal_is_refused(workspace: Path) -> None:
+    golden, _, payload = _fixture(workspace)
+    measured = kit.measure(_ID, golden, payload)
+    base = payload["records"][0]
+    with pytest.raises(ValueError, match="HAND tier"):
+        kit.build_record(base, measured, **_record_kwargs("hand-drawn"))
+    assert "ai-assisted:" not in json.dumps(payload)
+
+
+def test_valid_ai_assisted_source_roundtrips_and_guards_remain(workspace: Path) -> None:
+    golden, _, payload = _fixture(workspace)
+    measured = kit.measure(_ID, golden, payload)
+    base = payload["records"][0]
+    canonical = "ai-assisted:sam2+point-reviewed"
+    record = kit.build_record(base, measured, **_record_kwargs(canonical))
+    assert record["provenance"] == canonical
+    assert kit.AI_ASSISTED_RE.fullmatch(record["provenance"])
+    assert kit.parse_model_slug(record["provenance"]) == "sam2"
+    assert record["proposal"]["model"] == "sam2"
+    # The original :244-245 guards must still be present in the source.
+    source_text = Path(kit.__file__).read_text(encoding="utf-8")
+    assert "AI_ASSISTED_RE.fullmatch(provenance)" in source_text
+    assert "parse_model_slug(provenance) != model" in source_text
+    with pytest.raises(ValueError, match="does not match"):
+        kit.build_record(base, measured,
+                         **_record_kwargs("ai-assisted:other+point-reviewed"))
+
+
+def test_record_cli_refuses_machine_tier_and_leaves_register_unchanged(
+        workspace: Path, capsys) -> None:
+    golden, register, _ = _fixture(workspace)
+    before = register.read_bytes()
+    rc = kit.main(_record_args(golden, register, attest=True, write=True,
+                               proposal_source="algorithmic:floodfill-border"))
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "machine-tier proposal cannot be recorded" in captured.err
+    assert '"status": "reviewed"' not in captured.out
+    assert "ai-assisted:" not in captured.out
+    assert register.read_bytes() == before
+
+
+def test_record_requires_an_explicit_proposal_source(workspace: Path) -> None:
+    golden, register, _ = _fixture(workspace)
+    args = [
+        "--register", str(register), "--golden-dir", str(golden),
+        "record", "--id", _ID, "--model", "sam2", "--model-version", "2.1",
+        "--reviewer", "bert", "--review-id", "PR-010-top-01",
+        "--points-reviewed", "1", "--attest",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        kit.main(args)
+    assert excinfo.value.code == 2

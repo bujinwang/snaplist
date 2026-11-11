@@ -150,7 +150,8 @@ python -m evals.tools.mask_review_kit --strict-binary check   # opt-in: require 
 # Build a reviewed record (prints it; add --write to update the register)
 python -m evals.tools.mask_review_kit record --id top-01 \
     --model sam2 --model-version 2.1 --reviewer bert \
-    --review-id PR-010-top-01 --points-reviewed 412 --attest [--write]
+    --review-id PR-010-top-01 --points-reviewed 412 \
+    --proposal-source ai-assisted:sam2+point-reviewed --attest [--write]
 ```
 
 **What the tool deliberately will not do** (ADR-010 §6): `--attest` is a human's explicit
@@ -159,7 +160,10 @@ statement that they reviewed that mask point by point; `reviewer`, `review_id` a
 stays `pending` and the tool writes nothing. It never sets the edit-distance threshold, never
 sets `u1_met`, never produces an IoU number, and never changes `manifest.json`. While the
 threshold is `UNSET`, 20 `reviewed` rows still leave U1 UNMET by construction — the last step
-of U1 is a **human sign-off**, not an exit code.
+of U1 is a **human sign-off**, not an exit code. `--proposal-source` is a required human
+declaration of the proposal's actual provenance; the tool refuses machine-tier proposals
+(`algorithmic:floodfill-border`, historical `ai:*`) rather than relabelling them as
+`ai-assisted:<slug>+point-reviewed` (ADR-010 N2).
 
 `check` is stricter than `validate_golden.py` on **mode** (`L` only; the validator also accepts
 `"1"`), but not on pixel values: `evals/golden/README.md` allows soft edges and B2 binarises

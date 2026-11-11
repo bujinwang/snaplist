@@ -120,6 +120,35 @@ def _make_golden_env(base: Path, photos: dict[str, Image.Image]):
     return golden, review_dir
 
 
+def _make_missing_photo_env(base: Path, ids: list[str]) -> tuple[Path, Path]:
+    """Manifest/register list ids whose photo files are absent (all-SKIP scenario)."""
+    golden = base / "golden"
+    (golden / "photos").mkdir(parents=True, exist_ok=True)
+    (golden / "manifest.draft.json").write_text(
+        json.dumps([{"id": rid, "path": f"photos/{rid}.jpg"} for rid in ids]),
+        encoding="utf-8",
+    )
+    review_dir = base / "golden-review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "point_review_register.json").write_text(
+        json.dumps({"expected_ids": ids, "records": []}), encoding="utf-8"
+    )
+    return golden, review_dir
+
+
+def _proposal_args(base: Path, golden: Path, review: Path, *,
+                   dry_run: bool = False) -> list[str]:
+    args = [
+        "--manifest", str(golden / "manifest.draft.json"),
+        "--register", str(review / "point_review_register.json"),
+        "--golden-dir", str(golden),
+        "--out-dir", str(base / "out"),
+    ]
+    if dry_run:
+        args.append("--dry-run")
+    return args
+
+
 def test_floodfill_isolates_centered_foreground():
     photo = _photo(square=(20, 20, 24))
     mask = np.asarray(gp.floodfill_border(photo, tolerance=32))
@@ -244,3 +273,101 @@ def test_google_nano_banana_requires_sdk_and_key(monkeypatch):
     photo = _photo(square=(20, 20, 24))
     with pytest.raises(RuntimeError):
         gp.google_nano_banana(photo, api_key=None)
+
+
+# --------------------------------------------------------------------------- zero-output honesty
+
+_TWENTY_IDS = [f"top-{i:02d}" for i in range(1, 21)]
+
+
+def test_all_photos_missing_is_reported_as_failure(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "all-missing"
+        golden, review = _make_missing_photo_env(base, _TWENTY_IDS)
+        rc = gp.main(_proposal_args(base, golden, review))
+        captured = capsys.readouterr()
+        assert rc != 0
+        assert "20 id(s) processed: OK=0 SKIP=20 DRY=0 FAIL=0." in captured.out
+        assert "0 failures." not in captured.out
+        assert "no proposal was produced" in captured.err
+        assert list((base / "out").glob("*.png")) == []
+
+
+def test_partial_missing_photos_with_one_ok_still_succeeds(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "partial"
+        golden, review = _make_golden_env(
+            base, {"top-01": _photo(square=(20, 20, 24))}
+        )
+        manifest = golden / "manifest.draft.json"
+        entries = json.loads(manifest.read_text(encoding="utf-8"))
+        entries.append({"id": "top-02", "path": "photos/top-02.jpg"})
+        manifest.write_text(json.dumps(entries), encoding="utf-8")
+        register = review / "point_review_register.json"
+        payload = json.loads(register.read_text(encoding="utf-8"))
+        payload["expected_ids"] = ["top-01", "top-02"]
+        register.write_text(json.dumps(payload), encoding="utf-8")
+
+        rc = gp.main(_proposal_args(base, golden, review))
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "2 id(s) processed: OK=1 SKIP=1 DRY=0 FAIL=0." in captured.out
+        assert (base / "out" / "top-01.png").is_file()
+        assert not (base / "out" / "top-02.png").exists()
+
+
+def test_dry_run_with_zero_output_is_not_a_failure(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "dry-zero"
+        golden, review = _make_missing_photo_env(base, _TWENTY_IDS)
+        rc = gp.main(_proposal_args(base, golden, review, dry_run=True))
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "20 id(s) processed: OK=0 SKIP=20 DRY=0 FAIL=0." in captured.out
+        assert "no proposal was produced" not in captured.err
+        assert list((base / "out").glob("*.png")) == []
+
+
+def test_dry_run_reports_dry_count_and_writes_nothing(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "dry-one"
+        golden, review = _make_golden_env(
+            base, {"top-01": _photo(square=(20, 20, 24))}
+        )
+        rc = gp.main(_proposal_args(base, golden, review, dry_run=True))
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "1 id(s) processed: OK=0 SKIP=0 DRY=1 FAIL=0." in captured.out
+        assert list((base / "out").glob("*.png")) == []
+
+
+def test_draft_exists_rerun_is_idempotent_not_zero_output(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "idempotent"
+        golden, review = _make_golden_env(
+            base, {"top-01": _photo(square=(20, 20, 24))}
+        )
+        args = _proposal_args(base, golden, review)
+        assert gp.main(args) == 0
+        capsys.readouterr()
+        rc2 = gp.main(args)
+        captured = capsys.readouterr()
+        assert rc2 == 0
+        assert "1 id(s) processed: OK=0 SKIP=1 DRY=0 FAIL=0." in captured.out
+        assert "SKIP" in captured.out and "draft exists" in captured.out
+        assert "no proposal was produced" not in captured.err
+
+
+def test_stale_draft_does_not_mask_an_all_missing_run(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "stale"
+        ids = ["top-01", "top-02"]
+        golden, review = _make_missing_photo_env(base, ids)
+        out = base / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        _photo(square=(20, 20, 24)).save(out / "top-01.png")
+        rc = gp.main(_proposal_args(base, golden, review))
+        captured = capsys.readouterr()
+        assert rc != 0
+        assert "2 id(s) processed: OK=0 SKIP=2 DRY=0 FAIL=0." in captured.out
+        assert "no proposal was produced" in captured.err
