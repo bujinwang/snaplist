@@ -41,9 +41,9 @@ from apps.api.ratelimit import (
     EventRateLimiter,
 )
 from apps.api.repository import SqliteRepository
-from apps.api.routers import events as ev
 from apps.api.settings import Settings
 from apps.api.tests.conftest import USER_A, USER_B, create_item
+from apps.api.tests.test_events import BUILDERS
 
 ENDPOINT = "/v1/events"
 
@@ -79,9 +79,10 @@ def _event_body(
 ) -> dict[str, object]:
     """A fresh, valid event body. `paywall_impression` needs no item, so it is the default.
 
-    Each call regenerates `event_id` (via `ev.BUILDERS`), so two calls never collide.
+    Each call regenerates `event_id` (via the shared `BUILDERS` from `test_events`), so
+    two calls never collide.
     """
-    body = ev.BUILDERS[event_name]()
+    body = BUILDERS[event_name]()
     body["subject"] = f"usr_{user}"
     return body
 
