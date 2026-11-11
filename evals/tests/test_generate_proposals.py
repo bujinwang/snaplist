@@ -371,3 +371,207 @@ def test_stale_draft_does_not_mask_an_all_missing_run(capsys):
         assert rc != 0
         assert "2 id(s) processed: OK=0 SKIP=2 DRY=0 FAIL=0." in captured.out
         assert "no proposal was produced" in captured.err
+
+
+# --------------------------------------------------------------------------- #
+# birefnet-onnx backend (2026-11-11)
+# --------------------------------------------------------------------------- #
+# The real weights (972 MB) and onnxruntime are environment-level installs, never
+# CI dependencies, so every test here fakes the session and only checks existence
+# of the weights file. What MUST be tested with real numpy/PIL is everything the
+# backend does to the logits and the pixels: sigmoid before threshold, soft-edge
+# scaling, and -- most importantly -- resizing back to the ORIGINAL photo size,
+# because the register's XOR@128 needs proposal and reviewed masks to share the
+# photo dimensions exactly.
+
+
+def _column_logits(left: float, right: float, size: int = 1024) -> np.ndarray:
+    """A (size, size) logits array constant per column: `left` for the left half,
+    `right` for the right half."""
+    cols = np.where(np.arange(size) < size // 2, left, right)
+    return np.broadcast_to(cols[None, :], (size, size)).astype(np.float32)
+
+
+def _ramp_logits(size: int = 1024) -> np.ndarray:
+    """A (size, size) logits array that ramps linearly left-to-right from about -10
+    to about +10, so sigmoid sweeps the full soft range through 0.5 at the centre."""
+    cols = (np.arange(size, dtype=np.float64) - size / 2) / (size / 20.0)
+    return np.broadcast_to(cols[None, :], (size, size)).astype(np.float32)
+
+
+def _make_fake_ort(logits: np.ndarray):
+    """Build a fake `onnxruntime` module whose session returns fixed `logits`.
+
+    Mirrors the small slice of the real API `birefnet_onnx` uses: a constructor
+    taking (weights, providers=...), get_inputs()/get_outputs() returning objects
+    with `.name`, and run(output_names, feeds) returning [logits] with the batch
+    dimension of the feed. Registering it via monkeypatch keeps cleanup automatic.
+    """
+    mod = types.ModuleType("onnxruntime")
+
+    class _IO:
+        def __init__(self, name):
+            self.name = name
+            self.shape = [1, 1, 1024, 1024]
+            self.type = "tensor(float)"
+
+    class _Session:
+        def __init__(self, weights, providers=None):
+            self.weights = str(weights)
+
+        def get_inputs(self):
+            return [_IO("input")]
+
+        def get_outputs(self):
+            return [_IO("output")]
+
+        def run(self, output_names, feeds):
+            batch = next(iter(feeds.values())).shape[0]
+            out = np.broadcast_to(logits[None, None], (batch, 1, *logits.shape))
+            return [out.astype(np.float32)]
+
+    mod.InferenceSession = _Session
+    return mod
+
+
+def _fake_weights(base: Path) -> Path:
+    """The backend only checks the weights file EXISTS, never its content."""
+    p = base / "model.onnx"
+    p.write_bytes(b"ONNX-FAKE")
+    return p
+
+
+def test_birefnet_slug_is_ai_assisted_reviewed():
+    # The register's build_record requires --model to equal the source slug and the
+    # source to classify as AI_ASSISTED_REVIEWED; a bare proposal stays MACHINE.
+    from evals.mask_provenance import MaskSourceTier, classify, parse_model_slug
+
+    c = classify("ai-assisted:birefnet+point-reviewed")
+    assert c.tier is MaskSourceTier.AI_ASSISTED_REVIEWED
+    assert c.model_slug == "birefnet"
+    assert parse_model_slug("ai-assisted:birefnet+point-reviewed") == "birefnet"
+    # without the +point-reviewed suffix the proposal is MACHINE, never reviewed
+    assert classify("ai-assisted:birefnet").tier is MaskSourceTier.MACHINE
+
+
+def test_birefnet_requires_onnxruntime(monkeypatch):
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)  # force ImportError
+    with pytest.raises(RuntimeError, match="requires"):
+        gp.birefnet_onnx(_photo())
+
+
+def test_birefnet_requires_weights_file(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", _make_fake_ort(_column_logits(-40.0, 40.0))
+        )
+        with pytest.raises(RuntimeError, match="weights missing"):
+            gp.birefnet_onnx(
+                _photo(), model_path=Path(tmp) / "no-such-model.onnx"
+            )
+
+
+def test_birefnet_sigmoid_applied_before_scaling(monkeypatch):
+    # Constant logits of +2: raw-clip would give 2, sigmoid gives round(0.881*255)=225.
+    # Constant -2: raw-clip gives 0, sigmoid gives round(0.119*255)=30. A step of +/-40
+    # would NOT distinguish the two (both clip and sigmoid saturate), so constants pin it.
+    with tempfile.TemporaryDirectory() as tmp:
+        weights = _fake_weights(Path(tmp))
+        monkeypatch.setitem(
+            sys.modules,
+            "onnxruntime",
+            _make_fake_ort(np.full((1024, 1024), 2.0, dtype=np.float32)),
+        )
+        result = gp.birefnet_onnx(_photo(), model_path=weights)
+        arr = np.asarray(result)
+        assert result.mode == "L"
+        assert arr.dtype == np.uint8
+        assert int(arr[32, 32]) == 225
+
+        monkeypatch.setitem(
+            sys.modules,
+            "onnxruntime",
+            _make_fake_ort(np.full((1024, 1024), -2.0, dtype=np.float32)),
+        )
+        arr = np.asarray(gp.birefnet_onnx(_photo(), model_path=weights))
+        assert int(arr[32, 32]) == 30
+
+
+def test_birefnet_soft_keeps_gradient(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        weights = _fake_weights(Path(tmp))
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", _make_fake_ort(_ramp_logits())
+        )
+        result = gp.birefnet_onnx(_photo(), model_path=weights)
+        arr = np.asarray(result)
+        assert int(arr.min()) == 0 and int(arr.max()) == 255
+        # a soft proposal carries intermediate values, not a 2-level hard mask
+        assert len(np.unique(arr)) > 8
+        # left-to-right ramp stays monotonic after the bilinear downscale
+        row = arr[32].astype(np.int16)
+        assert (np.diff(row) >= 0).all()
+
+
+def test_birefnet_binary_threshold(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        weights = _fake_weights(Path(tmp))
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", _make_fake_ort(_column_logits(-40.0, 40.0))
+        )
+        result = gp.birefnet_onnx(
+            _photo(), model_path=weights, soft=False, threshold=0.5
+        )
+        values = set(np.unique(np.asarray(result)).tolist())
+        assert values <= {0, 255}
+        arr = np.asarray(result)
+        assert arr[32, 5] == 0 and arr[32, 58] == 255
+
+
+def test_birefnet_output_matches_original_photo_size(monkeypatch):
+    # XOR@128 in mask_review_kit requires proposal and reviewed masks to share the
+    # photo's dimensions exactly; a 1024x1024 inference output must come back resized.
+    with tempfile.TemporaryDirectory() as tmp:
+        weights = _fake_weights(Path(tmp))
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", _make_fake_ort(_column_logits(-40.0, 40.0))
+        )
+        photo = Image.new("RGB", (48, 36), (200, 200, 200))
+        result = gp.birefnet_onnx(photo, model_path=weights)
+        assert result.size == (48, 36)
+
+
+def test_main_birefnet_backend_writes_drafts(monkeypatch, capsys):
+    # CLI wiring: --backend birefnet-onnx + --birefnet-model-path must reach the
+    # backend through the argparse dispatch and write contract-shaped drafts.
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "birefnet-cli"
+        golden, review = _make_golden_env(
+            base,
+            {"top-01": _photo(square=(20, 20, 24)),
+             "top-02": _photo(bg=(120, 120, 120))},
+        )
+        weights = _fake_weights(base)
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", _make_fake_ort(_column_logits(-40.0, 40.0))
+        )
+        rc = gp.main(
+            [
+                "--manifest", str(golden / "manifest.draft.json"),
+                "--register", str(review / "point_review_register.json"),
+                "--golden-dir", str(golden),
+                "--out-dir", str(base / "out"),
+                "--backend", "birefnet-onnx",
+                "--birefnet-model-path", str(weights),
+            ]
+        )
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "OK=2" in captured.out
+        for rid in ("top-01", "top-02"):
+            out = base / "out" / f"{rid}.png"
+            assert out.is_file()
+            with Image.open(out) as img:
+                assert img.mode == "L"
+                assert img.size == (64, 64)
+
