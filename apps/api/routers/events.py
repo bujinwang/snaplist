@@ -637,7 +637,7 @@ async def ingest_event(
         retry_after = int(math.ceil(event_limiter.retry_after_seconds(caller.user_id)))
         raise errors.ApiError(
             STATUS_TOO_MANY_REQUESTS,
-            ErrorCode.INVALID_REQUEST,  # reuse the existing code; NOT a new code, NOT quota_exceeded
+            ErrorCode.INVALID_REQUEST,  # reuse existing code; not new, not quota_exceeded
             "Too many POST /v1/events requests; retry after the indicated seconds.",
             retry_after_seconds=retry_after,
             details={

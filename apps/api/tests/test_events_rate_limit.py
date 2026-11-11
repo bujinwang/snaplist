@@ -25,7 +25,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
@@ -34,14 +34,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
-from apps.api.repository import SqliteRepository
-from apps.api.routers import events as ev
 from apps.api.ratelimit import (
     EVENT_BURST_CAPACITY,
     EVENT_REFILL_SECONDS,
     STATUS_TOO_MANY_REQUESTS,
     EventRateLimiter,
 )
+from apps.api.repository import SqliteRepository
+from apps.api.routers import events as ev
 from apps.api.settings import Settings
 from apps.api.tests.conftest import USER_A, USER_B, create_item
 
@@ -74,7 +74,9 @@ def rl_client(client: TestClient, fake_clock: _FakeClock) -> TestClient:
     return client
 
 
-def _event_body(event_name: str = "paywall_impression", *, user: UUID = USER_A) -> dict[str, object]:
+def _event_body(
+    event_name: str = "paywall_impression", *, user: UUID = USER_A
+) -> dict[str, object]:
     """A fresh, valid event body. `paywall_impression` needs no item, so it is the default.
 
     Each call regenerates `event_id` (via `ev.BUILDERS`), so two calls never collide.
