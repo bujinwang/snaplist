@@ -267,8 +267,9 @@ def test_429_uses_invalid_request_code_and_emits_retry_after(
     assert "retry_after_seconds" in body["error"]
     assert body["error"]["retry_after_seconds"] is not None
     assert body["error"]["retry_after_seconds"] == EVENT_REFILL_SECONDS
-    # the header is a string form of the same number
-    assert response.headers.get("retry-after") == str(float(EVENT_REFILL_SECONDS))
+    # Retry-After is an integer number of seconds (the schema field is `int | None`),
+    # so the header is the integer string form, not a float.
+    assert response.headers.get("retry-after") == str(int(EVENT_REFILL_SECONDS))
     assert body["error"]["details"]["limit"] == str(EVENT_BURST_CAPACITY)
     assert body["error"]["details"]["window_seconds"] == str(
         int(EVENT_REFILL_SECONDS * EVENT_BURST_CAPACITY)
