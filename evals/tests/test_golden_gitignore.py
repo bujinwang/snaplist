@@ -7,6 +7,14 @@ the tracked `.gitignore`, which travels with every clone. This suite asserts **r
 behaviour** (`check-ignore`, `ls-files`, `status --porcelain`) rather than the text of the
 ignore rules: a comment saying "ignored" is not proof that git ignores anything.
 
+This suite also pins a second, easily-lost defence: scratch artefacts written by tests into
+`.pytest_tmp/` must stay VISIBLE to git. PR #9's first CI run failed at `dirty_check` because
+the old tests wrote nine artefacts there; the fix was to move tests to
+`tempfile.TemporaryDirectory()`, NOT to add a `.pytest_tmp/` rule to `.gitignore`. Ignoring
+that path would blind the sentinel: a future test that pollutes the working tree would go
+green in CI again. So this directory is deliberately NOT ignored, and that is asserted below
+as real `check-ignore` behaviour rather than as a comment.
+
 `tmp_path` is deliberately NOT used: on this host the sandbox raises EEXIST for pytest's temp
 root, and these tests need no filesystem writes at all — only read-only git queries.
 """
@@ -43,6 +51,17 @@ EXPECTED_TRACKED: frozenset[str] = frozenset(
 NOT_IGNORED: tuple[str, ...] = tuple(sorted(EXPECTED_TRACKED))
 
 BINARY_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".png"})
+
+#: Test scratch artefacts. These must NOT be ignored: `dirty_check` runs
+#: `git status --porcelain --untracked-files=all` on a clean checkout and fails on any line
+#: outside its whitelist. A `.pytest_tmp/` ignore rule would hide a regression that writes
+#: into the repo again. Contrast `.pytest_cache/`, which IS ignored by design (pytest's own
+#: cache, never a test fixture output).
+VISIBLE_SCRATCH: tuple[str, ...] = (
+    ".pytest_tmp/genprop/gen/out/top-01.png",
+    ".pytest_tmp/genprop/dry/golden/photos/top-01.jpg",
+    ".pytest_tmp/genprop/dry/golden/manifest.draft.json",
+)
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -126,6 +145,26 @@ def test_only_five_scaffolding_files_are_tracked() -> None:
         assert path.name != "manifest.json", (
             f"frozen manifest committed: {relative} — {_detail(result)}"
         )
+
+
+@pytest.mark.parametrize("relative", VISIBLE_SCRATCH)
+def test_test_scratch_artefacts_stay_visible_to_dirty_check(relative: str) -> None:
+    """Do NOT add a `.pytest_tmp/` ignore rule — it would blind the CI dirty_check sentinel.
+
+    `--no-index` makes this a pure rule check: it would fail even if a scratch file happened
+    to be tracked, so the assertion is about the ignore rules and not about the current tree.
+    """
+    result = _git("check-ignore", "-q", "--no-index", "--", relative)
+    assert result.returncode != 0, (
+        f"{relative} IS ignored; a future test writing here would bypass CI dirty_check "
+        f"(see PR #9, run 43044094502) — {_detail(result)}"
+    )
+
+
+def test_pytest_cache_is_still_ignored() -> None:
+    """The contrast case: pytest's own cache is ignored; test FIXTURE output is not."""
+    result = _git("check-ignore", "-q", "--", ".pytest_cache/probe.txt")
+    assert result.returncode == 0, f".pytest_cache is not ignored — {_detail(result)}"
 
 
 def test_porcelain_status_has_no_golden_binary_entries() -> None:
