@@ -1,9 +1,12 @@
 """Tests for evals.tools.generate_proposals (step 1 of the ADR-010 mask SOP).
 
 The 40 real golden photos are not present in a clean clone, so these tests build small
-synthetic golden environments under a repo-local temp dir (.pytest_tmp/) rather than reaching
-for the real assets. The repo-local dir bypasses the WorkBuddy sandbox broker, which otherwise
-raises FileExistsError (EEXIST) on the system tmp base.
+synthetic golden environments in a system temp dir via `tempfile.TemporaryDirectory()`.
+Nothing is written into the repo working tree: the CI `dirty_check` step runs
+`git status --porcelain -uall` and would fail on any leftover test artefact. pytest's
+`tmp_path` is deliberately NOT used because this host's sandbox raises EEXIST for
+pytest's temp root; `tempfile.TemporaryDirectory()` is the pattern the repo's own
+mask-provenance / harness tests use.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -19,9 +23,6 @@ import pytest
 from PIL import Image
 
 from evals.tools import generate_proposals as gp
-
-ROOT = Path(__file__).resolve().parents[2]
-_WORK = ROOT / ".pytest_tmp" / "genprop"
 
 
 def _photo(size=(64, 64), bg=(180, 180, 180), square=None):
@@ -150,75 +151,69 @@ def test_floodfill_respects_tolerance():
 
 
 def test_main_dry_run_reports_missing_photo_and_writes_nothing(capsys):
-    base = _WORK / "dry"
-    if base.exists():
-        import shutil
-
-        shutil.rmtree(base)
-    # top-02 has no photo file, only an entry in the manifest
-    golden, review = _make_golden_env(
-        base, {"top-01": _photo(square=(20, 20, 24))}
-    )
-    manifest = golden / "manifest.draft.json"
-    register = review / "point_review_register.json"
-    out = base / "out"
-    rc = gp.main(
-        [
-            "--manifest", str(manifest),
-            "--register", str(register),
-            "--golden-dir", str(golden),
-            "--out-dir", str(out),
-            "--dry-run",
-        ]
-    )
-    out_files = list(out.glob("*.png"))
-    assert rc == 0
-    assert out_files == [], "dry-run must write nothing"
-    captured = capsys.readouterr().out
-    assert "top-01" in captured and "DRY" in captured
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "dry"
+        # top-02 has no photo file, only an entry in the manifest
+        golden, review = _make_golden_env(
+            base, {"top-01": _photo(square=(20, 20, 24))}
+        )
+        manifest = golden / "manifest.draft.json"
+        register = review / "point_review_register.json"
+        out = base / "out"
+        rc = gp.main(
+            [
+                "--manifest", str(manifest),
+                "--register", str(register),
+                "--golden-dir", str(golden),
+                "--out-dir", str(out),
+                "--dry-run",
+            ]
+        )
+        out_files = list(out.glob("*.png"))
+        assert rc == 0
+        assert out_files == [], "dry-run must write nothing"
+        captured = capsys.readouterr().out
+        assert "top-01" in captured and "DRY" in captured
 
 
 def test_main_generates_and_skips_existing(capsys):
-    base = _WORK / "gen"
-    if base.exists():
-        import shutil
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "gen"
+        golden, review = _make_golden_env(
+            base,
+            {
+                "top-01": _photo(square=(20, 20, 24)),
+                "top-02": _photo(bg=(120, 120, 120)),
+            },
+        )
+        manifest = golden / "manifest.draft.json"
+        register = review / "point_review_register.json"
+        out = base / "out"
+        rc1 = gp.main(
+            [
+                "--manifest", str(manifest),
+                "--register", str(register),
+                "--golden-dir", str(golden),
+                "--out-dir", str(out),
+            ]
+        )
+        assert rc1 == 0
+        assert (out / "top-01.png").is_file()
+        assert (out / "top-02.png").is_file()
 
-        shutil.rmtree(base)
-    golden, review = _make_golden_env(
-        base,
-        {
-            "top-01": _photo(square=(20, 20, 24)),
-            "top-02": _photo(bg=(120, 120, 120)),
-        },
-    )
-    manifest = golden / "manifest.draft.json"
-    register = review / "point_review_register.json"
-    out = base / "out"
-    rc1 = gp.main(
-        [
-            "--manifest", str(manifest),
-            "--register", str(register),
-            "--golden-dir", str(golden),
-            "--out-dir", str(out),
-        ]
-    )
-    assert rc1 == 0
-    assert (out / "top-01.png").is_file()
-    assert (out / "top-02.png").is_file()
-
-    # second run without --force must skip the existing drafts
-    capsys.readouterr()
-    rc2 = gp.main(
-        [
-            "--manifest", str(manifest),
-            "--register", str(register),
-            "--golden-dir", str(golden),
-            "--out-dir", str(out),
-        ]
-    )
-    assert rc2 == 0
-    captured = capsys.readouterr().out
-    assert "SKIP" in captured and "draft exists" in captured
+        # second run without --force must skip the existing drafts
+        capsys.readouterr()
+        rc2 = gp.main(
+            [
+                "--manifest", str(manifest),
+                "--register", str(register),
+                "--golden-dir", str(golden),
+                "--out-dir", str(out),
+            ]
+        )
+        assert rc2 == 0
+        captured = capsys.readouterr().out
+        assert "SKIP" in captured and "draft exists" in captured
 
 
 def test_google_nano_banana_backend_mock(monkeypatch):
