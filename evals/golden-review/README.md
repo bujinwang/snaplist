@@ -180,7 +180,10 @@ never fabricated. `exit 0` means only "the mechanical checks passed on the files
 * **D2 — edit-distance recomputability (a hard contradiction, not solved here).** The pixel
   edit distance needs the AI-proposed mask's pixels as its baseline. Those live at
   `evals/golden/masks_draft/<id>.png` (the manifest's `mask_draft`), which
-  `.git/info/exclude` excludes as a whole: binary, untracked, absent from a clean clone.
+  the tracked `.gitignore:40-46` excludes: binary, untracked, absent from a clean clone.
+  (Correction 2026-11-11 UTC: the exclusion was relocated from `.git/info/exclude` to the
+  tracked `.gitignore:40-46` by PR #8; the mask files remain binary/untracked/absent from a
+  clean clone, and only the rule's location changed.)
   Committing the pixels or any pixel-equivalent (RLE, base64 bitmap, downsampled array) is
   ruled out by N2, so **CI can never independently recompute the edit distance**. B1
   (declarative summary, the CI default) and B2 (`--verify-local-masks`, local/human-run only)

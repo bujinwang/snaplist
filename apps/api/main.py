@@ -24,6 +24,7 @@ from fastapi import FastAPI, Request
 
 from apps.api import errors
 from apps.api.auth import AUTH_MODE_HEADER, resolve_auth_mode
+from apps.api.ratelimit import EventRateLimiter
 from apps.api.repository import Repository, build_repository
 from apps.api.routers import billing as billing_router
 from apps.api.routers import events as events_router
@@ -61,6 +62,12 @@ def create_app(
     # filesystem and a deployment with Supabase credentials gets the bucket; both satisfy
     # `Storage`, so no router knows which one it is talking to.
     app.state.storage = storage if storage is not None else build_storage(resolved_settings)
+
+    # Per-instance in-process rate limiter for `POST /v1/events` (see apps/api/ratelimit.py and
+    # docs/QA.md §10 R8). Created HERE — inside `create_app()` — so every app instance owns its
+    # own bucket map. A module-global singleton would share one bucket across the whole test
+    # session and break currently-green event tests; per-instance state keeps each app independent.
+    app.state.event_rate_limiter = EventRateLimiter()
 
     errors.install_error_handlers(app)
 

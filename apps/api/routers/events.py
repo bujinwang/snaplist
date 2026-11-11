@@ -48,8 +48,15 @@ Six things this module does that are easy to get wrong, and how each is done
 
 What this endpoint does not do, and will not pretend to
 ------------------------------------------------------
-* **No rate limit.** One authenticated seller can post events as fast as the process answers.
-  Bounded only by the 8 KB ceiling and by infrastructure. See docs/HANDOFF-engineer.md.
+* **A per-caller in-process rate limit (429).** `POST /v1/events` is throttled by a token bucket
+  on `app.state.event_rate_limiter` (see `apps/api/ratelimit.py` and docs/QA.md §10 R8): burst
+  120, refill 1 token / 12 s, keyed on `caller.user_id` (not `subject`). It is created per
+  `create_app()` instance, so it does not coordinate across workers or deployments, and in
+  `local_dev` `user_id` is self-declared (`X-SnapList-User-Id`) so a re-install with a fresh uuid
+  resets its bucket. The refusal is a 429 with `retry_after_seconds` / `Retry-After`, reusing the
+  existing `ErrorCode.INVALID_REQUEST` — never a new code. Bounded escalation beyond the limit is a
+  429, not a crash. The original "no rate limit" concern is recorded, with its supersession, in
+  docs/HANDOFF-engineer.md.
 * **No clock trust.** `client_ts` is stored as sent (shape-validated, normalised to UTC) and
   `received_at` is stamped server-side. A device with a wrong clock produces a wrong
   `client_ts`; every report must order by `received_at`. Nothing here can fix that.
@@ -63,6 +70,7 @@ What this endpoint does not do, and will not pretend to
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
@@ -81,6 +89,12 @@ from pydantic import (
 
 from apps.api import errors, web
 from apps.api.auth import Caller, current_caller
+from apps.api.ratelimit import (
+    EVENT_BURST_CAPACITY,
+    EVENT_REFILL_SECONDS,
+    STATUS_TOO_MANY_REQUESTS,
+    EventRateLimiter,
+)
 from apps.api.repository import EventRecord, Repository, to_wire, utcnow
 from apps.api.schemas import ErrorCode, ErrorResponse, Marketplace
 
@@ -575,11 +589,12 @@ def _too_large(observed: int | None) -> errors.ApiError:
     status_code=status.HTTP_202_ACCEPTED,
     response_model=EventAccepted,
     responses={
+        413: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
-        413: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
     },
     summary="Ingest one analytics event (idempotent on the client-generated event_id)",
 )
@@ -600,14 +615,36 @@ async def ingest_event(
     without being buffered, then the real length is checked after reading, because a chunked
     request carries no such header.
 
-    Order of refusals is deliberate: authentication (401) → size (413) → shape (422) →
-    ownership of `subject` (403) → ownership of `item_id` (404) → replay/conflict (409). Size
-    before shape means an attacker cannot use validation timing on a 10 MB body as an oracle;
-    ownership after shape means a caller cannot learn which subjects exist by watching 403s
-    for malformed payloads, and the item check runs before the idempotency read so a replay of
-    a foreign item is refused rather than answered "duplicate".
+    Order of refusals is deliberate: authentication (401) → rate limit (429) → size (413) →
+    shape (422) → ownership of `subject` (403) → ownership of `item_id` (404) → replay/conflict
+    (409). The rate limit (429) runs second because the 401 `current_caller` dependency executes
+    before this body, so an unauthenticated request is refused with 401 and never reaches the
+    limiter — no anonymous fallback is needed. The limiter is a per-caller token bucket on
+    `app.state` (see `apps/api/ratelimit.py` and docs/QA.md §10 R8), keyed on `caller.user_id`,
+    not `subject`. Size before shape means an attacker cannot use validation timing on a 10 MB
+    body as an oracle; ownership after shape means a caller cannot learn which subjects exist by
+    watching 403s for malformed payloads, and the item check runs before the idempotency read so
+    a replay of a foreign item is refused rather than answered "duplicate".
     """
     repository: Repository = web.repository_of(request)
+
+    # Per-caller in-process rate limit (docs/QA.md §10 R8). The 401 `current_caller` dependency
+    # runs before this body, so an unauthenticated request is refused with 401 and never reaches
+    # the limiter — no anonymous fallback is needed. The limiter is per `create_app()` instance
+    # on `app.state`, so the test suite's per-test app owns its own full bucket.
+    event_limiter: EventRateLimiter = request.app.state.event_rate_limiter
+    if not event_limiter.allow(caller.user_id):
+        retry_after = int(math.ceil(event_limiter.retry_after_seconds(caller.user_id)))
+        raise errors.ApiError(
+            STATUS_TOO_MANY_REQUESTS,
+            ErrorCode.INVALID_REQUEST,  # reuse existing code; not new, not quota_exceeded
+            "Too many POST /v1/events requests; retry after the indicated seconds.",
+            retry_after_seconds=retry_after,
+            details={
+                "limit": str(EVENT_BURST_CAPACITY),
+                "window_seconds": str(int(EVENT_REFILL_SECONDS * EVENT_BURST_CAPACITY)),
+            },
+        )
 
     declared_length = request.headers.get("content-length")
     if declared_length is not None:
