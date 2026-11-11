@@ -157,8 +157,12 @@ def google_nano_banana(
 ):
     """Ask Gemini to return a garment segmentation mask, then binarise at 128.
 
-    Honest provenance is `ai-assisted:google-nano-banana` ONLY after a human review+sign-off;
-    this function only produces the raw proposal image. See the module HONESTY NOTE.
+    This function produces ONLY the raw proposal image; it writes, asserts and records no
+    provenance. The fully qualified `ai-assisted:<slug>+point-reviewed` string is declared
+    later by a human at `evals.tools.mask_review_kit record --proposal-source ... --attest`,
+    and ONLY after a point-by-point review + sign-off (ADR-010 N2). Do NOT pass the bare
+    `ai-assisted:<slug>` (without `+point-reviewed`) to --proposal-source: classify() treats
+    it as MACHINE and the record is refused. See the module HONESTY NOTE.
     """
     try:
         import google.genai as genai
@@ -192,6 +196,24 @@ BACKENDS = {
 # --------------------------------------------------------------------------- #
 def _load_json(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _count_effective_drafts(report: list[tuple[str, str, str]], out_dir: Path) -> int:
+    """Count ids whose draft really exists once the run has finished.
+
+    `OK` means this run wrote the draft; `SKIP / draft exists` means an earlier run wrote it
+    and this run is an idempotent no-op. Both are effective output. A `photo missing` SKIP is
+    NOT, even when an unrelated stale PNG happens to sit in out_dir for that id. Counting only
+    rows that resolved to a real draft keeps the zero-output check honest without breaking
+    idempotent re-runs.
+    """
+    count = 0
+    for rid, status, msg in report:
+        if status != "OK" and not (status == "SKIP" and msg.startswith("draft exists")):
+            continue
+        if (out_dir / f"{rid}.png").is_file():
+            count += 1
+    return count
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -276,12 +298,26 @@ def main(argv: list[str] | None = None) -> int:
             report.append((rid, "FAIL", str(exc)))
             failures += 1
 
+    counts = {"OK": 0, "SKIP": 0, "DRY": 0, "FAIL": 0}
     for rid, status, msg in report:
         print(f"{rid}\t{status}\t{msg}")
+        counts[status] += 1
+    print(
+        f"\n{len(report)} id(s) processed: "
+        f"OK={counts['OK']} SKIP={counts['SKIP']} "
+        f"DRY={counts['DRY']} FAIL={counts['FAIL']}."
+    )
+
     if failures:
         print(f"\n{failures} draft(s) failed to generate.", file=sys.stderr)
         return 1
-    print(f"\n{len(report)} id(s) processed, 0 failures.")
+    if not args.dry_run and _count_effective_drafts(report, out_dir) == 0:
+        print(
+            "no proposal was produced; see SKIP rows "
+            "(photo missing, no manifest path, or no draft written)",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

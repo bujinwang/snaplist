@@ -10,7 +10,8 @@ the arithmetic from the human's workload. Three subcommands:
     python -m evals.tools.mask_review_kit measure --all           # read-only, one JSON per id
     python -m evals.tools.mask_review_kit record  --id top-01 \
         --model sam2 --model-version 2.1 --reviewer bert \
-        --review-id PR-010-top-01 --points-reviewed 412 --attest
+        --review-id PR-010-top-01 --points-reviewed 412 \
+        --proposal-source ai-assisted:sam2+point-reviewed --attest
     python -m evals.tools.mask_review_kit record  --id top-01 ... --attest --write
     python -m evals.tools.mask_review_kit check                    # read-only batch format check
 
@@ -20,6 +21,10 @@ WHAT THIS IS NOT (deliberately, not by omission)
   reviewed that mask point by point. `reviewer`, `review_id` and `points_reviewed` are required
   arguments that this tool NEVER generates or infers. Without `--attest` the record stays
   `pending` and `record` refuses to write. ADR-010 §6: the last step of U1 is a human sign-off.
+* **It does not relabel a proposal's provenance.** `--proposal-source` is a required human
+  declaration, classified by `evals.mask_provenance.classify()`; MACHINE (`algorithmic:*`,
+  historical `ai:*`) and HAND proposals are refused, never written as
+  `ai-assisted:<slug>+point-reviewed` (ADR-010 N2). Measured pixels never substitute for it.
 * **It does not decide U1.** It never touches `edit_distance_threshold`, never sets `u1_met`,
   never produces or back-fills an IoU number, and never changes `manifest.json`. While the
   threshold is UNSET, 20 `reviewed` rows still leave U1 UNMET by construction.
@@ -50,7 +55,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from evals.mask_provenance import AI_ASSISTED_RE, parse_model_slug
+from evals.mask_provenance import (
+    AI_ASSISTED_PREFIX,
+    AI_ASSISTED_RE,
+    POINT_REVIEWED_SUFFIX,
+    MaskSourceTier,
+    classify,
+    parse_model_slug,
+)
 from evals.tools.validate_point_reviews import (
     DEFAULT_GOLDEN,
     DEFAULT_REGISTER,
@@ -222,11 +234,15 @@ def build_record(
     review_id: str,
     points_reviewed: int,
     reviewed_at: str,
+    proposal_source: str,
 ) -> dict:
     """A `reviewed` record. Only `--attest` (outside this function) permits its creation.
 
     The human-supplied fields are passed through verbatim; nothing here infers that a human
-    looked at the mask. `provenance` is built from the model slug with the ADR-010 regex.
+    looked at the mask. `proposal_source` is a required human declaration of the proposal's
+    ACTUAL provenance: `classify()` (the single source of truth in evals.mask_provenance)
+    must place it in AI_ASSISTED_REVIEWED. MACHINE and HAND tiers are refused rather than
+    relabelled (ADR-010 N2). `provenance` is built from the model slug with the ADR-010 regex.
     """
     if not _SLUG_RE.fullmatch(model):
         raise ValueError(f"model slug {model!r} must match [a-z0-9_-]+ (no '.', ';', ',', ':')")
@@ -240,7 +256,32 @@ def build_record(
             or measured.changed_pixels is None or measured.changed_ratio is None:
         raise ValueError(f"{measured.rid}: measurement incomplete; cannot record")
 
-    provenance = f"ai-assisted:{model}+point-reviewed"
+    tier = classify(proposal_source).tier
+    if tier is MaskSourceTier.MACHINE:
+        raise ValueError(
+            f"proposal_source {proposal_source!r} is MACHINE tier: machine-tier proposal "
+            "cannot be recorded as ai-assisted point-reviewed (ADR-010 N2); declare the "
+            f"fully qualified {AI_ASSISTED_PREFIX}<slug>{POINT_REVIEWED_SUFFIX} source"
+        )
+    if tier is MaskSourceTier.HAND:
+        raise ValueError(
+            f"proposal_source {proposal_source!r} is HAND tier: a hand-drawn mask cannot be "
+            "recorded as ai-assisted point-reviewed (ADR-010 N2); register 'reviewed' rows "
+            "accept only AI_ASSISTED_REVIEWED proposals"
+        )
+    declared_slug = parse_model_slug(proposal_source)
+    if declared_slug != model:
+        raise ValueError(
+            f"--model {model!r} does not match the proposal source slug {declared_slug!r}; "
+            "the tool never infers provenance (ADR-010 N2)"
+        )
+
+    provenance = f"{AI_ASSISTED_PREFIX}{model}{POINT_REVIEWED_SUFFIX}"
+    if proposal_source.strip() != provenance:
+        raise ValueError(
+            f"proposal_source {proposal_source!r} must be the canonical human declaration "
+            f"{provenance!r}; the tool never normalises provenance (ADR-010 N2)"
+        )
     if not AI_ASSISTED_RE.fullmatch(provenance) or parse_model_slug(provenance) != model:
         raise ValueError(f"constructed provenance {provenance!r} violates ADR-010 prefix")
 
@@ -351,6 +392,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
             reviewer=args.reviewer, review_id=args.review_id,
             points_reviewed=args.points_reviewed,
             reviewed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            proposal_source=args.proposal_source,
         )
     except (ValueError, KeyError, StopIteration) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
@@ -462,6 +504,12 @@ def main(argv: list[str] | None = None) -> int:
     p_record.add_argument("--review-id", required=True, help="HUMAN-supplied review id")
     p_record.add_argument("--points-reviewed", required=True, type=int,
                           help="HUMAN-supplied count of points reviewed")
+    p_record.add_argument(
+        "--proposal-source", required=True,
+        help="HUMAN declaration of the proposal's ACTUAL provenance: the fully qualified "
+             "ai-assisted:<slug>+point-reviewed string. The tool NEVER infers it from the "
+             "pixels; MACHINE (algorithmic:*, ai:*) and HAND sources are refused (ADR-010 N2).",
+    )
     p_record.add_argument("--attest", action="store_true",
                           help="explicit human statement that a point-by-point review happened")
     p_record.add_argument("--write", action="store_true",
