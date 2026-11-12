@@ -32,6 +32,27 @@ def _register() -> dict:
     return vp.load_register(vp.DEFAULT_REGISTER)
 
 
+def _pending_register() -> dict:
+    """An explicitly all-pending ledger, independent of the shipped file's progress.
+
+    The shipped register is a LIVING ledger: rows graduate from pending to reviewed as
+    E0-T1 advances. Tests that pin pending-row invariants must construct that state
+    explicitly rather than assuming the shipped file stays at 0/20 forever — otherwise
+    every legitimate graduation to `reviewed` breaks a test that was never about U1.
+    """
+    payload = _register()
+    template = next(rec for rec in payload["records"] if rec["status"] == "pending")
+    rows = []
+    for rid in payload["expected_ids"]:
+        rec = copy.deepcopy(template)
+        rec["id"] = rid
+        rec["proposal"]["mask_path"] = f"masks_draft/{rid}.png"
+        rec["reviewed"]["mask_path"] = f"masks/{rid}.png"
+        rows.append(rec)
+    payload["records"] = rows
+    return payload
+
+
 def _reviewed(record: dict) -> dict:
     """Turn one pending record into a fully evidenced reviewed record."""
     result = copy.deepcopy(record)
@@ -77,15 +98,22 @@ def _set_threshold(payload: dict) -> dict:
 
 
 def test_shipped_register_is_structurally_valid_and_u1_unmet() -> None:
+    # The shipped ledger may have any number of graduated rows; the invariant is
+    # structural validity + U1 UNMET, NOT a frozen 0/20 count.
     report = vp.validate_structure(_register())
     assert report.passed is True
     assert report.slots == 20
-    assert report.reviewed == 0
-    assert report.pending == 20
+    assert report.reviewed + report.pending == 20
     assert report.threshold_status == "UNSET"
     assert report.u1_met is False
     assert isinstance(report.as_state(), ReviewState)
     assert report.as_state().u1_met is False
+    # Keep the original 0/20 assertion, pinned against an explicitly pending ledger.
+    blank = vp.validate_structure(_pending_register())
+    assert blank.passed is True
+    assert blank.reviewed == 0
+    assert blank.pending == 20
+    assert blank.u1_met is False
 
 
 def test_expected_ids_match_the_twenty_records_exactly() -> None:
@@ -100,7 +128,7 @@ def test_expected_ids_match_the_twenty_records_exactly() -> None:
 
 
 def test_pending_rows_leave_every_evidence_field_null() -> None:
-    payload = _register()
+    payload = _pending_register()
     for record in payload["records"]:
         assert record["status"] == "pending"
         for key in ("provenance", "edit_distance", "review"):
@@ -115,7 +143,7 @@ def test_pending_rows_leave_every_evidence_field_null() -> None:
 
 
 def test_a_half_filled_pending_row_is_rejected() -> None:
-    payload = _register()
+    payload = _pending_register()
     payload["records"][0]["proposal"]["model"] = "sam2"
     report = vp.validate_structure(payload)
     assert report.passed is False
@@ -197,12 +225,19 @@ def test_u1_met_requires_all_three_conditions() -> None:
 # ------------------------------------------------------------- CLI / clean clone
 
 
-def test_default_cli_prints_u1_unmet_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+def test_default_cli_prints_u1_unmet_and_exits_zero(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert vp.main([]) == 0
     out = capsys.readouterr().out
-    assert "20/20 slots registered, 0/20 point-reviewed, U1 UNMET" in out
+    assert "U1 UNMET" in out
     assert "NOT a U1 verdict" in out
     assert "ADR-010 does not pre-adjudicate" in out
+    # The literal 0/20 wording stays pinned, but against an explicitly pending ledger.
+    blank = workspace / "pending_register.json"
+    blank.write_text(json.dumps(_pending_register()), encoding="utf-8")
+    assert vp.main(["--register", str(blank)]) == 0
+    assert "20/20 slots registered, 0/20 point-reviewed, U1 UNMET" in capsys.readouterr().out
 
 
 def test_clean_clone_without_manifest_still_exits_zero(
@@ -214,7 +249,7 @@ def test_clean_clone_without_manifest_still_exits_zero(
     assert vp.main(["--cross-check-manifest"]) == 0
     out = capsys.readouterr().out
     assert "manifest absent (clean clone) — cross-check skipped" in out
-    assert "20/20 slots registered, 0/20 point-reviewed, U1 UNMET" in out
+    assert "U1 UNMET" in out
     assert "| FAIL |" not in out
 
 
@@ -259,7 +294,9 @@ def test_verify_local_masks_is_a_noop_on_a_pending_register(
 ) -> None:
     """No reviewed rows => no PNG opened, no Pillow import, clean clone stays green."""
     monkeypatch.setattr(vp, "DEFAULT_GOLDEN", workspace / "no-binaries")
-    assert vp.main(["--verify-local-masks"]) == 0
+    blank = workspace / "pending_register.json"
+    blank.write_text(json.dumps(_pending_register()), encoding="utf-8")
+    assert vp.main(["--register", str(blank), "--verify-local-masks"]) == 0
 
 
 def test_classifier_tiers_used_by_register_validation() -> None:
