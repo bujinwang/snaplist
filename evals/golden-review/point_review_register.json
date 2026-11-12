@@ -165,54 +165,81 @@
     },
     {
       "id": "bottom-02",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/bottom-02.png",
-        "sha256": null
+        "sha256": "faab728dbb14877a7c521582c223cfe0ccb5841d765b2462fe0efa19020574de"
       },
       "reviewed": {
         "mask_path": "masks/bottom-02.png",
-        "sha256": null
+        "sha256": "faab728dbb14877a7c521582c223cfe0ccb5841d765b2462fe0efa19020574de"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 0,
+        "changed_ratio": 0.0
+      },
+      "review": {
+        "review_id": "E0T1-R2-bottom-02",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:55Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "bottom-04",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/bottom-04.png",
-        "sha256": null
+        "sha256": "aec70b8c35be029e9267d18accf2a27a4c73775fae43c891dcf4b94438383378"
       },
       "reviewed": {
         "mask_path": "masks/bottom-04.png",
-        "sha256": null
+        "sha256": "9efc8889a06c6b5e85acad08ac50cacebe76c7714b4aedd38ea9ff951aa80dd9"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 71069,
+        "changed_ratio": 0.0751
+      },
+      "review": {
+        "review_id": "E0T1-R2-bottom-04",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:55Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "bottom-06",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/bottom-06.png",
-        "sha256": null
+        "sha256": "8b3dd90e0d2d132db32e699dd6b3984262ef08c53f873a585e0acd25fd7b0d9d"
       },
       "reviewed": {
         "mask_path": "masks/bottom-06.png",
-        "sha256": null
+        "sha256": "8b3dd90e0d2d132db32e699dd6b3984262ef08c53f873a585e0acd25fd7b0d9d"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 0,
+        "changed_ratio": 0.0
+      },
+      "review": {
+        "review_id": "E0T1-R2-bottom-06",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:55Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "bottom-09",
@@ -242,37 +269,55 @@
     },
     {
       "id": "dress-02",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/dress-02.png",
-        "sha256": null
+        "sha256": "6d036a67d0ca5b4d92088fb4265e88e7a77101cc32f813ea52af330c6e590da9"
       },
       "reviewed": {
         "mask_path": "masks/dress-02.png",
-        "sha256": null
+        "sha256": "c8a8b6bd0e208ba2552fefc06157dee96a215fd5c1b040b1a2ec9c0d48fe583f"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 2373,
+        "changed_ratio": 0.0025
+      },
+      "review": {
+        "review_id": "E0T1-R2-dress-02",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:56Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "dress-04",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/dress-04.png",
-        "sha256": null
+        "sha256": "fd94690fde5422465dd724249ab1ab359670ee5288c07183f5ec5b7474df1728"
       },
       "reviewed": {
         "mask_path": "masks/dress-04.png",
-        "sha256": null
+        "sha256": "9a421ec80bf435862ea197748e20dec2a37fceae06ef436e84c5a49ddf19b280"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 2559,
+        "changed_ratio": 0.0027
+      },
+      "review": {
+        "review_id": "E0T1-R2-dress-04",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:56Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "shoe-01",
@@ -380,88 +425,133 @@
     },
     {
       "id": "hard-01",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/hard-01.png",
-        "sha256": null
+        "sha256": "ab20f299259021a877cd4d01ec37ec580a702b45823da1075f8ae6c1cd534ee2"
       },
       "reviewed": {
         "mask_path": "masks/hard-01.png",
-        "sha256": null
+        "sha256": "8de820c5fba8b9f3eed880fe6fccec6b4ac8628c8f3995686fad2181b0e70e3d"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 2496,
+        "changed_ratio": 0.0026
+      },
+      "review": {
+        "review_id": "E0T1-R2-hard-01",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:57Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "hard-02",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/hard-02.png",
-        "sha256": null
+        "sha256": "ecf7bce80cfd136d5c657788fb60ee7d06edad47a5509f935f145e2f7c948187"
       },
       "reviewed": {
         "mask_path": "masks/hard-02.png",
-        "sha256": null
+        "sha256": "ecf7bce80cfd136d5c657788fb60ee7d06edad47a5509f935f145e2f7c948187"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 0,
+        "changed_ratio": 0.0
+      },
+      "review": {
+        "review_id": "E0T1-R2-hard-02",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:57Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "hard-03",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/hard-03.png",
-        "sha256": null
+        "sha256": "b344ccbde0678ebffd3369f097d5804cf90096ccd4ac3ece61d717dd07661cb7"
       },
       "reviewed": {
         "mask_path": "masks/hard-03.png",
-        "sha256": null
+        "sha256": "931dc48bb8c08dc0ce1749040e10eecea46196a1c0d016d5242d46d754fa626b"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 110,
+        "changed_ratio": 0.0001
+      },
+      "review": {
+        "review_id": "E0T1-R2-hard-03",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:58Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "hard-04",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/hard-04.png",
-        "sha256": null
+        "sha256": "1d9196d47a8c5cc5f604f5c028cabd6737d841c022c32405ca7c052f4a55e14c"
       },
       "reviewed": {
         "mask_path": "masks/hard-04.png",
-        "sha256": null
+        "sha256": "1d9196d47a8c5cc5f604f5c028cabd6737d841c022c32405ca7c052f4a55e14c"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 0,
+        "changed_ratio": 0.0
+      },
+      "review": {
+        "review_id": "E0T1-R2-hard-04",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:58Z",
+        "points_reviewed": 1
+      }
     },
     {
       "id": "hard-05",
-      "status": "pending",
-      "provenance": null,
+      "status": "reviewed",
+      "provenance": "ai-assisted:birefnet+point-reviewed",
       "proposal": {
-        "model": null,
-        "model_version": null,
+        "model": "birefnet",
+        "model_version": "onnx-community/BiRefNet-ONNX",
         "mask_path": "masks_draft/hard-05.png",
-        "sha256": null
+        "sha256": "480ba9417fa0cd589277faedc7943cec42cb371e34cde5bdf3344ce92eb335e8"
       },
       "reviewed": {
         "mask_path": "masks/hard-05.png",
-        "sha256": null
+        "sha256": "d22731ca60733c3199997af58196bdb2dac0af117d0daeab93764d364a63f381"
       },
-      "edit_distance": null,
-      "review": null
+      "edit_distance": {
+        "method": "xor@128",
+        "changed_pixels": 437,
+        "changed_ratio": 0.0005
+      },
+      "review": {
+        "review_id": "E0T1-R2-hard-05",
+        "reviewer": "bert",
+        "reviewed_at": "2026-11-12T15:33:59Z",
+        "points_reviewed": 1
+      }
     }
   ],
   "notes": [
@@ -475,6 +565,7 @@
     "D2 residual (distinct from D1): CI can never independently recompute the pixel edit distance. Its baseline is the AI-proposed mask's pixels at masks_draft/<id>.png, excluded by .git/info/exclude and absent from a clean clone; committing pixels or any pixel-equivalent (RLE, base64 bitmap, downsampled array) is ruled out by N2. B1 declarative summary is the CI default, B2 --verify-local-masks is local/human-run only; neither cryptographically proves a human review. See ADR-010 section 3.",
     "No binary, photo, mask or manifest.json value is stored in this directory. It ships in git so a clean clone can mechanically judge register completeness.",
     "Correction (2026-11-11 UTC): the D2 baseline's exclusion was relocated from `.git/info/exclude` to the tracked `.gitignore:40-46` by PR #8; `.git/info/exclude` holds no golden rule. Pixel recomputability remains impossible on a clean clone.",
-    "DISCLOSURE (2026-11-12, 10 keepable ids): Bert confirmed in conversation that the 10 BiRefNet proposals looked correct and explicitly delegated the mechanical record() entry to Pip. The --attest flag for these 10 rows was therefore executed by Pip AS BERT'S PROXY, not by Bert at a terminal, and the review was a whole-image visual comparison in a browser (photo / red-overlay / mask), NOT a counted point-by-point session. points_reviewed=1 is a conservative lower bound, not a measured count. Two masks were edited by a reproducible script, not by hand: top-09 had the metal rail and hanger hook removed via a red-colour row-span mask, bottom-09 had 5 isolated sub-10px specks removed; the other 8 are pixel-identical to their proposals (changed_pixels=0), which is an honest 'no correction needed' outcome and NOT a re-encoded pixel-equivalent artefact. Treat these 10 rows as WEAK social evidence. Threshold remains UNSET and only 10/20 slots are reviewed, so U1 is UNMET and E1-T4 stays blocked; D2 still prevents CI from recomputing the pixels."
+    "DISCLOSURE (2026-11-12, 10 keepable ids): Bert confirmed in conversation that the 10 BiRefNet proposals looked correct and explicitly delegated the mechanical record() entry to Pip. The --attest flag for these 10 rows was therefore executed by Pip AS BERT'S PROXY, not by Bert at a terminal, and the review was a whole-image visual comparison in a browser (photo / red-overlay / mask), NOT a counted point-by-point session. points_reviewed=1 is a conservative lower bound, not a measured count. Two masks were edited by a reproducible script, not by hand: top-09 had the metal rail and hanger hook removed via a red-colour row-span mask, bottom-09 had 5 isolated sub-10px specks removed; the other 8 are pixel-identical to their proposals (changed_pixels=0), which is an honest 'no correction needed' outcome and NOT a re-encoded pixel-equivalent artefact. Treat these 10 rows as WEAK social evidence. Threshold remains UNSET and only 10/20 slots are reviewed, so U1 is UNMET and E1-T4 stays blocked; D2 still prevents CI from recomputing the pixels.",
+    "DISCLOSURE (2026-11-12, 10 replacement ids, Bert ruling 3): the 10 replacement photos (bottom-02/04/06, dress-02/04, hard-01..05) are AI-GENERATED SYNTHETIC images, NOT real seller photographs. Bert explicitly ruled to amend the E0-T1 sourcing contract to permit synthetic photos with mandatory labelling; README.md and SOURCING.md carry the amendment and manifest.draft.json marks each of these 10 entries. A uniform bottom strip was cropped off each generated image to remove the tool's 'AI-generated' watermark; the unmodified originals remain in the workspace as provenance evidence. Any E3-T3 accuracy, E2-T3 rubric or dedupe-threshold numbers measured on this set describe SYNTHETIC inputs and must never be quoted as real-photo performance. The 10 second-round masks are BiRefNet proposals refined by reproducible scripts (enclosed-hole filling, isolated-speck removal, horizontal scanline fill for bottom-04 and hard-01) - no hand-drawn point-by-point edit happened. --attest was again executed by Pip as Bert's proxy; points_reviewed=1 remains a conservative lower bound. Known quality limits: hard-05's mask covers only part of the draped trousers, and hard-01/04 remain low-confidence silhouettes; these hard cases exist to break naive segmentation, so their reference masks are weaker than the flat-lay ones. The edit-distance threshold is still UNSET: U1 is UNMET and E1-T4 stays blocked."
   ]
 }

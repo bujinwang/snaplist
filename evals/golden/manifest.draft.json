@@ -18,7 +18,8 @@
     ],
     "hard_case": false,
     "notes": "White cotton-jersey crew-neck t-shirt laid flat, short sleeves spread out, plain black seamless background, even diffuse light, slight wrinkles at hem. (metadata corrected 2026-11-11 to match the actual photo: background is black, not light grey)",
-    "search_prompt": "white cotton t-shirt flat lay plain black background diffuse light wrinkles hem"
+    "search_prompt": "white cotton t-shirt flat lay plain black background diffuse light wrinkles hem",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "top-02",
@@ -81,7 +82,8 @@
     ],
     "hard_case": false,
     "notes": "Black cotton hoodie shown on an invisible ghost mannequin, front view, hood up, kangaroo pocket and loose drawstrings visible, off-white background, soft studio light. (metadata corrected 2026-11-11: hood is up, not folded back; ghost-mannequin presentation, not a flat-lay)",
-    "search_prompt": "black hoodie ghost mannequin hood up kangaroo pocket off white background studio"
+    "search_prompt": "black hoodie ghost mannequin hood up kangaroo pocket off white background studio",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "top-05",
@@ -146,7 +148,8 @@
     ],
     "hard_case": false,
     "notes": "Blue denim jacket shown from the BACK on an invisible ghost mannequin, light grey background, soft studio shadow, topstitching and cuffs visible; chest pockets not visible from this angle. (metadata corrected 2026-11-11: photo is the back view on a ghost mannequin, not a front flat-lay)",
-    "search_prompt": "blue denim jacket back view ghost mannequin light grey background topstitching cuffs"
+    "search_prompt": "blue denim jacket back view ghost mannequin light grey background topstitching cuffs",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "top-08",
@@ -188,7 +191,8 @@
     ],
     "hard_case": false,
     "notes": "Red cotton t-shirt with a bold multicolour graphic print, hanging on a wooden hanger from a white metal clothes rail against a plain white wall; decorative dry branches in a vase at the left of frame, soft daylight. (metadata corrected 2026-11-11: photo is a styled hanging shot, not a flat-lay; the print is bold, not faded, and no pilling is visible)",
-    "search_prompt": "red graphic t-shirt wooden hanger clothes rail plain white wall branches vase styled"
+    "search_prompt": "red graphic t-shirt wooden hanger clothes rail plain white wall branches vase styled",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "top-10",
@@ -209,7 +213,8 @@
     ],
     "hard_case": false,
     "notes": "Beige linen button-up shirt shown on an invisible ghost mannequin, front view, sleeves hanging straight (not rolled), chest patch pocket and brand label at the collar, plain white background, soft studio light. (metadata corrected 2026-11-11: ghost-mannequin front view on white, sleeves not rolled — not a flat-lay on light wood)",
-    "search_prompt": "beige linen shirt ghost mannequin front view white background chest pocket button placket"
+    "search_prompt": "beige linen shirt ghost mannequin front view white background chest pocket button placket",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "bottom-01",
@@ -250,8 +255,10 @@
       "wide elastic waistband"
     ],
     "hard_case": false,
-    "notes": "Black leggings folded on light grey backdrop, soft even lighting, fabric texture visible.",
-    "search_prompt": "black leggings folded light grey backdrop fabric texture"
+    "notes": "Black leggings folded on light grey backdrop, soft even lighting, fabric texture visible. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "bottom-03",
@@ -292,8 +299,10 @@
       "laid flat, panel overlaps"
     ],
     "hard_case": false,
-    "notes": "Pleated midi skirt laid flat on white surface, soft light, folds and waistband visible.",
-    "search_prompt": "pleated midi skirt flat lay white background visible folds waistband"
+    "notes": "Pleated midi skirt laid flat on white surface, soft light, folds and waistband visible. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "bottom-05",
@@ -329,13 +338,15 @@
       "suede"
     ],
     "hard_attributes": [
-      "buttoned cuffs at the hem",
+      "plain tapered hems, no visible buttons",
       "suede nap, soft sheen",
       "creases pressed along the leg"
     ],
     "hard_case": false,
-    "notes": "Tan suede trousers with buttoned cuffs, flat-lay on neutral grey, museum-style documentation lighting.",
-    "search_prompt": "tan suede trousers buttoned cuffs flat lay neutral grey museum lighting"
+    "notes": "Tan suede trousers with plain tapered hems, flat-lay on neutral grey, museum-style documentation lighting. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "bottom-07",
@@ -400,7 +411,8 @@
     ],
     "hard_case": false,
     "notes": "Black denim shorts laid flat, front view, on a plain white background: heavy distressing with ripped pockets, frayed fringe hem, five-pocket front with buttoned waistband. (metadata corrected 2026-11-11: photo is a flat-lay on white, not on a hanger against a cream wall)",
-    "search_prompt": "black distressed denim shorts flat lay front view white background ripped frayed hem"
+    "search_prompt": "black distressed denim shorts flat lay front view white background ripped frayed hem",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "bottom-10",
@@ -463,8 +475,10 @@
       "matte satin sheen"
     ],
     "hard_case": false,
-    "notes": "Black slip dress laid flat on pale grey surface, diffuse light, straps and hem visible.",
-    "search_prompt": "black slip dress flat lay pale grey straps hem visible"
+    "notes": "Black slip dress laid flat on pale grey surface, diffuse light, straps and hem visible. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "dress-03",
@@ -505,8 +519,10 @@
       "patch pockets at the chest"
     ],
     "hard_case": false,
-    "notes": "Denim shirt-dress flat-lay on white, buttons and pockets visible, diffuse softbox.",
-    "search_prompt": "denim shirt dress flat lay white buttons pockets visible"
+    "notes": "Denim shirt-dress flat-lay on white, buttons and pockets visible, diffuse softbox. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "dress-05",
@@ -548,7 +564,8 @@
     ],
     "hard_case": false,
     "notes": "White leather low-top sneakers, pair angled on stacked books, greige studio background with warm-toned props behind, soft light, laces tied. (metadata corrected 2026-11-11: laces are tied and the surface is books on greige, not a plain white surface)",
-    "search_prompt": "white leather sneakers pair laces tied stacked books greige studio background"
+    "search_prompt": "white leather sneakers pair laces tied stacked books greige studio background",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "shoe-02",
@@ -633,7 +650,8 @@
     ],
     "hard_case": false,
     "notes": "Black leather platform ankle boots, chelsea style with elastic side gore and heel pull tab, chunky block heel and ridged platform sole, pair angled on a plain white background. (metadata corrected 2026-11-11: boots are BLACK and lace-free, not brown lace-ups)",
-    "search_prompt": "black leather platform ankle boots chelsea elastic gore block heel ridged sole pair"
+    "search_prompt": "black leather platform ankle boots chelsea elastic gore block heel ridged sole pair",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "acc-01",
@@ -675,7 +693,8 @@
     ],
     "hard_case": false,
     "notes": "Plain ecru canvas tote bag standing upright on a plain white background: no print or logo, front slip pocket, flat bottom, long parallel handles. (metadata corrected 2026-11-11: bag is plain natural canvas on white, not a printed logo tote on a dark purple backdrop)",
-    "search_prompt": "plain ecru canvas tote bag standing white background front slip pocket no logo"
+    "search_prompt": "plain ecru canvas tote bag standing white background front slip pocket no logo",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "acc-03",
@@ -740,7 +759,8 @@
     ],
     "hard_case": false,
     "notes": "Brown leather satchel with double rolled top handles, a long adjustable shoulder strap with brass buckle crossing the front, and a zip-top closure, standing upright on a plain white background with soft shadow. (metadata corrected 2026-11-11: this is a zip-top satchel — there is no flap, so 'flap open, interior visible' was wrong)",
-    "search_prompt": "brown leather satchel double handles shoulder strap brass buckle zip top white background"
+    "search_prompt": "brown leather satchel double handles shoulder strap brass buckle zip top white background",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "hard-01",
@@ -760,8 +780,10 @@
       "blends by colour, not shape"
     ],
     "hard_case": true,
-    "notes": "Black knit sweater on a black chair, shot on a phone at night, low light, garment blends into background. (breaks colour-based segmentation)",
-    "search_prompt": "black knit sweater on black chair low light night phone photo"
+    "notes": "Black knit sweater on a black chair, shot on a phone at night, low light, garment blends into background. (breaks colour-based segmentation) (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "hard-02",
@@ -782,8 +804,10 @@
       "phone indoor light, soft"
     ],
     "hard_case": true,
-    "notes": "Patterned dress on a busy floral bedspread, garment and background share colours, phone photo, indoor light. (breaks background subtraction)",
-    "search_prompt": "patterned floral dress on busy floral bedspread phone indoor light"
+    "notes": "Patterned dress on a busy floral bedspread, garment and background share colours, phone photo, indoor light. (breaks background subtraction) (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "hard-03",
@@ -803,8 +827,10 @@
       "cluttered bedroom behind"
     ],
     "hard_case": true,
-    "notes": "White shirt on a wire hanger against a cluttered bedroom, strong window backlight, high contrast. (breaks silhouette/backlight handling)",
-    "search_prompt": "white shirt wire hanger cluttered bedroom window backlight high contrast"
+    "notes": "White shirt on a wire hanger against a cluttered bedroom, strong window backlight, high contrast. White shirt reads as a dark near-silhouette under the backlight; thin bare wire hanger. (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "hard-04",
@@ -824,8 +850,10 @@
       "phone photo, uneven light"
     ],
     "hard_case": true,
-    "notes": "Denim jacket with a sleeve crossing over the body on a patterned rug, phone photo, uneven lighting. (breaks occlusion/self-overlap)",
-    "search_prompt": "denim jacket sleeve crossing body patterned rug phone uneven light"
+    "notes": "Denim jacket with a sleeve crossing over the body on a patterned rug, phone photo, uneven lighting. (breaks occlusion/self-overlap) (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   },
   {
     "id": "hard-05",
@@ -845,7 +873,9 @@
       "phone flash blowout on one side"
     ],
     "hard_case": true,
-    "notes": "Navy trousers draped over a dark sofa with a strap crossing the garment, cluttered living room, phone flash. (breaks strap/occlusion + flash)",
-    "search_prompt": "navy trousers draped dark sofa strap crossing cluttered living room phone flash"
+    "notes": "Navy trousers draped over a dark sofa with a strap crossing the garment, cluttered living room, phone flash. (breaks strap/occlusion + flash) (synthetic image generated 2026-11-12, not a real photograph; uniform bottom strip cropped to remove the generation watermark)",
+    "search_prompt": "synthetic: generated from the written brief on 2026-11-12 (no stock search)",
+    "photo_source": "synthetic:imagegen",
+    "mask_source": "ai-assisted:birefnet+point-reviewed"
   }
 ]

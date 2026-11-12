@@ -41,10 +41,21 @@ def _pending_register() -> dict:
     every legitimate graduation to `reviewed` breaks a test that was never about U1.
     """
     payload = _register()
-    template = next(rec for rec in payload["records"] if rec["status"] == "pending")
+    # Take ANY row as a shape template, then blank every evidence field. Do not search
+    # the shipped ledger for a pending row: once all 20 slots graduate there is none, and
+    # this fixture must keep working at 0/20, 10/20 and 20/20 alike.
+    blank = copy.deepcopy(payload["records"][0])
+    blank["status"] = "pending"
+    blank["provenance"] = None
+    blank["edit_distance"] = None
+    blank["review"] = None
+    blank["proposal"] = {
+        "model": None, "model_version": None, "mask_path": None, "sha256": None
+    }
+    blank["reviewed"] = {"mask_path": None, "sha256": None}
     rows = []
     for rid in payload["expected_ids"]:
-        rec = copy.deepcopy(template)
+        rec = copy.deepcopy(blank)
         rec["id"] = rid
         rec["proposal"]["mask_path"] = f"masks_draft/{rid}.png"
         rec["reviewed"]["mask_path"] = f"masks/{rid}.png"
