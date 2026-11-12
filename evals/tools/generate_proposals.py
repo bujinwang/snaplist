@@ -5,7 +5,7 @@ It does NOT review, sign off, compute edit distance, or touch the point-review r
 manifest. A human must still review each draft point by point and sign off (ADR-010 section 6);
 that step can never be automated, and this tool makes no claim about it.
 
-Two backends are pluggable via --backend:
+Three backends are pluggable via --backend:
 
   * floodfill-border   -- pure Pillow + numpy, zero extra deps. Honest provenance
                           `algorithmic:floodfill-border` (NOT ai-assisted): the mask is a
@@ -14,6 +14,16 @@ Two backends are pluggable via --backend:
                           Needs `google-genai` (opt-in `gen` dependency group) + GOOGLE_API_KEY.
                           Provenance would be `ai-assisted:google-nano-banana+point-reviewed`
                           ONLY after a human review + sign-off; this tool never asserts that.
+                          NOTE 2026-11-11: verified to authenticate, but every image model on
+                          this key reports `limit: 0` on the free tier (minutely AND daily), so
+                          it cannot produce a draft without billing enabled.
+  * birefnet-onnx      -- local BiRefNet (MIT) via onnxruntime, no torch, no API key.
+                          Provenance would be `ai-assisted:birefnet+point-reviewed` ONLY after a
+                          human review + sign-off. onnxruntime is an ENVIRONMENT-level install
+                          (`uv pip install onnxruntime`); it is deliberately NOT added to
+                          pyproject because no default test or runtime path may depend on it.
+                          Model weights are cached outside the repo
+                          (see BIRENET_DEFAULT_MODEL_PATH).
 
 HONESTY NOTE ON MASK EXTRACTION
 -------------------------------
@@ -43,6 +53,12 @@ DEFAULT_GOLDEN = ROOT / "evals" / "golden"
 DEFAULT_REGISTER = ROOT / "evals" / "golden-review" / "point_review_register.json"
 DEFAULT_MANIFEST = DEFAULT_GOLDEN / "manifest.draft.json"
 DEFAULT_OUT_DIR = DEFAULT_GOLDEN / "masks_draft"
+
+# Weights live OUTSIDE the repo on purpose (972 MB, and no binary belongs in git). Fetched from
+# https://huggingface.co/onnx-community/BiRefNet-ONNX (`onnx/model.onnx`, MIT-licensed).
+BIRENET_DEFAULT_MODEL_PATH = (
+    Path.home() / ".cache" / "snaplist" / "models" / "birefnet" / "model.onnx"
+)
 
 # gemini-2.5-flash-image was deprecated (shutdown 2027-03-15); gemini-nano-banana-2.1 is
 # Google's recommended replacement and supports image-to-image (reference photos) prompts.
@@ -185,9 +201,83 @@ def google_nano_banana(
     return Image.fromarray(mask)  # L inferred for uint8 2D
 
 
+# --------------------------------------------------------------------------- #
+# Backend 3: birefnet-onnx (local BiRefNet segmentation proposal)
+# --------------------------------------------------------------------------- #
+BIRENET_REQUIRES_MSG = (
+    "birefnet-onnx backend requires `uv pip install onnxruntime` and the BiRefNet ONNX "
+    f"weights at {BIRENET_DEFAULT_MODEL_PATH} (see the module docstring)"
+)
+BIRENET_INPUT_SIZE = 1024
+BIRENET_MEAN = (0.485, 0.456, 0.406)  # preprocessor_config.json: ImageNet mean, do_rescale 1/255
+BIRENET_STD = (0.229, 0.224, 0.225)
+BIRENET_DEFAULT_THRESHOLD = 0.5
+
+
+def birefnet_onnx(
+    photo,
+    *,
+    model_path=None,
+    threshold: float = BIRENET_DEFAULT_THRESHOLD,
+    soft: bool = True,
+):
+    """Run BiRefNet (dichotomous segmentation, MIT) and return an L-mode mask.
+
+    The ONNX graph emits one channel of raw logits (observed range roughly -39..23), so the
+    sigmoid is applied here before any thresholding. `soft=True` keeps the sigmoid probability
+    scaled to 0..255 so a human reviewer can see where the model is uncertain at the edges
+    (evals/golden/README.md allows soft edges); `soft=False` hard-binarises at `threshold`
+    AFTER resizing, so every output pixel is strictly 0 or 255 even where bilinear downsampling
+    would otherwise blend a hard edge into grey.
+
+    Output is resized back to the ORIGINAL photo size, because the register's XOR@128 needs
+    proposal and reviewed masks to share the photo's dimensions exactly.
+
+    This function produces ONLY the raw proposal; it writes, asserts and records no provenance.
+    `ai-assisted:birefnet+point-reviewed` is a human declaration made later at
+    `evals.tools.mask_review_kit record --attest`, and only after a point-by-point review.
+    """
+    try:
+        import numpy as np
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise RuntimeError(BIRENET_REQUIRES_MSG) from exc
+    from PIL import Image
+
+    weights = Path(model_path) if model_path else BIRENET_DEFAULT_MODEL_PATH
+    if not weights.is_file():
+        raise RuntimeError(f"BiRefNet weights missing: {weights}. {BIRENET_REQUIRES_MSG}")
+
+    rgb = photo.convert("RGB")
+    original_size = rgb.size
+    resized = rgb.resize((BIRENET_INPUT_SIZE, BIRENET_INPUT_SIZE), Image.BILINEAR)
+    arr = np.asarray(resized, dtype=np.float32) / 255.0
+    mean = np.array(BIRENET_MEAN, dtype=np.float32).reshape(1, 3, 1, 1)
+    std = np.array(BIRENET_STD, dtype=np.float32).reshape(1, 3, 1, 1)
+    batch = (np.transpose(arr, (2, 0, 1))[None] - mean) / std
+
+    session = ort.InferenceSession(str(weights), providers=["CPUExecutionProvider"])
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+    logits = session.run([output_name], {input_name: batch})[0]
+    logits = logits[0, 0] if logits.ndim == 4 else logits[0]
+
+    probability = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
+    pixels = np.rint(probability * 255.0)
+    mask = Image.fromarray(pixels.clip(0, 255).astype(np.uint8))
+    mask = mask.resize(original_size, Image.BILINEAR)
+    if not soft:
+        # binarise AFTER resizing: bilinear downsampling of a hard edge would otherwise
+        # reintroduce grey pixels and break the strict {0,255} promise of soft=False
+        arr = np.asarray(mask)
+        mask = Image.fromarray(((arr > threshold * 255.0) * 255).astype(np.uint8))
+    return mask  # L inferred for uint8 2D
+
+
 BACKENDS = {
     "floodfill-border": floodfill_border,
     "google-nano-banana": google_nano_banana,
+    "birefnet-onnx": birefnet_onnx,
 }
 
 
@@ -244,6 +334,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="GOOGLE_API_KEY; read from env if omitted")
     parser.add_argument("--prompt", default=None,
                         help="override the default mask-extraction prompt")
+    # birefnet-onnx specific
+    parser.add_argument("--birefnet-model-path", type=Path, default=BIRENET_DEFAULT_MODEL_PATH,
+                        help="path to the BiRefNet ONNX weights (default: ~/.cache/snaplist)")
+    parser.add_argument("--birefnet-threshold", type=float, default=BIRENET_DEFAULT_THRESHOLD,
+                        help="sigmoid threshold for --birefnet-binary (default 0.5)")
+    parser.add_argument("--birefnet-binary", action="store_true",
+                        help="hard-binarise instead of keeping the soft probability mask")
     args = parser.parse_args(argv)
 
     if args.api_key is None:
@@ -260,6 +357,12 @@ def main(argv: list[str] | None = None) -> int:
             "api_key": args.api_key,
             "model": args.model,
             "prompt": args.prompt,
+        }
+    elif args.backend == "birefnet-onnx":
+        call_kwargs = {
+            "model_path": args.birefnet_model_path,
+            "threshold": args.birefnet_threshold,
+            "soft": not args.birefnet_binary,
         }
     else:
         call_kwargs = {"tolerance": args.tolerance}
