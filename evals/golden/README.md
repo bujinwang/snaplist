@@ -17,6 +17,28 @@ metric that depends on them falls back to `UNMEASURED` — the honest value, not
 > `docs/ADR-010-mask-provenance-ai-assisted-point-reviewed.md` §9.1, `docs/QA.md` §15.8.
 > The all-rights-reserved photos, masks and manifest are **still never committed**.
 
+> **AMENDMENT (2026-11-12, Bert ruling 3)** — Bert explicitly ruled to permit
+> **AI-generated synthetic photos** for the 10 replacement slots of this local set
+> (`bottom-02`, `bottom-04`, `bottom-06`, `dress-02`, `dress-04`, `hard-01`…`hard-05`).
+> This **supersedes** the "Synthetic stand-ins are still forbidden" sentence below and
+> the corresponding licensing note in `SOURCING.md`; both are kept verbatim for provenance.
+> The decision and its cost are recorded here, not silently applied:
+>
+> - Each of the 10 entries carries `photo_source: "synthetic:imagegen"` in
+>   `manifest.draft.json` and the local `manifest.json`. They are **never** described as
+>   real seller photographs; the other 30 web-sourced photos remain unchanged.
+> - A uniform bottom strip was cropped off each generated image to remove the tool's
+>   "AI generated" watermark, which would otherwise pollute the mask. The unmodified
+>   originals remain in the workspace as provenance evidence.
+> - The register's `DISCLOSURE (… Bert ruling 3)` note records the generation, the
+>   watermark crop, the scripted mask refinement and the proxy `--attest` in full.
+> - **Metric scope is permanently changed**: E3-T3 accuracy, E2-T3 human rubric and
+>   dedupe thresholds measured on this set are results on **synthetic inputs**. They must
+>   never be quoted as real-photo performance. The original E0-T1 goal — 40 *real* seller
+>   photos — is **not** met by this set.
+> - The edit-distance threshold is still `UNSET`, so **U1 is UNMET** and E1-T4 stays
+>   blocked; `make golden` exit 0 is a mechanical file/count check, not a DoD verdict.
+
 Under ADR-010 the golden set contract requires 40 *real* garment photos with 20 reference
 masks in one of three provenance tiers: **hand-drawn**, **AI-assisted point-reviewed**
 (`ai-assisted:<model>+point-reviewed`) or **machine-made**. Synthetic stand-ins are still

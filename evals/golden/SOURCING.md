@@ -31,6 +31,19 @@ on a clean clone.
 
 Do not pull images from Google Images and commit them as golden photos: most are all-rights-reserved and the downloaded file will not actually match the precise brief (e.g. 'slight pilling at the cuffs', 'black knit on a black chair shot at night'). The existing `evals/golden-provisional/` set proves web sourcing cannot even satisfy the composition (17 entries, no dresses, **machine-tier algorithmic** masks, i.e. neither hand-drawn nor AI-assisted point-reviewed) — it is explicitly *not* the golden set. Prefer: photos Bert shoots himself, or a paid royalty-free licence with the exact garment/background specified.
 
+> **AMENDMENT (2026-11-12, Bert ruling 3)** — the "real photos only" rule above is
+> **relaxed for this local clone only**: Bert ruled to allow AI-generated synthetic photos
+> in the 10 replacement slots (`bottom-02/04/06`, `dress-02/04`, `hard-01`…`hard-05`).
+> This follows a browser feasibility test on Pexels (four searches, none matched the
+> brief, all mixed in paid iStock results), recorded in the workspace
+> `golden-review/sourcing-feasibility.md`. Conditions: every such entry is labelled
+> `photo_source: "synthetic:imagegen"` in the manifest, the images are local-only and
+> never committed, the register carries a full disclosure, and **no accuracy number
+> derived from these 10 photos may be reported as real-photo performance**. The original
+> plan (40 real seller photographs) remains the unmet E0-T1 goal; this amendment is a
+> pragmatic substitute, not a claim that the goal was achieved. The Google Images ban
+> above is unchanged.
+
 ## TOPS (top-01 … top-10)
 
 ### `top-01` — MASK ✓
