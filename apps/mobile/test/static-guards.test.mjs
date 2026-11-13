@@ -125,6 +125,20 @@ const TEST_DOUBLE_SEGMENTS = new Set([
  */
 const TEST_DOUBLE_BASENAME = /\.(mock|mocks|double|doubles|fake|fakes|stub|stubs)$/;
 
+/**
+ * A file name that *suggests* a test double, matched as a substring.
+ *
+ * `fake`, `double` and `stub` are matched loosely on purpose — a production module
+ * called `fakeApi` or `stubClient` would be a smell worth failing on. `mock` is
+ * deliberately NOT in this list: `src/lib/mockData.ts` is production code (the
+ * mock-mode dataset every screen runs on when `API_BASE` is unset) and is imported
+ * by `DraftsProvider`. Matching `mock` loosely would make the guard red on a
+ * healthy tree, and a guard that cries wolf gets switched off — which is worse than
+ * no guard. `mock` therefore only trips the exact `.mock` suffix or a
+ * test-double directory.
+ */
+const TEST_DOUBLE_HINT = /(fake|double|stub)/i;
+
 /** Reason a specifier is a test double, or null if it is fine. */
 function testDoubleReason(specifier) {
   const withoutExtension = specifier.replace(/\.(ts|tsx|js|mjs|cjs)$/, "");
@@ -136,6 +150,9 @@ function testDoubleReason(specifier) {
   const name = basename(withoutExtension);
   if (TEST_DOUBLE_BASENAME.test(name)) {
     return `imports a test double ("${name}")`;
+  }
+  if (TEST_DOUBLE_HINT.test(name)) {
+    return `imports a module whose name suggests a test double ("${name}")`;
   }
   return null;
 }
@@ -218,9 +235,35 @@ test("deliberateExemptions", () => {
   // runs on when API_BASE is unset). A "no path containing mock" rule would fail
   // on a healthy tree, so the exemption is asserted rather than assumed.
   assert.equal(testDoubleReason("../lib/mockData"), null, "src/lib/mockData.ts is production code");
+  assert.equal(testDoubleReason("../../lib/mockData"), null, "src/lib/mockData.ts is production code");
   assert.match(testDoubleReason("../../test/helper") ?? "", /test-double directory/);
   assert.match(testDoubleReason("../__mocks__/api") ?? "", /test-double directory/);
   assert.match(testDoubleReason("./draft.double") ?? "", /test double/);
+  // fake/double/stub ARE matched loosely — a production module named like a double
+  // is a smell worth failing on. Only `mock` gets the narrow treatment above.
+  assert.match(testDoubleReason("./fakeApi") ?? "", /suggests a test double/);
+  assert.match(testDoubleReason("./stubClient") ?? "", /suggests a test double/);
+
+  // The natural-language traps QA found in the real tree: none of the guards may
+  // treat these as a hit. `mock://` is a URL scheme, `MOCK_*` a constant, and the
+  // comments talk about mock mode.
+  for (const benign of ["mock://onmodel/item-1/model", "MOCK_FREE_TIER_ITEM_LIMIT", "mock mode", "mockData"]) {
+    assert.ok(!DYNAMIC_REQUIRE_ACCESS.test(benign));
+    assert.ok(!DYNAMIC_REQUIRE_GLOBAL.test(benign));
+    assert.ok(!/(?:^|[^\w.$])require\s*\(/m.test(benign));
+    assert.ok(!/\bjest\s*\.\s*mock\s*\(/.test(benign));
+  }
+});
+
+test("noFrameworkMockCalls", () => {
+  // There is no test framework in this app (the runner is `node --test`), so a
+  // `jest.mock`/`vi.mock` in `src/` can only be a leftover — and auto-hoisted mocks
+  // are exactly what would make a wiring problem invisible to a test.
+  const hits = [
+    ...offenders(/\bjest\s*\.\s*mock\s*\(/m),
+    ...offenders(/\bvi\s*\.\s*mock\s*\(/m),
+  ];
+  assert.deepEqual(hits, [], `framework mocking in app source:\n${hits.join("\n")}`);
 });
 
 test("noRequireCalls", () => {
