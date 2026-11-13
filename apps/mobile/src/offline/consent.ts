@@ -6,8 +6,12 @@
  * seller accepted it, keyed to the version string, so a later legal revision
  * re-prompts instead of silently reusing stale consent.
  *
- * `expo-file-system` / `expo-sqlite` are not installed, so persistence is
- * `localStorage` (web) with an in-memory fallback for native mock mode.
+ * Persistence here is `localStorage` (web) plus an in-memory copy, which means the
+ * flag does not survive a force-quit on native — acceptable for this mock gate, to
+ * be revisited when the real consent flow ships. This module deliberately does not
+ * use `expo-file-system`: the app does ship it (17.0.1, imported statically by
+ * ./storage.ts for the durable draft queue), but one version string does not need
+ * the file-system path.
  */
 
 const CONSENT_KEY = "snaplist.onmodel_consent.v1";

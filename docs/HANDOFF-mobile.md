@@ -48,8 +48,11 @@ Scope rule: stay in `apps/mobile/`. Reads `packages/shared` vocabulary and the A
 ## E6-T5 — Local drafts + offline queue
 
 - `DraftsProvider` is the single source of truth for items; every change is persisted.
-- Persistence is lazy: `expo-file-system` → `localStorage` → in-memory (native modules are not
-  installed). On mount, any `queued`/`running` item is resumed, so a force-quit mid-job recovers.
+- Persistence is real and durable: `./storage.ts` statically imports `expo-file-system` (17.0.1) and
+  writes the whole queue to a versioned JSON document in `documentDirectory` on every change;
+  `localStorage` is the web fallback. On mount, any `queued`/`running` item is resumed, so a
+  force-quit mid-job recovers. Deliberately one JSON document, not SQLite: the queue is one ordered
+  array rewritten whole on each mutation, so a schema + a second native module buy nothing.
 - The free-tier wall interacts with **drafts, not the camera**: the 4th capture is saved as
   `blocked_by_quota` and is never discarded.
 - `Drafts` screen lists every persisted item, in-flight / quota-blocked counts, §6 failure copy,
@@ -70,22 +73,50 @@ $ cd apps/mobile && npx tsc --noEmit
 ```
 
 ```
-$ npx expo export --platform ios --output-dir /tmp/sn-metro-after
-Starting Metro Bundler
-iOS Bundled 5091ms index.ts (623 modules)
+$ npx expo export --platform ios --output-dir /tmp/sn-doc-ios --clear
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+iOS Bundled 27723ms index.ts (628 modules)
 
 Exporting , bundle, for ,: 1  ios
-_expo/static/js/ios/index-bf638c1f8984ddde44320a3a387abd56.hbc (,) 2.15 MB
+_expo/static/js/ios/index-06de54fa6af3b4be1f492d8c7c2f3b5f.hbc (,) 2.17 MB
 
 Exporting , file,: 1
 metadata.json (,) 142 B
 
-App exported to: /tmp/sn-metro-after
+App exported to: /tmp/sn-doc-ios
 ```
 
-Before the `metro.config.js` resolver fix the same command failed at 555 modules with
-`Unable to resolve module @supabase/functions-js`. The earlier 573-module figure predates the
-static supabase import.
+```
+$ npx expo export --platform web --output-dir /tmp/sn-doc-web --clear
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Web Bundled 19411ms index.ts (254 modules)
+
+Exporting , bundle, for ,: 1  web
+_expo/static/js/web/index-d6681152cdbca8b2a65d19b422608824.js (,) 647 kB
+
+Exporting , file,: 2 s
+index.html (,) 1.18 kB
+metadata.json (,) 49 B
+
+App exported to: /tmp/sn-doc-web
+```
+
+Both are measured with `--clear`, i.e. from a cold cache — and **the module count is not a
+fixed number**: it drifts with cache state and with the tree (warm-cache web runs have been seen
+across 241–254 modules for the same 647 kB bundle). Quote the byte figure, which is stable; treat
+the count as indicative. Before the `metro.config.js` resolver fix the iOS command failed with
+`Unable to resolve module @supabase/functions-js` — that message is the reproducible part; the
+count it reached before failing drifts too (560–564). The older 573-module / 1.57 MB figures
+predate both the static supabase import and expo-file-system.
+
+**The Hermes `.hbc` is not byte-reproducible, and build identity must not pretend it is.**
+Exporting an identical source tree twice has produced the same file name, the same
+`index-<hash>` stamp and the same size while the **file md5 differed**. Mobile build identity
+here therefore pins the **filename hash** (`index-<hash>` — what `metadata.json` and the
+native build reference) and never the bytes. The hash is **commit-scoped**: it changes whenever
+the source changes (this run: `06de54fa…` at `e2d12a6`), so quote it with the commit; the durable
+artifact is the byte size. Do not diff `.hbc` md5s between builds and call the difference a
+regression, and do not use them as a cache key.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
@@ -94,8 +125,8 @@ static supabase import.
 - **`expo-camera` is not installed** (registry mirror refused tarballs): the camera preview is a
   styled mock and the torch is a state toggle. Real capture wiring is deferred until the package
   can be installed. This is why screenshots are "code-renderable" but not device-captured.
-- **`expo-file-system` / `expo-sqlite` are not installed**: persistence falls back to
-  `localStorage` (web) / in-memory. A native build must swap in the real backends.
+- **`expo-file-system` is installed** (17.0.1): the draft queue really does survive a force-quit.
+  `expo-sqlite` is intentionally NOT added — see E6-T5 above. `localStorage` covers web.
 - **Supabase is installed and imported statically** (`@supabase/supabase-js` ^2.119.0 +
   `expo-constants` 16.0.0): the client is constructed only when `hasSupabase` is true, so mock mode is
   unchanged when env is absent. `@snaplist/shared` is still NOT imported — the analytics vocabulary
@@ -110,12 +141,11 @@ static supabase import.
 
 1. E6 is built end-to-end in mock mode: Capture → Review/Attributes → On-model → Export, plus Drafts.
 2. `tsc --noEmit` is clean; no `any` in the app.
-3. `expo export --platform ios` succeeds (623 modules, 2.15 MB bundle).
+3. `expo export` succeeds for iOS (628 modules, 2.17 MB) and web (647 kB; module count drifts with cache).
 4. Every screen renders with mock data when `API_BASE` is unset.
 5. All frozen analytics events are emitted from the screen that owns them.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.
 7. Offline queue persists and resumes; the 4th capture is saved, not lost.
 8. Batch is per-item with partial success and per-row retry.
-9. Deferred: real camera/FS/SQLite native modules, server-assigned paywall variant.
-10. Next: install `expo-camera` + `expo-file-system` when the registry recovers,
-    then run `npx expo start` on a device.
+9. Deferred: real camera native module, SQLite (not needed), server-assigned paywall variant.
+10. Next: install `expo-camera` when the registry recovers, then run `npx expo start` on a device.

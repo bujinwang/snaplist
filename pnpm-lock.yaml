@@ -25,6 +25,9 @@ importers:
       expo-constants:
         specifier: 16.0.0
         version: 16.0.0(expo@51.0.39(@babel/core@7.29.7(supports-color@8.0.0))(@babel/preset-env@7.29.7(@babel/core@7.29.7(supports-color@8.0.0))(supports-color@8.0.0))(supports-color@8.0.0))(supports-color@8.0.0)
+      expo-file-system:
+        specifier: 17.0.1
+        version: 17.0.1(expo@51.0.39(@babel/core@7.29.7(supports-color@8.0.0))(@babel/preset-env@7.29.7(@babel/core@7.29.7(supports-color@8.0.0))(supports-color@8.0.0))(supports-color@8.0.0))
       expo-status-bar:
         specifier: ~1.12.1
         version: 1.12.1

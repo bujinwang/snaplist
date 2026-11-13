@@ -9,9 +9,10 @@
  * is resumed. The free-tier wall interacts with drafts (not the camera): a 4th
  * capture is saved as `blocked_by_quota`, not discarded.
  *
- * Native modules (`expo-file-system`, `expo-sqlite`) are NOT installed; the
- * persistence layer lazy-requires them and falls back to `localStorage`/in-memory
- * (see ./storage.ts). All job work here is MOCK: no backend is contacted.
+ * Persistence is real: `./storage.ts` statically imports `expo-file-system` and
+ * writes the whole queue to a versioned JSON document in `documentDirectory` on
+ * every change, so the queue survives a force-quit (`localStorage` on web is the
+ * fallback backend). All job work here is MOCK: no backend is contacted.
  */
 
 import React, {
