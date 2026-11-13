@@ -469,7 +469,7 @@ own SDK lazily.
 
 **E3-T2 acceptance**
 ```bash
-python -m packages.vision.cli --in evals/fixtures/dress-02.jpg --out /tmp/sn3 && cat /tmp/sn3/attributes.json
+python -m packages.vision.cli --in evals/golden/photos/dress-02.jpg --out /tmp/sn3 && cat /tmp/sn3/attributes.json
 ```
 Must also **print the provider round-trip seconds** per call and record them in the adapter's
 `StageMeta`. No latency gate on this ticket.
@@ -668,7 +668,7 @@ with no recovery UI is the failure mode this ordering exists to prevent.
 | id | ticket | owner | priority | files it may touch | depends on |
 |---|---|---|---|---|---|
 | E7-T1 | eBay map: real Inventory/Trading CSV headers, byte-for-byte test | growth | **P0 — first slice** | `packages/shared/src/marketplaces/ebay.ts`, `packages/shared/test/marketplaces/**` | `docs/CONTRACTS.md` v1.0.0 (frozen — no code dependency) |
-| E7-T3 | Copy generator: ≤80-char title, description with measurements, 10 keywords | growth | P0 | `packages/shared/src/copy.ts`, `packages/shared/test/copy.test.ts` | E3-T2 *(may start against `evals/golden/manifest.json` labels)* |
+| E7-T3 | Copy generator: ≤80-char title, description with measurements, 10 keywords | growth | P0 | `packages/shared/src/listing/copy.ts`, `packages/shared/test/copy.test.ts` | E3-T2 *(may start against `evals/golden/manifest.json` labels)* |
 | E7-T5 | `apps/web` landing page: offer, before/after pair, honest time claim, checkout link | growth | P1 | `apps/web/**` | E8-T1 |
 | E7-T6 | `docs/EXPORT.md`: what we automate and what we deliberately do not | growth | P0 | `docs/EXPORT.md` | E7-T1 |
 | E7-T2 | Poshmark + Vinted maps — **gate: verify the live upload path first** | growth | **P2** | `packages/shared/src/marketplaces/poshmark.ts`, `vinted.ts` | E7-T1 |
