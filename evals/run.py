@@ -57,6 +57,9 @@ ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "evals" / "golden" / "manifest.json"
 PROVISIONAL = ROOT / "evals" / "golden-provisional" / "manifest.json"
 PRETTIFY_FIXTURES = ROOT / "evals" / "fixtures" / "prettify"
+# The rectify metric's denominator is the same manifest: every case records the photograph,
+# mask and category it was built from in `source.rectify_inputs`. No new binaries (ADR-011 §6).
+RECTIFY_FIXTURES = PRETTIFY_FIXTURES
 DEDUPE_FIXTURES = ROOT / "evals" / "fixtures" / "dedupe"
 REPORTS = ROOT / "evals" / "reports"
 ATTRS_PREDICTIONS = REPORTS / "attrs_predictions.json"
@@ -170,6 +173,11 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
     notes.extend(prettify_notes)
     if prettify_measurement is not None:
         measured["prettify SSIM (inside mask)"] = prettify_measurement
+
+    rectify_measurement, rectify_notes = _measure_rectify()
+    notes.extend(rectify_notes)
+    if rectify_measurement is not None:
+        measured["rectify SSIM (inside mask)"] = rectify_measurement
 
     attrs_measurements, attrs_notes = _measure_attrs()
     notes.extend(attrs_notes)
@@ -367,6 +375,78 @@ def _measure_prettify() -> tuple[Measurement | None, list[str]]:
     ]
     return (
         Measurement(value=stats["mean"], n=meta["n"], set_name="fixtures/prettify", note=note),
+        notes,
+    )
+
+
+def _measure_rectify() -> tuple[Measurement | None, list[str]]:
+    """E2-T1: SSIM between the rectify output and a reference re-rendered under the declared map.
+
+    **Read the note in the report before quoting the number.** This is not the sentence
+    `docs/PLAN.md` E2-T1 writes ("versus the source"), because that sentence has no literal
+    reading for a geometric stage: output and source live in different coordinate systems, and
+    comparing the stage against its own warp is ≈ 1.0 for a wrong homography too. `ADR-011` §2.2
+    re-anchors the number to "the output against an independently re-rendered reference under
+    the homography the stage declared" and adds two exact conformance checks (B1 corners, B2
+    canvas) so the SSIM half cannot be satisfied by a wrong map.
+
+    Two things the note must carry and this docstring must not hide: the metric cannot see quad
+    quality (H comes from the alpha bounding box, so a wrong mask is invisible to it) and there
+    is no ground-truth quad on disk for any of the 9 photos; and ADR-011 was **accepted by Bert
+    on 2026-11-12** (keep 0.85 gate) — its restatement of the DoD is now adjudicated, so this row
+    is scored against an approved gate.
+    """
+    manifest = RECTIFY_FIXTURES / "manifest.json"
+    if not manifest.is_file():
+        return None, [
+            f"rectify: UNMEASURED — no fixture manifest at {RECTIFY_FIXTURES.relative_to(ROOT)} "
+            "(the 9 cases are the photographs the E2-T2 fixtures record in "
+            "source.rectify_inputs)"
+        ]
+
+    from evals.metrics import rectify as rectify_metric
+
+    try:
+        scores, meta = rectify_metric.run(RECTIFY_FIXTURES)
+        stats = rectify_metric.summarise(scores)
+    except Exception as exc:  # noqa: BLE001 - report the reason, never a fake number
+        return None, [
+            f"rectify: UNMEASURED — the measurement failed ({type(exc).__name__}: {exc})"
+        ]
+
+    if stats["mean"] is None:
+        return None, [
+            "rectify: UNMEASURED — every case produced a canvas that is ~100 % backdrop, so "
+            "there was no garment region to compare (ADR-011 §2.2 weight guard)"
+        ]
+
+    note = (
+        f"defined by {rectify_metric.DEFINITION_SOURCE} · measured on n={meta['n']} "
+        f"photographs recorded in evals/fixtures/prettify/manifest.json "
+        f"source.rectify_inputs (canvases {', '.join(f'{w}x{h}' for w, h in meta['canvases'])}, "
+        f"quad source {', '.join(meta['quad_sources'])}) · median {stats['median']:.4f}, worst "
+        f"{stats['worst']:.4f}; {stats['n_passes_dod']}/{stats['n']} cases pass "
+        f"`passes_dod = (A >= {rectify_metric.DOD_MIN_SSIM:.2f} and B1 and B2)` · B1 pins all 8 "
+        f"degrees of freedom of the declared homography (worst corner residual "
+        f"{stats['max_corner_residual_px']} px against a {rectify_metric.CORNER_TOLERANCE_PX} px "
+        "tolerance, det(H) > 0), B2 pins the canvas (transcribed aspect table, long edge <= "
+        f"{rectify_metric.MAX_LONG_EDGE_PX} px, 8-bit RGB, no alpha band) · "
+        f"{rectify_metric.RESAMPLER_FLOOR} · {rectify_metric.THRESHOLD_SEMANTICS} · "
+        f"{rectify_metric.CAPABILITY_LIMITS} · {rectify_metric.ADR_011_STATUS} · per-case "
+        "evidence: evals/reports/rectify.md (`python -m evals.metrics.rectify`)"
+    )
+    notes = [
+        f"rectify: measured on the {meta['n']} provisional photographs (n={meta['n']}) — "
+        "machine-made alphas, so the alpha-bbox quad is a convention this metric verifies was "
+        "followed, not a ground truth it verifies is right"
+    ]
+    return (
+        Measurement(
+            value=stats["mean"],
+            n=meta["n"],
+            set_name="evals/golden-provisional",
+            note=note,
+        ),
         notes,
     )
 

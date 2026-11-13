@@ -734,8 +734,107 @@ tuple(PrettifyMode)`. No other code switches exhaustively on it — `segment.py`
 ```
 
 `prettify_mode` is printed (`mode classical`), and the wall clock is per backend, as E2-T2's
-acceptance requires. Rectify's row is still `UNMEASURED`: E2-T1's SSIM is measured by
-`prompts/02-vision.md`, and wiring it is not this ticket's file list.
+acceptance requires. The table above is a dated record of that run; the rectify row was
+`UNMEASURED` in it, and the sentence that used to explain why was **false** — see the next
+section, which is where the repair and the numbers live.
+
+## `rectify SSIM (inside mask)` — what measures it, and the measured numbers (E2-T1)
+
+**The sentence that used to be here said** E2-T1's SSIM "is measured by `prompts/02-vision.md`,
+and wiring it is not this ticket's file list". **Both halves were wrong.** That prompt carries
+the same one-line DoD and no formula, no mask and no coordinate system, so it could not be
+measuring anything; and the wiring did happen, in `evals/metrics/rectify.py`.
+
+* **Measured by:** `evals/metrics/rectify.py` (`python -m evals.metrics.rectify`). It writes
+  `evals/reports/rectify.md`, which is gitignored — paste it into a handoff the way
+  `prettify.md` is pasted.
+* **Defined by:** `docs/ADR-011-rectify-ssim-semantics.md` §2.2 (Part A: alpha-weighted SSIM
+  against a reference re-rendered by Pillow's C resampler under the homography the stage
+  *declared*) plus §2.3's two exact conformance checks (B1 corners within 0.5 px and det(H) > 0,
+  B2 canvas size/aspect/8-bit RGB). `passes_dod = (A >= 0.85) and B1 and B2`.
+* **Denominator:** the 9 photographs recorded as `source.rectify_inputs` in
+  `evals/fixtures/prettify/manifest.json`. No new binary fixtures (ADR-011 §6).
+
+`python -m evals.run --suite vision`, the two E2 rows as they print now:
+
+```console
+| rectify SSIM (inside mask) | >= 0.85 | 0.9790 (n=9, evals/golden-provisional) | E2 |
+| prettify SSIM (inside mask) | >= 0.80 | 0.9936 (n=9, fixtures/prettify) | E2 |
+```
+
+`python -m evals.metrics.rectify` — per case, measured once and reproduced identically on a
+second run (seconds excluded; they are evidence and gate nothing):
+
+```console
+| case | category | canvas | weighted SSIM | binary SSIM | whole canvas | gap | weight cov | worst corner px | det | B1 | B2 | DoD | s |
+| logo-01-tee-chest         | top       | 960x1200  | 0.9942 | 0.9942 | 0.9959 | 0.0000 | 0.695 | 0.0000 | 1.101 | ok | ok | ok | 0.386 |
+| logo-02-breeches-waistband| bottom    | 960x1200  | 0.9694 | 0.9694 | 0.9779 | 0.0000 | 0.718 | 0.0000 | 0.876 | ok | ok | ok | 0.281 |
+| logo-03-sneaker-side      | shoe      | 1200x900  | 0.9825 | 0.9825 | 0.9894 | 0.0000 | 0.583 | 0.0000 | 1.862 | ok | ok | ok | 0.223 |
+| logo-04-belt-stamp        | accessory | 1200x1200 | 0.9539 | 0.9539 | 0.9771 | 0.0000 | 0.475 | 0.0000 | 2.643 | ok | ok | ok | 0.342 |
+| logo-05-jacket-emblem     | outerwear | 960x1200  | 0.9962 | 0.9962 | 0.9973 | 0.0000 | 0.708 | 0.0000 | 0.879 | ok | ok | ok | 0.273 |
+| crease-01-breeches-leg    | bottom    | 960x1200  | 0.9690 | 0.9690 | 0.9780 | 0.0000 | 0.708 | 0.0000 | 0.795 | ok | ok | ok | 0.246 |
+| crease-02-tee-body        | top       | 960x1200  | 0.9680 | 0.9679 | 0.9737 | 0.0000 | 0.806 | 0.0000 | 2.564 | ok | ok | ok | 0.232 |
+| crease-03-tennis-shoe     | shoe      | 1200x900  | 0.9823 | 0.9823 | 0.9908 | 0.0000 | 0.501 | 0.0000 | 1.622 | ok | ok | ok | 0.189 |
+| crease-04-breeches-back   | bottom    | 960x1200  | 0.9951 | 0.9951 | 0.9971 | 0.0000 | 0.583 | 0.0000 | 0.622 | ok | ok | ok | 0.258 |
+
+mean weighted SSIM (n=9) 0.9790 · median/worst/best 0.9823/0.9539/0.9962
+`s passes_dod` 9/9 · B1 corner residual worst 0.0000 px (tolerance 0.5) · failures 0
+mean |ΔL| where alpha >= 0.5: 2.282 levels · wall clock 2.43 s total / 0.270 s mean
+```
+
+**Read four things before quoting `0.9790`.**
+
+1. **`0.9790` is not a defect rate.** The ceiling is ≈0.98, not 1.0: Pillow's
+   `Image.transform(PERSPECTIVE, BILINEAR)` is the *antialiasing* resampler (the same machinery
+   as `Image.resize`), while the stage point-samples a 2-tap bilinear. ADR-011 §7 predicted a
+   ±1 level floor and a ≈0.999 ceiling; **the measurement refutes both for any non-unit scale**.
+   Measured on `logo-02-breeches-waistband` inside the warped matte (`>= 0.5`), 8-bit levels:
+   **per-channel `max|Δ| = 33`, luminance `max|Δ| = 32`, luminance `mean|Δ| = 2.47`**, 99.9th
+   percentile `= 16`. The ±1 figure holds only where the map is 1:1 — `max|Δ| = 0` on an
+   identity checkerboard, 1 level on a sub-pixel translation.
+2. **What that rewards is agreement with Pillow's kernel, not smoothness — and the difference
+   matters.** Rendering the same photograph through `Image.transform` itself scores `1.0000` on
+   `logo-02` against `0.9694` for the current 2-tap bilinear stage: the 0.03 is a filter
+   difference, not a defect. Smoothness is *not* rewarded; blurring the output only lowers the
+   score — `logo-02` `0.9694 → 0.9172 → 0.6727 → 0.5250`, `logo-01` `0.9942 → 0.9882 → 0.9351 →
+   0.8639` at Gaussian radius 0.6 / 1.2 / 2.0. So a future stage must **not** be written to
+   imitate this reference's filter. If kernel agreement ever matters enough to fix, the honest
+   fix is to render both operands through the same kernel and say the number moved.
+3. **`>= 0.85` tolerates no fixed percentage — the tolerance depends on where the damage sits.**
+   Measured in the **canvas frame** (the frame that is scored), scattered `(128,128,128)`, seed 0,
+   lossless PNG:
+
+   | case | baseline | 2 % | 5 % | 7 % | 10 % |
+   |---|---|---|---|---|---|
+   | `logo-02-breeches-waistband` | 0.9694 | 0.9299 passes | 0.8796 passes | 0.8492 **fails** | 0.8086 **fails** |
+   | `logo-01-tee-chest` | 0.9942 | 0.6488 **fails** | — | — | — |
+   | `logo-05-jacket-emblem` | 0.9962 | 0.8060 **fails** | — | — | — |
+
+   So `passes_dod` means "at most ~15 % of the garment's *structure* was replaced or
+   mis-transported, and the declared map and the canvas conform" — **never** "nothing was
+   repainted", and never "10 % is allowed": five per cent survives on one garment, two per cent
+   kills another. **An earlier version of this section said "~10 % scattered repaint still
+   passes" and that was wrong** — it came from scattering in the *source* frame, where the
+   `1920×1280 → 1200×960` downsample averages the speckle away and only ~0.22 % of the canvas
+   ends up grey. `evals/tests/test_rectify_metric.py::test_the_threshold_tolerance_is_not_a_
+   percentage` reproduces this table from `rectify_controls.scatter_repaint()` (seed and mask
+   rule written down), so the claim is executable rather than quoted.
+4. **It cannot see quad quality.** `H` comes from the alpha bounding box, so a wrong mask means
+   a wrong bbox, and a warp that crops or stretches the garment passes all three checks. There
+   is no ground-truth quad on disk for any of the 9 photos: this verifies that the `alpha_bbox`
+   convention was followed, not that it is right.
+
+**One more fact about the number, not a caveat:** `weighted` and `binary` SSIM coincide on this
+fixture set (gap 0.0000) because the 9 alphas are hard-edged algorithm masks, every pixel 0 or
+255. ADR-011 §2.2's argument for alpha weighting is therefore *not exercised* by these fixtures,
+and D13's weighted-vs-binary signal is inert here.
+
+**Status of the criterion: `ADR-011` was accepted by Bert on 2026-11-12 (keep 0.85 gate), and its
+re-anchoring of E2-T1's DoD is now adjudicated.** `docs/PLAN.md` still carries the original
+"SSIM ≥ 0.85 inside the mask versus the source" wording, which has no literal reading for a
+geometric stage, so the ADR's re-anchoring is the operative definition; `docs/PLAN.md` was not
+reworded (the lead's file) because the ADR is now the authoritative reading. **Nothing in
+`docs/PLAN.md` was edited** — that file is the lead's, and the ruling is recorded here and in the ADR.
 
 ## `python -m evals.metrics.prettify` — per case
 

@@ -26,8 +26,10 @@
    (≤ 1600px per BRIEF.md).
 
 The contact shadow is deliberately not done: `meta.notes["contact_shadow"] = False` says so, and
-prompts/02-vision.md's SSIM ≥ 0.85 check (E2-T3) is what will judge the gap. Returning a passable
-image and staying silent about it would be the exact dishonesty the brief forbids.
+no measurement in this repo would notice either way — `evals/metrics/rectify.py` (defined by
+`docs/ADR-011-rectify-ssim-semantics.md`) measures transport fidelity and canvas conformance, and
+neither sees a shadow. Returning a passable image and staying silent about it would be the exact
+dishonesty the brief forbids.
 
 ## On numpy
 
@@ -39,8 +41,12 @@ the right ones.
 
 ## Constraints that stay true
 
-* **no generative repainting in this module** — garment pixels must survive the warp, SSIM ≥ 0.85
-  inside the mask versus the source (prompts/02-vision.md)
+* **no generative repainting in this module** — garment pixels must survive the warp, and the
+  evidence is `evals/metrics/rectify.py`: SSIM ≥ 0.85 inside the alpha-weighted mask against a
+  reference re-rendered under the homography this module declared, plus two exact conformance
+  checks (corners, canvas). The metric's definition is
+  `docs/ADR-011-rectify-ssim-semantics.md` §2.2 — a *proposal* awaiting adjudication, and the
+  reason "SSIM versus the source" cannot be read literally for a geometric stage (§1.2 there).
 * output is sRGB PNG, ≤ 1600 px on the long edge, backdrop `#F2F1EE`
 
     rectify(image: bytes, alpha_png: bytes, category: str) -> RectifyResult
