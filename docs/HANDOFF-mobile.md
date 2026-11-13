@@ -73,31 +73,32 @@ $ cd apps/mobile && npx tsc --noEmit
 ```
 
 ```
-$ npx expo export --platform ios --output-dir /tmp/sn-final-ios --clear
+$ npx expo export --platform ios --output-dir /tmp/sn-doc-ios --clear
 warning: Bundler cache is empty, rebuilding (this may take a minute)
-iOS Bundled 35515ms index.ts (628 modules)
+iOS Bundled 27723ms index.ts (628 modules)
 
 Exporting , bundle, for ,: 1  ios
-_expo/static/js/ios/index-aea7da23080eb6aad310f81924a955a8.hbc (,) 2.17 MB
+_expo/static/js/ios/index-06de54fa6af3b4be1f492d8c7c2f3b5f.hbc (,) 2.17 MB
 
 Exporting , file,: 1
 metadata.json (,) 142 B
 
-App exported to: /tmp/sn-final-ios
+App exported to: /tmp/sn-doc-ios
 ```
 
 ```
-$ npx expo export --platform web --output-dir /tmp/sn-final-web --clear
-Web Bundled 29149ms index.ts (254 modules)
+$ npx expo export --platform web --output-dir /tmp/sn-doc-web --clear
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Web Bundled 19411ms index.ts (254 modules)
 
 Exporting , bundle, for ,: 1  web
-_expo/static/js/web/index-1ab08a085640f88bc100dd4fcaa4fd32.js (,) 647 kB
+_expo/static/js/web/index-d6681152cdbca8b2a65d19b422608824.js (,) 647 kB
 
 Exporting , file,: 2 s
 index.html (,) 1.18 kB
 metadata.json (,) 49 B
 
-App exported to: /tmp/sn-final-web
+App exported to: /tmp/sn-doc-web
 ```
 
 Both are measured with `--clear`, i.e. from a cold cache — and **the module count is not a
@@ -111,9 +112,11 @@ predate both the static supabase import and expo-file-system.
 **The Hermes `.hbc` is not byte-reproducible, and build identity must not pretend it is.**
 Exporting an identical source tree twice has produced the same file name, the same
 `index-<hash>` stamp and the same size while the **file md5 differed**. Mobile build identity
-here therefore pins the **filename hash** (`index-aea7da23…` — what `metadata.json` and the
-native build reference) and never the bytes: do not diff `.hbc` md5s between builds and call the
-difference a regression, and do not use them as a cache key.
+here therefore pins the **filename hash** (`index-<hash>` — what `metadata.json` and the
+native build reference) and never the bytes. The hash is **commit-scoped**: it changes whenever
+the source changes (this run: `06de54fa…` at `e2d12a6`), so quote it with the commit; the durable
+artifact is the byte size. Do not diff `.hbc` md5s between builds and call the difference a
+regression, and do not use them as a cache key.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
