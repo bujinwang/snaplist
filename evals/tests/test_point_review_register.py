@@ -61,6 +61,14 @@ def _pending_register() -> dict:
         rec["reviewed"]["mask_path"] = f"masks/{rid}.png"
         rows.append(rec)
     payload["records"] = rows
+    # The pending ledger models the pre-decision state: threshold not yet set.
+    payload["edit_distance_threshold"] = {
+        "method": "xor@128",
+        "min_changed_pixels": None,
+        "max_changed_pixels": None,
+        "max_changed_ratio": None,
+        "value_status": "UNSET — pending fixture",
+    }
     return payload
 
 
@@ -108,22 +116,25 @@ def _set_threshold(payload: dict) -> dict:
 # ---------------------------------------------------------------------------- schema
 
 
-def test_shipped_register_is_structurally_valid_and_u1_unmet() -> None:
-    # The shipped ledger may have any number of graduated rows; the invariant is
-    # structural validity + U1 UNMET, NOT a frozen 0/20 count.
+def test_shipped_register_is_structurally_valid_and_u1_met() -> None:
+    # The shipped ledger is a LIVING file: once the threshold is SET and all 20 rows are
+    # reviewed, U1 is MET by the ADR-010 formula. The invariant is structural validity +
+    # the present-tense U1 state, NOT a frozen 0/20 count.
     report = vp.validate_structure(_register())
     assert report.passed is True
     assert report.slots == 20
-    assert report.reviewed + report.pending == 20
-    assert report.threshold_status == "UNSET"
-    assert report.u1_met is False
+    assert report.reviewed == 20
+    assert report.pending == 0
+    assert report.threshold_status == "SET"
+    assert report.u1_met is True
     assert isinstance(report.as_state(), ReviewState)
-    assert report.as_state().u1_met is False
+    assert report.as_state().u1_met is True
     # Keep the original 0/20 assertion, pinned against an explicitly pending ledger.
     blank = vp.validate_structure(_pending_register())
     assert blank.passed is True
     assert blank.reviewed == 0
     assert blank.pending == 20
+    assert blank.threshold_status == "UNSET"
     assert blank.u1_met is False
 
 
@@ -206,8 +217,19 @@ def test_bad_provenance_and_bad_sha256_are_rejected() -> None:
 
 
 def test_twenty_reviewed_rows_with_unset_threshold_keep_u1_unmet() -> None:
-    """Bert ruling 2: no number, no U1 — even when every slot says reviewed."""
+    """Bert ruling 2: no number, no U1 — even when every slot says reviewed.
+
+    This test pins the U1 FORMULA, so it forces the threshold UNSET on its own payload
+    rather than depending on whatever state the shipped register is in.
+    """
     payload = _all_reviewed()
+    payload["edit_distance_threshold"] = {
+        "method": "xor@128",
+        "min_changed_pixels": None,
+        "max_changed_pixels": None,
+        "max_changed_ratio": None,
+        "value_status": "UNSET — test override",
+    }
     report = vp.validate_structure(payload)
     assert report.reviewed == 20
     assert report.pending == 0
@@ -215,6 +237,19 @@ def test_twenty_reviewed_rows_with_unset_threshold_keep_u1_unmet() -> None:
     assert report.threshold_status == "UNSET"
     assert report.passed is True, "structural validity is not the U1 decision"
     assert report.u1_met is False
+
+
+def test_threshold_enforcement_rejects_a_row_over_the_cap() -> None:
+    """The threshold is now a real gate: a reviewed row exceeding the cap breaks U1."""
+    payload = _set_threshold(_all_reviewed())
+    payload["records"][0]["edit_distance"]["changed_pixels"] = 10_000
+    payload["records"][0]["edit_distance"]["changed_ratio"] = 0.50
+    report = vp.validate_structure(payload)
+    assert report.threshold_status == "SET"
+    assert report.u1_met is False
+    assert any(
+        "edit-distance" in check.name and not check.ok for check in report.checks
+    )
 
 
 def test_u1_met_requires_all_three_conditions() -> None:
@@ -236,13 +271,15 @@ def test_u1_met_requires_all_three_conditions() -> None:
 # ------------------------------------------------------------- CLI / clean clone
 
 
-def test_default_cli_prints_u1_unmet_and_exits_zero(
+def test_default_cli_reports_present_tense_u1_state_and_exits_zero(
     workspace: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # The shipped register now has 20/20 reviewed AND the threshold SET, so the default run
+    # legitimately reports U1 MET — but exit 0 still means "structurally valid", not "DoD done".
     assert vp.main([]) == 0
     out = capsys.readouterr().out
-    assert "U1 UNMET" in out
-    assert "NOT a U1 verdict" in out
+    assert "U1 MET" in out
+    assert "NOT a DoD verdict" in out
     assert "ADR-010 does not pre-adjudicate" in out
     # The literal 0/20 wording stays pinned, but against an explicitly pending ledger.
     blank = workspace / "pending_register.json"
@@ -260,7 +297,9 @@ def test_clean_clone_without_manifest_still_exits_zero(
     assert vp.main(["--cross-check-manifest"]) == 0
     out = capsys.readouterr().out
     assert "manifest absent (clean clone) — cross-check skipped" in out
-    assert "U1 UNMET" in out
+    # The shipped register now has 20/20 reviewed AND the threshold SET, so the default
+    # run legitimately reports U1 MET even in clean-clone (manifest-less) mode.
+    assert "U1 MET" in out
     assert "| FAIL |" not in out
 
 
@@ -339,6 +378,15 @@ def _reviewed_with_real_masks(workspace: Path) -> dict:
     """
     payload = _register()
     payload["records"] = [_reviewed(record) for record in payload["records"]]
+    # Isolate B2 semantics from whatever state the shipped threshold is in: force UNSET so
+    # u1_met is False here for the B2 tests' own assertions, independent of the live ledger.
+    payload["edit_distance_threshold"] = {
+        "method": "xor@128",
+        "min_changed_pixels": None,
+        "max_changed_pixels": None,
+        "max_changed_ratio": None,
+        "value_status": "UNSET — B2 test isolation",
+    }
     proposal_rows = [[0] * 4 for _ in range(4)]
     proposal_rows[0][0] = 255
     reviewed_rows = [list(row) for row in proposal_rows]
@@ -366,7 +414,8 @@ def test_b2_recomputes_raw_png_hashes_xor_count_and_whole_frame_ratio(workspace:
     assert any("changed_ratio" in name for name in names)
     assert any("changed_ratio=0.062500 over 16 pixels" in check.detail
                for check in report.checks)
-    # u1_met stays false: the shipped threshold is UNSET even with 20 reviewed rows.
+    # u1_met stays False: _reviewed_with_real_masks forces the threshold UNSET to isolate
+    # B2 field semantics from the live ledger's U1 state.
     assert report.u1_met is False
 
 

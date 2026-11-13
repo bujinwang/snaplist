@@ -154,7 +154,44 @@ def _is_number(value: object) -> bool:
 # ------------------------------------------------------------------- structural checks
 
 
-def _record_checks(record: dict, index: int) -> list[Check]:
+def _enforce_threshold(
+    label: str, distance: dict, threshold: object, checks: list[Check]
+) -> None:
+    """Gate each reviewed row against the decided threshold.
+
+    Only fires when the threshold is SET. While UNSET, U1 is already blocked by
+    `_threshold_status`, so we must not invent a gate that does not yet exist.
+    """
+    if not isinstance(threshold, dict):
+        return
+    if str(threshold.get("value_status", "")).upper().startswith("UNSET"):
+        return
+    cp = distance.get("changed_pixels")
+    cr = distance.get("changed_ratio")
+    mn = threshold.get("min_changed_pixels")
+    mx = threshold.get("max_changed_pixels")
+    mr = threshold.get("max_changed_ratio")
+    if _is_number(mn) and _is_number(mx) and _is_number(cp):
+        if not (mn <= cp <= mx):
+            checks.append(
+                Check(
+                    f"{label} edit-distance pixels",
+                    False,
+                    f"changed_pixels {cp} is outside the accepted [{mn}, {mx}]",
+                )
+            )
+    if _is_number(mr) and _is_number(cr):
+        if not (cr <= mr):
+            checks.append(
+                Check(
+                    f"{label} edit-distance ratio",
+                    False,
+                    f"changed_ratio {cr:.6f} exceeds max_changed_ratio {mr}",
+                )
+            )
+
+
+def _record_checks(record: dict, index: int, threshold: dict | None = None) -> list[Check]:
     """All per-record rules, including ADR-010's two-condition conflict detection."""
     rid = str(record.get("id", f"<{index}>"))
     label = f"record {rid}"
@@ -236,6 +273,9 @@ def _record_checks(record: dict, index: int) -> list[Check]:
             or not _is_number(distance.get("changed_ratio")) \
             or not isinstance(distance.get("method"), str):
         checks.append(Check(label, False, "edit_distance values have the wrong types"))
+    else:
+        # Types are sound: enforce the decided threshold (no-op while UNSET).
+        _enforce_threshold(label, distance, threshold, checks)
 
     review = record["review"]
     if not isinstance(review, dict) or any(key not in review for key in _REVIEW_KEYS):
@@ -284,6 +324,22 @@ def _structure_checks(payload: dict) -> list[Check]:
             "until the 20 masks are re-made)",
         )
     )
+    if threshold_ok and _threshold_status(payload) == "SET":
+        mn = block.get("min_changed_pixels")
+        mx = block.get("max_changed_pixels")
+        mr = block.get("max_changed_ratio")
+        consistent = (
+            _is_number(mn) and _is_number(mx) and _is_number(mr)
+            and mn <= mx and isinstance(mr, int | float) and mr >= 0
+        )
+        checks.append(
+            Check(
+                "edit_distance_threshold consistency",
+                bool(consistent),
+                f"SET bounds must satisfy 0 <= min <= max and max_ratio >= 0 "
+                f"(got min={mn}, max={mx}, ratio={mr})",
+            )
+        )
 
     expected = payload.get("expected_ids")
     expected_ok = (
@@ -320,7 +376,7 @@ def _structure_checks(payload: dict) -> list[Check]:
     )
 
     for index, record in enumerate(records):
-        checks.extend(_record_checks(record, index))
+        checks.extend(_record_checks(record, index, block))
     return checks
 
 
@@ -546,8 +602,10 @@ def render(report: ReviewReport) -> str:
         "",
         "The **not a PASS** verdict follows from this present-tense register state, not from "
         "the mask-source tier. `python -m evals.tools.validate_point_reviews` exit 0 means the "
-        "register is structurally valid; it is NOT a U1 verdict. U1's last step is a human "
-        "sign-off, and while the threshold is UNSET, u1_met is False even with 20 reviewed rows.",
+        "register is structurally valid; it is NOT a DoD verdict. U1 is the human sign-off encoded "
+        "in the edit-distance threshold; with the threshold SET and all 20 rows reviewed, u1_met "
+        "is True by the ADR-010 formula — but that is a structural verdict from this ledger, not "
+        "an adjudication of BiRefNet quality.",
         "",
         "ADR-010 does not pre-adjudicate the IoU semantics after the 20 masks are re-made; "
         "that is a follow-up ticket.",
