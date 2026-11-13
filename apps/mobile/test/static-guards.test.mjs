@@ -131,7 +131,7 @@ function offenders(pattern, commentHint) {
 function formatHit({ file, content, index, matched, commentHint }) {
   const inComment = isInComment(content, index);
   const where = `${rel(file)}:${lineOf(content, index)}`;
-  const label = inComment ? "[comment] " : "";
+  const label = inComment ? "[in a comment] " : "";
   const hint = inComment && commentHint ? `\n    ${commentHint}` : "";
   return `${where}  ${label}${matched.trim()}${hint}`;
 }
@@ -177,26 +177,22 @@ const TEST_DOUBLE_SEGMENTS = new Set([
 /**
  * File-name suffixes that mark a test double (`x.double.ts`, `x.stub.ts`, …).
  *
- * Note what is deliberately NOT matched: `src/lib/mockData.ts`. It is production
- * code — the mock-mode data every screen runs on when `API_BASE` is unset — so a
- * rule like "no path containing `mock`" would fail on a healthy tree. Only an
- * exact `.mock`/`.double`/`.fake`/`.stub` suffix counts.
+ * This is deliberately the ONLY name-based signal, and it is a suffix, not a
+ * substring. Two rules were considered and rejected:
+ *
+ *   - "no path containing `mock`" — `src/lib/mockData.ts` is production code (the
+ *     mock-mode dataset every screen runs on when `API_BASE` is unset), so that rule
+ *     is red on a healthy tree.
+ *   - substring `fake|double|stub` — catches `fakeApi`, but also `stubClient`, which
+ *     is a perfectly reasonable production name for an offline backend stand-in. A
+ *     guard that fires on healthy code gets weakened by whoever hits it, which costs
+ *     more than the case it would have caught.
+ *
+ * So the rule is: test-double directory, or an explicit `.mock`/`.double`/`.fake`/
+ * `.stub` suffix. Anything looser is a false-positive generator; anything this
+ * source tree could plausibly name a production module stays green.
  */
 const TEST_DOUBLE_BASENAME = /\.(mock|mocks|double|doubles|fake|fakes|stub|stubs)$/;
-
-/**
- * A file name that *suggests* a test double, matched as a substring.
- *
- * `fake`, `double` and `stub` are matched loosely on purpose — a production module
- * called `fakeApi` or `stubClient` would be a smell worth failing on. `mock` is
- * deliberately NOT in this list: `src/lib/mockData.ts` is production code (the
- * mock-mode dataset every screen runs on when `API_BASE` is unset) and is imported
- * by `DraftsProvider`. Matching `mock` loosely would make the guard red on a
- * healthy tree, and a guard that cries wolf gets switched off — which is worse than
- * no guard. `mock` therefore only trips the exact `.mock` suffix or a
- * test-double directory.
- */
-const TEST_DOUBLE_HINT = /(fake|double|stub)/i;
 
 /** Reason a specifier is a test double, or null if it is fine. */
 function testDoubleReason(specifier) {
@@ -209,9 +205,6 @@ function testDoubleReason(specifier) {
   const name = basename(withoutExtension);
   if (TEST_DOUBLE_BASENAME.test(name)) {
     return `imports a test double ("${name}")`;
-  }
-  if (TEST_DOUBLE_HINT.test(name)) {
-    return `imports a module whose name suggests a test double ("${name}")`;
   }
   return null;
 }
@@ -297,11 +290,16 @@ test("deliberateExemptions", () => {
   assert.equal(testDoubleReason("../../lib/mockData"), null, "src/lib/mockData.ts is production code");
   assert.match(testDoubleReason("../../test/helper") ?? "", /test-double directory/);
   assert.match(testDoubleReason("../__mocks__/api") ?? "", /test-double directory/);
+  assert.match(testDoubleReason("../__fakes__/api") ?? "", /test-double directory/);
   assert.match(testDoubleReason("./draft.double") ?? "", /test double/);
-  // fake/double/stub ARE matched loosely — a production module named like a double
-  // is a smell worth failing on. Only `mock` gets the narrow treatment above.
-  assert.match(testDoubleReason("./fakeApi") ?? "", /suggests a test double/);
-  assert.match(testDoubleReason("./stubClient") ?? "", /suggests a test double/);
+  assert.match(testDoubleReason("./api.stub") ?? "", /test double/);
+  // Substring matching for fake/double/stub was removed on review. `stubClient` is a
+  // plausible production name for an offline backend stand-in, and a guard that fires
+  // on healthy code gets weakened by whoever trips it. Pinned here so the decision is
+  // visible rather than looking like an oversight.
+  assert.equal(testDoubleReason("./fakeApi"), null, "substring matching is deliberately not used");
+  assert.equal(testDoubleReason("./stubClient"), null, "substring matching is deliberately not used");
+  assert.equal(testDoubleReason("./mockApi"), null, "substring matching is deliberately not used");
 
   // The natural-language traps QA found in the real tree: none of the guards may
   // treat these as a hit. `mock://` is a URL scheme, `MOCK_*` a constant, and the
@@ -370,7 +368,7 @@ test("commentHitsAreLabelledNotSilentlyExempt", () => {
     matched: ".require",
     commentHint: DYNAMIC_REQUIRE_COMMENT_HINT,
   });
-  assert.match(commentHit, /storage\.ts:1 {2}\[comment\] \.require/);
+  assert.match(commentHit, /storage\.ts:1 {2}\[in a comment\] \.require/);
   assert.match(commentHit, /write it as/);
 
   const codeHit = formatHit({
@@ -380,7 +378,7 @@ test("commentHitsAreLabelledNotSilentlyExempt", () => {
     matched: ".require",
     commentHint: DYNAMIC_REQUIRE_COMMENT_HINT,
   });
-  assert.ok(!codeHit.includes("[comment]"), "code hits must not be labelled as comments");
+  assert.ok(!codeHit.includes("[in a comment]"), "code hits must not be labelled as comments");
   assert.ok(!codeHit.includes("write it as"), "code hits get no reword hint");
 });
 
