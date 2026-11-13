@@ -191,12 +191,37 @@ def measurements() -> tuple[dict[str, Measurement], list[str]]:
     if dedupe_measurement is not None:
         measured["dedupe false-merge rate"] = dedupe_measurement
 
-    # Stays UNMEASURED by design this round: a 1-5 "did it hallucinate text" score is a human
-    # judgement, and E2-T3 owns the rubric, the images it is scored on and the report file.
-    notes.append(
-        "prettify hallucinated-text rubric: UNMEASURED — the manual 1-5 rubric is E2-T3; no "
-        "human has scored anything yet, and a machine cannot stand in for it"
-    )
+    # E2-T3: the manual 1-5 "did it hallucinate text" rubric. A human is the only thing that can
+    # produce this number; the harness validates and summarises what somebody wrote into
+    # `evals/fixtures/prettify/rubric_scores.json` (committed, so the row reproduces on a clean
+    # clone). Until every logo case carries an integer 1-5 AND scorer/date/version are filled in,
+    # the row stays UNMEASURED with the reason named — a missing score is never a pass.
+    from evals.metrics import prettify_rubric  # local: keeps import cost off --help
+
+    try:
+        rubric_rows, rubric_meta = prettify_rubric.run(
+            PRETTIFY_FIXTURES / "rubric_scores.json", PRETTIFY_FIXTURES / "manifest.json"
+        )
+        rubric_stats = prettify_rubric.summarise(rubric_rows)
+    except (OSError, ValueError) as exc:
+        notes.append(f"prettify hallucinated-text rubric: UNMEASURED — {exc}")
+    else:
+        per_case = "; ".join(f"{row['id']}={row['score']}" for row in rubric_rows)
+        measured["prettify hallucinated-text rubric"] = Measurement(
+            value=rubric_stats["mean"],
+            n=rubric_stats["n"],
+            set_name="fixtures/prettify",
+            note=(
+                f"manual 1-5 rubric, mean over the {rubric_stats['n']} logo cases (the only "
+                f"fixtures with printed text) against >= {rubric_stats['threshold']:.1f} · "
+                f"scored by {rubric_meta['scorer']} on {rubric_meta['scored_at']}, rubric "
+                f"{rubric_meta['rubric_version']} · per case: {per_case} · scores file: "
+                "evals/fixtures/prettify/rubric_scores.json (committed) · it measures whether "
+                "text was INVENTED, not whether the protect region was invaded (that is "
+                "protect_overlap_px, a unit test) and not whether a logo went missing · one "
+                "scorer, one day: not inter-rater reliability"
+            ),
+        )
     return measured, notes
 
 
