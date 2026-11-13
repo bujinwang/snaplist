@@ -95,8 +95,8 @@ def default_handler(job: JobRecord, repository: Repository) -> None:
     stage, ticket = UNIMPLEMENTED_STAGE[job.kind]
     raise PipelineUnavailable(
         f"kind={job.kind.value} cannot run: {stage} is not implemented "
-        f"(docs/PLAN.md ticket {ticket}); photo bytes are not persisted yet either "
-        "(signed upload is still 501, E5-T4)"
+        f"(docs/PLAN.md ticket {ticket}); the signed upload path is real (E5-T4), "
+        "but no pipeline stage consumes the bytes yet"
     )
 
 
