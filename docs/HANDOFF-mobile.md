@@ -73,22 +73,38 @@ $ cd apps/mobile && npx tsc --noEmit
 ```
 
 ```
-$ npx expo export --platform ios --output-dir /tmp/sn-metro-after
-Starting Metro Bundler
-iOS Bundled 5091ms index.ts (623 modules)
+$ npx expo export --platform ios --output-dir /tmp/sn-final-ios --clear
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+iOS Bundled 35515ms index.ts (628 modules)
 
 Exporting , bundle, for ,: 1  ios
-_expo/static/js/ios/index-bf638c1f8984ddde44320a3a387abd56.hbc (,) 2.15 MB
+_expo/static/js/ios/index-aea7da23080eb6aad310f81924a955a8.hbc (,) 2.17 MB
 
 Exporting , file,: 1
 metadata.json (,) 142 B
 
-App exported to: /tmp/sn-metro-after
+App exported to: /tmp/sn-final-ios
 ```
 
-Before the `metro.config.js` resolver fix the same command failed at 555 modules with
-`Unable to resolve module @supabase/functions-js`. The earlier 573-module figure predates the
-static supabase import.
+```
+$ npx expo export --platform web --output-dir /tmp/sn-final-web --clear
+Web Bundled 29149ms index.ts (254 modules)
+
+Exporting , bundle, for ,: 1  web
+_expo/static/js/web/index-1ab08a085640f88bc100dd4fcaa4fd32.js (,) 647 kB
+
+Exporting , file,: 2 s
+index.html (,) 1.18 kB
+metadata.json (,) 49 B
+
+App exported to: /tmp/sn-final-web
+```
+
+Both are measured with `--clear`, i.e. from a cold cache — a warm-cache web run reports
+242 modules for the same 647 kB bundle, so quote the cold figure or the count will not
+reproduce. Before the `metro.config.js` resolver fix the iOS command failed at 555 modules
+with `Unable to resolve module @supabase/functions-js`; the older 573-module / 1.57 MB
+figures predate both the static supabase import and expo-file-system.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
@@ -113,7 +129,7 @@ static supabase import.
 
 1. E6 is built end-to-end in mock mode: Capture → Review/Attributes → On-model → Export, plus Drafts.
 2. `tsc --noEmit` is clean; no `any` in the app.
-3. `expo export --platform ios` succeeds (623 modules, 2.15 MB bundle).
+3. `expo export` succeeds for iOS (628 modules, 2.17 MB) and web (254 modules, 647 kB).
 4. Every screen renders with mock data when `API_BASE` is unset.
 5. All frozen analytics events are emitted from the screen that owns them.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.
