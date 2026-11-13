@@ -30,13 +30,13 @@
  *     worst loses the newest snapshot; the previous document stays intact.
  *   - iOS deletes the target and then renames the temporary file onto it, as two
  *     steps. A crash between them leaves the target deleted and the new snapshot
- *     still sitting in `<file>.tmp` — so neither the old nor the new document is at
- *     the path a reader looks at. The read path does not promote that leftover yet
- *     (a known gap, tracked as an E6-T5 follow-up), so in that window the queue can
- *     read back empty.
+ *     still sitting in `<file>.tmp`. The read path recovers exactly that case: when
+ *     no document exists at the target it reads the fixed `<file>.tmp` name instead,
+ *     in memory only, and returns it if it is a well-formed snapshot. So the window
+ *     costs a save-and-reload round trip, not the photo.
  *
- * Staged, then — not atomic on both platforms, and on iOS the window can cost more
- * than the newest snapshot.
+ * Staged, then — not atomic on both platforms; the iOS window is closed on the read
+ * side rather than by the write being atomic.
  *
  * Saves are serialized onto a module-level promise chain, so concurrent callers
  * cannot interleave inside the shared `.tmp` path and the last call's payload is
@@ -45,8 +45,9 @@
  * The two backends are mutually exclusive, not complementary: a native build has
  * the file system and no `localStorage`, web has `localStorage` and no
  * `documentDirectory`. So a failed file-system write is not "recovered" by
- * `localStorage` — the previous document simply stays on disk and the next launch
- * reads that older snapshot. The staged write is what keeps it readable.
+ * `localStorage` — it is recovered, if at all, from whatever staging left on disk:
+ * the previous document, or the `.tmp` holding the snapshot the failed move never
+ * renamed. Both are read back by the loader below.
  *
  * Why a single JSON document and not SQLite: the queue is one ordered array that
  * is read once on mount and rewritten whole on every mutation, so a schema, a
@@ -99,6 +100,21 @@ function isDraftArray(value: unknown): value is DraftItem[] {
 }
 
 /**
+ * Reads one document and returns it only if it is a well-formed draft snapshot.
+ *
+ * Returns null when the bytes parse but are not a draft array, so the caller can
+ * fall through to the next candidate; a parse failure throws and is caught by the
+ * caller. Both read sites below share this one path so their validation cannot
+ * drift apart — two copies of "parse, check, return" is how one of them ends up
+ * missing a check.
+ */
+async function readDraftSnapshot(filePath: string): Promise<DraftItem[] | null> {
+  const raw = await FileSystem.readAsStringAsync(filePath);
+  const parsed: unknown = JSON.parse(raw);
+  return isDraftArray(parsed) ? parsed : null;
+}
+
+/**
  * Loads the persisted draft queue.
  *
  * Tries the file system, then `localStorage`; the first backend that yields a
@@ -127,9 +143,28 @@ export async function loadDraftItems(): Promise<DraftItem[]> {
     try {
       const info = await FileSystem.getInfoAsync(path);
       if (info.exists) {
-        const raw = await FileSystem.readAsStringAsync(path);
-        const parsed: unknown = JSON.parse(raw);
-        if (isDraftArray(parsed)) return parsed;
+        const snapshot = await readDraftSnapshot(path);
+        if (snapshot) return snapshot;
+        // The target exists but is unusable. The `.tmp` is deliberately NOT consulted
+        // here: a leftover belongs to some failed write and can predate the target, so
+        // promoting it would resurrect a stale snapshot — and would also hide "the
+        // document is corrupt" from every caller upstream. Fall through instead.
+      } else {
+        // No document at the target. On iOS the move is remove-then-rename, so a crash
+        // between the two leaves the newest snapshot in `<path>.tmp` and nothing at the
+        // target; without this the queue reads back empty and, on native, that snapshot
+        // is simply gone. Only the fixed `.tmp` name is considered — same name `persist`
+        // writes — so there is no "which temporary file is newest" question to get wrong.
+        //
+        // The promotion is in memory only: the file is read, never moved, renamed,
+        // deleted or written back. It stays on disk until the next successful save
+        // consumes it, which is also what keeps a failed promotion free of side effects.
+        const tmpPath = `${path}.tmp`;
+        const tmpInfo = await FileSystem.getInfoAsync(tmpPath);
+        if (tmpInfo.exists) {
+          const promoted = await readDraftSnapshot(tmpPath);
+          if (promoted) return promoted;
+        }
       }
     } catch {
       // corrupt or unreadable — fall through to other backends
@@ -182,9 +217,10 @@ async function persist(payload: string): Promise<void> {
       // this comment claimed more than the code delivers. Android: the failed rename
       // leaves the previous document intact, so falling through is right. iOS: if the
       // delete inside `moveAsync` succeeded and the rename did not, the previous
-      // document is already gone and only `<path>.tmp` holds anything — and the read
-      // path does not promote that leftover yet. What staging does guarantee on both
-      // is that the target was never half-written. Fall through.
+      // document is already gone and only `<path>.tmp` holds anything — which the read
+      // path does recover, but only while nothing exists at the target. What staging
+      // guarantees on both platforms is that the target was never half-written. Fall
+      // through.
     }
   }
 
@@ -219,9 +255,10 @@ async function persist(payload: string): Promise<void> {
  * native build has the file system and no `localStorage`, web has `localStorage` and
  * no `documentDirectory`. `persist` still walks them in sequence, so a file-system
  * failure does fall through and attempt `localStorage` — that attempt simply never
- * succeeds on native, where there is no `localStorage` to write to. On a device,
- * therefore, a failed file-system write leaves the previous document as the only
- * readable snapshot, and the next launch reads that older one.
+ * succeeds on native, where there is no `localStorage` to write to. What a device
+ * reads back after a failed write therefore depends on whether the target survived
+ * it: on Android the previous document is still there and is read, on iOS only
+ * `<path>.tmp` remains and the read path promotes that.
  *
  * Were a platform ever to have both backends, the new payload would land in
  * `localStorage` while the file stayed authoritative for reads — `loadDraftItems`
