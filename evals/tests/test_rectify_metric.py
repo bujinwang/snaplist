@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import ast
 import inspect
+import io
 import json
 import textwrap
 from dataclasses import replace
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from evals.metrics import rectify as metric
 from evals.metrics.ssim import luminance, ssim_map, weighted_mean
@@ -632,6 +634,70 @@ def test_the_corner_tolerance_kills_a_four_pixel_quad_inset(synthetic) -> None:
     )
 
 
+def _case_inputs(case_id: str) -> tuple[np.ndarray, np.ndarray, str, object, tuple[int, int]]:
+    """Decode a real fixture case and run the stage once: photo, alpha, category, result, canvas."""
+    manifest = json.loads(
+        (metric.DEFAULT_FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8")
+    )
+    entry = next(item for item in manifest["cases"] if item["id"] == case_id)
+    inputs = entry["source"]["rectify_inputs"]
+    photo_path = metric.ROOT / inputs["photo"]
+    alpha_path = metric.ROOT / inputs["alpha"]
+    photo = metric._decode_photo(photo_path.read_bytes(), photo_path)
+    alpha = metric._decode_alpha(alpha_path.read_bytes(), alpha_path)
+    result = stage.rectify(photo_path.read_bytes(), alpha_path.read_bytes(), inputs["category"])
+    return photo, alpha, inputs["category"], result, metric.canonical_size(inputs["category"])
+
+
+def _scatter_score(case_id: str, share: float):
+    """Score one case after scattering `share` of its garment grey in the canvas frame."""
+    photo, alpha, category, result, canvas = _case_inputs(case_id)
+    with Image.open(io.BytesIO(result.flat_png)) as opened:
+        flat = np.array(opened.convert("RGB"), dtype=np.uint8)
+    _reference, matte = metric.reference_render(photo, alpha, result.homography, canvas)
+    painted = ctl.scatter_repaint(flat, matte, share)
+    return metric.score_output(
+        photo, alpha, category, ctl.encode_rgb(painted), result.homography
+    )
+
+
+def test_the_threshold_tolerance_is_not_a_percentage() -> None:
+    """What `>= 0.85` tolerates is not a number of percent — it is a spatial distribution.
+
+    Reproduces the table in `evals/metrics/rectify.py::THRESHOLD_SEMANTICS`, measured in the
+    **canvas frame** (the frame that is scored) through `rectify_controls.scatter_repaint()`,
+    which writes down the seed and the mask rule. The first version of this claim was measured
+    from a *source* frame scatter, where the `1920x1280 -> 1200x960` downsample averaged the
+    speckle away; it said "~10 % still passes" and could not be reproduced from its own
+    description. This test is the fix: the numbers are executed, not quoted.
+
+    `logo-02` survives 5 % and fails at 7 %; `logo-01` fails at 2 % with 0.6488. Both directions
+    matter — the second is what stops anyone from writing "the 0.85 floor allows ~5 %".
+    """
+    table: dict[str, float] = {}
+    for share in (0.02, 0.05, 0.07, 0.10):
+        scored = _scatter_score("logo-02-breeches-waistband", share)
+        table[f"logo-02 {share:.0%}"] = scored.ssim_weighted
+        if share <= 0.05:
+            assert scored.passes_dod is True, (share, scored.ssim_weighted)
+        else:
+            assert scored.passes_dod is False, (share, scored.ssim_weighted)
+
+    assert table["logo-02 5%"] == pytest.approx(0.8796, abs=2e-3), table
+    assert table["logo-02 7%"] == pytest.approx(0.8492, abs=2e-3), table
+    assert table["logo-02 7%"] < metric.DOD_MIN_SSIM < table["logo-02 5%"], table
+
+    for case_id, expected in (("logo-01-tee-chest", 0.6488), ("logo-05-jacket-emblem", 0.8060)):
+        scored = _scatter_score(case_id, 0.02)
+        table[f"{case_id} 2%"] = scored.ssim_weighted
+        assert scored.passes_dod is False, (case_id, scored.ssim_weighted)
+        assert scored.ssim_weighted == pytest.approx(expected, abs=2e-3), (
+            case_id,
+            scored.ssim_weighted,
+        )
+    print(f"\nthreshold tolerance, canvas frame, seed 0: {table}")
+
+
 def test_D13_an_alpha_threshold_of_200_is_barely_visible() -> None:
     """D13 — the soft signal, measured, and it is *softer than the ADR expected*.
 
@@ -757,6 +823,11 @@ def test_the_harness_row_is_a_number_and_its_note_carries_the_caveats() -> None:
         "Proposed",
         "pending Bert",
         "NOT",
+        # the threshold semantics and the resampler ceiling travel with the number too
+        "agreement with Pillow's kernel",
+        "not proof that nothing was repainted",
+        "not a percentage",
+        "per-channel max|Δ| 33",
     ):
         assert required in note, f"the row's note lost {required!r}: {note}"
     assert notes and "machine-made alphas" in notes[0]
@@ -778,13 +849,20 @@ def test_the_render_carries_the_definition_and_the_limitations(measured) -> None
         "transport budget",
         "8-bit RGB",
         "not the gate",
-        # the two claims that measurement corrected the ADR on, pinned so they cannot be dropped
-        # back to the nicer-sounding versions (they were once "smoothing can gain points", which
-        # is false: blurring only lowers the score, measured 0.9694 -> 0.9172 -> 0.6727 -> 0.5250)
+        # the claims measurement forced onto the artifact, pinned so they cannot quietly revert
+        # to the nicer-sounding versions: "smoothing can gain points" was FALSE (blurring only
+        # lowers the score, 0.9694 -> 0.9172 -> 0.6727 -> 0.5250) and "~10 % repaint still
+        # passes" came from a source-frame scatter the downsample averaged away
         "agreement with Pillow's kernel",
-        "not an absence of repainting",
-        "max|Δ| = 33",
-        "0.8758",
+        "not proof that nothing was repainted",
+        "not a percentage",
+        "per-channel `max|Δ| = 33`",
+        "luminance `max|Δ| = 32`",
+        # the canvas-frame tolerance table, structurally: the numbers in it are executed by
+        # test_the_threshold_tolerance_is_not_a_percentage, not quoted from here
+        "logo-02-breeches-waistband",
+        "0.8492 **fails**",
+        "0.6488 **fails**",
     ):
         assert required in report, f"the report lost {required!r}"
     assert report.count("|") > 0

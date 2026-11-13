@@ -386,7 +386,8 @@ expected to be **1 level**, not 0. That ±1 is the noise floor of this metric an
 > **antialiasing** resampler — the same resampling machinery as `Image.resize`, not a 2-tap
 > bilinear — so the disagreement between `Ref` and a numpy bilinear scales with the local
 > magnification. Measured on `logo-02-breeches-waistband` (`bottom-03`, 960×1200 canvas), inside
-> the warped mask: **`max|Δ| = 33`, `mean|Δ| = 2.47`, 99.9th percentile `= 16`** 8-bit levels.
+> the warped matte (`>= 0.5`), 8-bit levels: **per-channel `max|Δ| = 33`, luminance
+> `max|Δ| = 32`, luminance `mean|Δ| = 2.47`**, 99.9th percentile `= 16`.
 > `max|Δ| ≤ 1` holds **only where the map is 1:1**: 0 on an identity checkerboard, 1 level on a
 > sub-pixel translation — which is why the identity milestone below passes while the corpus sits
 > at 0.9790 mean / 0.9539 worst rather than ≈0.999. What Part A therefore rewards is **agreement
@@ -397,11 +398,14 @@ expected to be **1 level**, not 0. That ±1 is the noise floor of this metric an
 > filter, and if kernel agreement ever matters enough to fix, render *both* operands through the
 > same kernel and report that the number moved.
 >
-> **Also measured, and it belongs next to the `0.85` threshold:** the floor tolerates about 10 %
-> scattered destruction. Repainting 10 % of `logo-02`'s `alpha > 128` pixels (scattered, at
-> (128,128,128)) in the source and re-rectifying gives `0.9694 → 0.8758` and **`passes_dod` stays
-> True**. `passes_dod` means "at most ~15 % of the garment's structure was replaced or
-> mis-transported, and the declared map and canvas conform" — never "nothing was repainted".
+> **Also measured, and it belongs next to the `0.85` threshold:** the floor tolerates no fixed
+> percentage — it depends on where the damage sits. In the **canvas frame** (the frame that is
+> scored), scattered `(128,128,128)`, seed 0, lossless PNG: `logo-02` survives 5 % (0.8796) and
+> fails at 7 % (0.8492), while `logo-01` fails at 2 % (**0.6488**) and `logo-05` at 2 % (0.8060).
+> `passes_dod` means "at most ~15 % of the garment's structure was replaced or mis-transported, and
+> the declared map and canvas conform" — never "nothing was repainted", and never "10 % is
+> allowed". (An earlier draft of this note claimed ~10 %; that number came from scattering in the
+> **source** frame, where the `1920×1280 → 1200×960` downsample averages the speckle away.)
 
 **Pixel-centre convention.** The one thing that can silently invalidate the whole design is a
 half-pixel disagreement between Pillow's `PERSPECTIVE` and the stage's inverse mapping: it would

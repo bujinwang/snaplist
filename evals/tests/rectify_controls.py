@@ -360,6 +360,44 @@ def blank_canvas(canvas: tuple[int, int]) -> np.ndarray:
     return np.broadcast_to(np.asarray(BACKDROP_RGB, np.uint8), (height, width, 3)).copy()
 
 
+def scatter_repaint(
+    flat: np.ndarray,
+    matte: np.ndarray,
+    share: float,
+    *,
+    seed: int = 0,
+    value: tuple[int, int, int] = (128, 128, 128),
+) -> np.ndarray:
+    """Paint `share` of the garment **in the canvas frame**, scattered, one pixel at a time.
+
+    This is the construction behind the tolerance table in `evals/metrics/rectify.py`
+    (`THRESHOLD_SEMANTICS`) and in the handoff, and it is here — in code, with the seed and the
+    mask rule written down — because the first version of that table was produced from a *source
+    frame* scatter and could not be reproduced from its own description. The source-frame version
+    is nearly useless as an argument: these photographs are downsampled (`1920x1280 -> 1200x960`),
+    so a scattered pixel in the source is averaged away by the warp and only ~0.2 % of it survives
+    as grey in the canvas. The canvas is the frame that is actually scored.
+
+    Fully specified so the numbers are reproducible: `matte >= 128/255` selects the pixels,
+    `numpy.random.default_rng(seed).choice(n, size=round(share*n), replace=False)` picks them,
+    they are set to `value`, and the caller encodes lossless PNG (`encode_rgb`).
+    """
+    if not 0.0 <= share <= 1.0:
+        raise ValueError(f"scatter_repaint: share must be in [0, 1], got {share}")
+    pixels = np.asarray(flat)
+    if pixels.ndim != 3 or pixels.shape[2] != 3:
+        raise ValueError(f"scatter_repaint: flat must be HxWx3, got {pixels.shape}")
+    selected = np.argwhere(np.asarray(matte) >= (128.0 / 255.0))
+    if selected.size == 0:
+        raise ValueError("scatter_repaint: the matte selects no pixels")
+    rng = np.random.default_rng(seed)
+    count = int(round(share * len(selected)))
+    picked = rng.choice(len(selected), size=count, replace=False)
+    painted = pixels.astype(np.uint8).copy()
+    painted[selected[picked, 0], selected[picked, 1]] = np.asarray(value, dtype=np.uint8)
+    return painted
+
+
 def repaint(case: ControlCase, share: float) -> np.ndarray:
     """D10: replace the leftmost `share` of the garment with its own mean colour.
 
@@ -397,6 +435,7 @@ __all__ = [
     "mirror",
     "noisy_texture",
     "repaint",
+    "scatter_repaint",
     "sample_grid",
     "scale",
     "solve_homography",

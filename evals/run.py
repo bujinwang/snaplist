@@ -451,7 +451,6 @@ def _measure_rectify() -> tuple[Measurement | None, list[str]]:
 
 
 def _measure_attrs() -> tuple[dict[str, Measurement] | None, list[str]]:
-
     """E3-T3: four accuracies read from the FROZEN predictions artifact. NEVER a network call.
 
     A missing or corrupt artifact returns `None` plus one note naming the collection command —

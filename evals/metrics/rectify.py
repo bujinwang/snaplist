@@ -58,7 +58,8 @@ the other:
 > itself carries.
 
 The budget runs the other way too, and `THRESHOLD_SEMANTICS` says it in the artifact: **`>= 0.85`
-does not mean nothing was repainted** — a 10 % scattered repaint still clears the floor. And
+does not mean nothing was repainted**, and there is no percentage behind it — in the canvas frame
+`logo-02` survives 5 % scattered repainting and fails at 7 %, while `logo-01` fails at 2 %. And
 `RESAMPLER_FLOOR` records what the ceiling is: ~0.98, because the reference is Pillow's
 antialiasing resampler while the stage point-samples a 2-tap bilinear. What Part A rewards is
 agreement with Pillow's kernel, **not** smoothness; blurring the output only lowers the score.
@@ -171,19 +172,25 @@ CANVAS_CAVEAT = (
 RESAMPLER_FLOOR = (
     "the achievable ceiling is ~0.98, not 1.0: Pillow's `transform` is the *antialiasing* "
     "resampler (the same machinery as `resize`), so the reference is smoother than the stage's "
-    "2-tap bilinear (logo-02: max|Δ| 33, mean 2.47, 99.9th pct 16 levels inside the mask; "
-    "ADR-011 §7's '±1 level' holds only at unit scale). What Part A rewards is **agreement with "
-    "Pillow's kernel, not smoothness** — a stage rendering through `Image.transform` itself "
-    "scores 1.0000 where the current one scores 0.9694, and blurring only lowers the score "
-    "(0.9694 -> 0.9172 -> 0.6727 -> 0.5250 at Gaussian radius 0.6 / 1.2 / 2.0)"
+    "2-tap bilinear — logo-02, inside the warped matte >= 0.5, 8-bit levels: per-channel "
+    "max|Δ| 33, luminance max|Δ| 32, luminance mean|Δ| 2.47, 99.9th pct 16 (ADR-011 §7's "
+    "'±1 level' holds only at unit scale). What Part A rewards is **agreement with Pillow's "
+    "kernel, not smoothness** — a stage rendering through `Image.transform` itself scores 1.0000 "
+    "where the current one scores 0.9694, and blurring only lowers the score (0.9694 -> 0.9172 "
+    "-> 0.6727 -> 0.5250 at Gaussian radius 0.6 / 1.2 / 2.0)"
 )
 
 # What `>= 0.85` actually buys. Measured, and the reason the row must not be read as "nothing
 # was repainted": a 10 % scattered repaint in the source still clears the floor.
 THRESHOLD_SEMANTICS = (
-    "`>= 0.85` is a transport budget, not an absence of repainting: repainting 10 % of logo-02's "
-    "`alpha > 128` pixels (scattered, at (128,128,128)) in the source and re-rectifying scores "
-    "0.8758 and **still passes**, so `passes_dod` does not mean 'nothing was repainted'"
+    "`>= 0.85` is a transport budget, not proof that nothing was repainted — and the tolerance "
+    "is **not a percentage**: it depends on where the damage sits and on the garment's local "
+    "structure. Measured in the canvas frame (the frame that is scored), scattered "
+    "(128,128,128) over the warped matte, seed 0, lossless PNG: logo-02 survives 5 % "
+    "(0.8796) and fails at 7 % (0.8492), while logo-01 fails at 2 % (0.6488) and logo-05 at "
+    "2 % (0.8060). An earlier version of this note said '~10 % still passes'; that came from "
+    "scattering in the SOURCE frame, where the 1920x1280 -> 1200x960 downsample averages the "
+    "speckle away, and it does not hold in the canvas"
 )
 
 
@@ -862,7 +869,8 @@ def render(
         "machinery as `Image.resize` — while the stage point-samples a 2-tap bilinear. ADR-011 "
         "§7 predicted a ±1 level floor and an achievable maximum of ≈0.999; **the measurement "
         "refutes both for any non-unit scale**. On `logo-02-breeches-waistband` inside the "
-        "warped mask: `max|Δ| = 33`, `mean|Δ| = 2.47`, 99.9th percentile `= 16` 8-bit levels. "
+        "warped matte (>= 0.5), in 8-bit levels: per-channel `max|Δ| = 33`, luminance "
+        "`max|Δ| = 32`, luminance `mean|Δ| = 2.47`, 99.9th percentile `= 16`. "
         "The ±1 figure holds only where the map is 1:1 (0 on an identity checkerboard, 1 level "
         "on a sub-pixel translation), which is why the identity control passes and the corpus "
         "sits at ~0.98.",
@@ -878,14 +886,26 @@ def render(
         "honest fix is to render both operands through the same kernel and say the number "
         "moved, not to change the stage.",
         "",
-        "**`>= 0.85` is a transport budget, not an absence of repainting.** Repainting 10 % of "
-        "`logo-02`'s `alpha > 128` pixels (scattered, at (128,128,128)) in the source and "
-        "re-rectifying scores `0.8758` and **still passes**. Because the floor sits ~0.13 below "
-        "the resampler floor, *scattered* destruction is cheap: a tenth of the garment can be "
-        "replaced and the row still reads green. `passes_dod` means \"at most ~15 % of the "
-        "garment's structure was replaced or mis-transported, and the declared map and the "
-        "canvas conform\" — never \"nothing was repainted\". E2-T1's stage has no generative "
-        "step at all, so this is the arithmetic of the threshold, not a hole this metric opened.",
+        "**`>= 0.85` is a transport budget, not proof that nothing was repainted — and the "
+        "tolerance is not a percentage.** It depends on where the damage sits and on the "
+        "garment's local structure. Measured in the **canvas frame** (the frame that is scored), "
+        "scattered `(128,128,128)`, seed 0, lossless PNG:",
+        "",
+        "| case | baseline | 2 % | 5 % | 7 % | 10 % |",
+        "|---|---|---|---|---|---|",
+        "| `logo-02-breeches-waistband` | 0.9694 | 0.9299 passes | 0.8796 passes | 0.8492 "
+        "**fails** | 0.8086 **fails** |",
+        "| `logo-01-tee-chest` | 0.9942 | 0.6488 **fails** | — | — | — |",
+        "| `logo-05-jacket-emblem` | 0.9962 | 0.8060 **fails** | — | — | — |",
+        "",
+        "So `passes_dod` means \"at most ~15 % of the garment's *structure* was replaced or "
+        "mis-transported, and the declared map and the canvas conform\" — never \"nothing was "
+        "repainted\", and never \"10 % is allowed\". Five per cent survives on one garment and "
+        "two per cent kills another. An earlier version of this note claimed '~10 % still "
+        "passes'; that number came from scattering in the **source** frame, where the "
+        "`1920x1280 -> 1200x960` downsample averages the speckle away and only ~0.22 % of the "
+        "canvas ends up grey. It does not hold. E2-T1's stage has no generative step at all, so "
+        "none of this is a hole the metric opened — it is the arithmetic of the threshold.",
         "",
         "**`weighted` and `binary` coincide on this fixture set** (gap 0.0000): the 9 alphas are "
         "algorithmic and hard-edged, so every pixel is 0 or 255 and the continuous weight "

@@ -788,9 +788,10 @@ mean |ΔL| where alpha >= 0.5: 2.282 levels · wall clock 2.43 s total / 0.270 s
    `Image.transform(PERSPECTIVE, BILINEAR)` is the *antialiasing* resampler (the same machinery
    as `Image.resize`), while the stage point-samples a 2-tap bilinear. ADR-011 §7 predicted a
    ±1 level floor and a ≈0.999 ceiling; **the measurement refutes both for any non-unit scale**.
-   Measured on `logo-02-breeches-waistband` inside the warped mask: **`max|Δ| = 33`,
-   `mean|Δ| = 2.47`, 99.9th percentile `= 16`** 8-bit levels. The ±1 figure holds only where the
-   map is 1:1 — `max|Δ| = 0` on an identity checkerboard, 1 level on a sub-pixel translation.
+   Measured on `logo-02-breeches-waistband` inside the warped matte (`>= 0.5`), 8-bit levels:
+   **per-channel `max|Δ| = 33`, luminance `max|Δ| = 32`, luminance `mean|Δ| = 2.47`**, 99.9th
+   percentile `= 16`. The ±1 figure holds only where the map is 1:1 — `max|Δ| = 0` on an
+   identity checkerboard, 1 level on a sub-pixel translation.
 2. **What that rewards is agreement with Pillow's kernel, not smoothness — and the difference
    matters.** Rendering the same photograph through `Image.transform` itself scores `1.0000` on
    `logo-02` against `0.9694` for the current 2-tap bilinear stage: the 0.03 is a filter
@@ -799,12 +800,25 @@ mean |ΔL| where alpha >= 0.5: 2.282 levels · wall clock 2.43 s total / 0.270 s
    0.8639` at Gaussian radius 0.6 / 1.2 / 2.0. So a future stage must **not** be written to
    imitate this reference's filter. If kernel agreement ever matters enough to fix, the honest
    fix is to render both operands through the same kernel and say the number moved.
-3. **`>= 0.85` tolerates ~10 % scattered repainting.** Repainting 10 % of `logo-02`'s
-   `alpha > 128` pixels (scattered, at (128,128,128)) in the source and re-rectifying moves the
-   score `0.9694 → 0.8758` and **`passes_dod` is still True**. That is the arithmetic of the
-   threshold, not a bug: `passes_dod` means "at most ~15 % of the garment's structure was
-   replaced or mis-transported, and the declared map and the canvas conform" — **never** "nothing
-   was repainted". E2-T1's stage has no generative step at all, so nothing here paints.
+3. **`>= 0.85` tolerates no fixed percentage — the tolerance depends on where the damage sits.**
+   Measured in the **canvas frame** (the frame that is scored), scattered `(128,128,128)`, seed 0,
+   lossless PNG:
+
+   | case | baseline | 2 % | 5 % | 7 % | 10 % |
+   |---|---|---|---|---|---|
+   | `logo-02-breeches-waistband` | 0.9694 | 0.9299 passes | 0.8796 passes | 0.8492 **fails** | 0.8086 **fails** |
+   | `logo-01-tee-chest` | 0.9942 | 0.6488 **fails** | — | — | — |
+   | `logo-05-jacket-emblem` | 0.9962 | 0.8060 **fails** | — | — | — |
+
+   So `passes_dod` means "at most ~15 % of the garment's *structure* was replaced or
+   mis-transported, and the declared map and the canvas conform" — **never** "nothing was
+   repainted", and never "10 % is allowed": five per cent survives on one garment, two per cent
+   kills another. **An earlier version of this section said "~10 % scattered repaint still
+   passes" and that was wrong** — it came from scattering in the *source* frame, where the
+   `1920×1280 → 1200×960` downsample averages the speckle away and only ~0.22 % of the canvas
+   ends up grey. `evals/tests/test_rectify_metric.py::test_the_threshold_tolerance_is_not_a_
+   percentage` reproduces this table from `rectify_controls.scatter_repaint()` (seed and mask
+   rule written down), so the claim is executable rather than quoted.
 4. **It cannot see quad quality.** `H` comes from the alpha bounding box, so a wrong mask means
    a wrong bbox, and a warp that crops or stretches the garment passes all three checks. There
    is no ground-truth quad on disk for any of the 9 photos: this verifies that the `alpha_bbox`
