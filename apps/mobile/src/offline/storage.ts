@@ -96,10 +96,24 @@ function isDraftArray(value: unknown): value is DraftItem[] {
  * structurally valid draft array wins. A corrupt or unreadable payload is
  * skipped rather than thrown — a launch must never be blocked by bad bytes.
  *
+ * A failed path lookup is treated as "this platform has no file backend": the
+ * read continues to `localStorage` and, if that has nothing, returns an empty
+ * array. Resolving the path can throw when the native module is not linked, and
+ * this runs on the launch path (`DraftsProvider` awaits it on mount), so it must
+ * not be able to reject.
+ *
  * @returns The persisted drafts, or an empty array when nothing is stored.
  */
 export async function loadDraftItems(): Promise<DraftItem[]> {
-  const path = getDraftFilePath();
+  // The lookup is guarded on its own, not folded into the read/parse try below:
+  // if it throws there is no document to talk about, so that catch's reasoning
+  // ("corrupt or unreadable") would not apply. Same shape as persist().
+  let path: string | null = null;
+  try {
+    path = getDraftFilePath();
+  } catch {
+    // no file backend on this platform
+  }
   if (path) {
     try {
       const info = await FileSystem.getInfoAsync(path);
