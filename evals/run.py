@@ -392,8 +392,9 @@ def _measure_rectify() -> tuple[Measurement | None, list[str]]:
 
     Two things the note must carry and this docstring must not hide: the metric cannot see quad
     quality (H comes from the alpha bounding box, so a wrong mask is invisible to it) and there
-    is no ground-truth quad on disk for any of the 9 photos; and ADR-011 is a **proposal** — its
-    restatement of the DoD is not adjudicated, so this row is evidence, not an approved gate.
+    is no ground-truth quad on disk for any of the 9 photos; and ADR-011 was **accepted by Bert
+    on 2026-11-12** (keep 0.85 gate) — its restatement of the DoD is now adjudicated, so this row
+    is scored against an approved gate.
     """
     manifest = RECTIFY_FIXTURES / "manifest.json"
     if not manifest.is_file():
@@ -431,7 +432,7 @@ def _measure_rectify() -> tuple[Measurement | None, list[str]]:
         "tolerance, det(H) > 0), B2 pins the canvas (transcribed aspect table, long edge <= "
         f"{rectify_metric.MAX_LONG_EDGE_PX} px, 8-bit RGB, no alpha band) · "
         f"{rectify_metric.RESAMPLER_FLOOR} · {rectify_metric.THRESHOLD_SEMANTICS} · "
-        f"{rectify_metric.CAPABILITY_LIMITS} · {rectify_metric.PROPOSAL_STATUS} · per-case "
+        f"{rectify_metric.CAPABILITY_LIMITS} · {rectify_metric.ADR_011_STATUS} · per-case "
         "evidence: evals/reports/rectify.md (`python -m evals.metrics.rectify`)"
     )
     notes = [

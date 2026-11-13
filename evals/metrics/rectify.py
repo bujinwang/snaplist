@@ -70,10 +70,11 @@ visible rather than hidden. The gate uses the weighted value; the binary value i
 
 ## Status
 
-ADR-011 is `Proposed — pending Bert's review`. Its restatement of E2-T1's DoD sentence is **not
-adjudicated**; `docs/PLAN.md` still says "versus the source". The row prints a number because a
-number is what the harness is for, and this module's note says — in the artifact, not only in a
-commit message — that the criterion it is scored against is a proposal.
+ADR-011 was **accepted by Bert on 2026-11-12** (the `0.85` transport-SSIM gate is kept). Its
+restatement of E2-T1's DoD sentence is now the ratified reading; `docs/PLAN.md` still carries the
+original "versus the source" wording, which has no literal reading for a geometric stage, so the
+ADR's re-anchoring is the operative definition. The row prints a number and is now scored against
+an **approved gate**, stated in the artifact, not only in a commit message.
 """
 
 from __future__ import annotations
@@ -155,9 +156,10 @@ CAPABILITY_LIMITS = (
     "followed, not that the convention is right"
 )
 
-PROPOSAL_STATUS = (
-    "ADR-011 is `Proposed — pending Bert's review`: its restatement of E2-T1's DoD is NOT "
-    "adjudicated, so this row is evidence toward a proposed criterion, not an approved gate"
+ADR_011_STATUS = (
+    "ADR-011 was accepted by Bert on 2026-11-12 (keep 0.85 transport-SSIM gate): its "
+    "restatement of E2-T1's DoD is now adjudicated, so this row is scored against an approved "
+    "gate, not pending evidence"
 )
 
 CANVAS_CAVEAT = (
@@ -860,7 +862,7 @@ def render(
         "",
         f"**Defined by:** {DEFINITION_SOURCE}.",
         "",
-        f"**Status:** {PROPOSAL_STATUS}.",
+        f"**Status:** {ADR_011_STATUS}.",
         "",
         f"**{CAPABILITY_LIMITS}**.",
         "",

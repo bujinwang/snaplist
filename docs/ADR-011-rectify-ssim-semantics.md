@@ -1,13 +1,15 @@
 # ADR-011 — what `rectify SSIM (inside mask)` measures
 
-**Date:** 2026-11-12 · **Status:** `Proposed — pending Bert's review` · **Ticket:** E2-T1 ·
+**Date:** 2026-11-12 · **Status:** `Accepted — Bert ruling 2026-11-12 (keep 0.85 transport-SSIM gate)` · **Ticket:** E2-T1 ·
 **Supersedes:** nothing · **Changes:** the *meaning* of one `docs/PLAN.md` DoD sentence, not any
 threshold, not any binary, not any test that is currently green.
 
-> This ADR is a proposal. Nothing here is adjudicated. Until Bert rules, the harness row
-> `rectify SSIM (inside mask)` stays `UNMEASURED` and **E2-T1's DoD is UNMET** — that is a
-> statement about a missing definition, not about the implementation, which is finished and
-> passes its own 1e-9 geometry tests.
+> **Accepted, 2026-11-12 (Bert ruling).** Bert adopted the rephrased DoD — transport SSIM against
+> an independently re-rendered reference under the homography the stage declared, plus exact
+> corner/canvas conformance — and kept the `0.85` gate. The harness row `rectify SSIM (inside
+> mask)` is now an **approved gate**, not pending evidence. The implementation was already finished
+> and passes its own 1e-9 geometry tests; the only missing piece was the definition, which this
+> ADR supplies.
 
 ---
 
@@ -431,14 +433,15 @@ the comparison was at half resolution.
 
 ## 8. Not clear, and what I assumed
 
-**Q1 — does Bert accept a restatement, or does the row get deleted?** I am assuming the DoD
-sentence is *intent*, not *formula*, and that "SSIM ≥ 0.85 inside the mask" may be re-anchored
-from "versus the source" to "versus the reference under the declared homography", with the two
-conformance checks added as part of the same gate. If he rejects the re-anchoring, the fallback
-is: keep the row `UNMEASURED` **permanently** with the reason "a geometric stage has no honest
-SSIM-vs-source reading", and re-specify E2-T1's DoD in PLAN around conformance + a difference
-metric to be named later. That is worse for the epic and better than a gate that cannot fail; I
-would rather be told which one he wants.
+**Q1 — does Bert accept a restatement, or does the row get deleted?** — **ANSWERED 2026-11-12:
+Bert accepted the re-anchoring and kept the `0.85` gate** (see Status). The permanent `UNMEASURED`
+fallback is therefore moot. I was assuming the DoD sentence is *intent*, not *formula*, and that
+"SSIM ≥ 0.85 inside the mask" may be re-anchored from "versus the source" to "versus the
+reference under the declared homography", with the two conformance checks added as part of the
+same gate. If he rejects the re-anchoring, the fallback is: keep the row `UNMEASURED`
+**permanently** with the reason "a geometric stage has no honest SSIM-vs-source reading", and
+re-specify E2-T1's DoD in PLAN around conformance + a difference metric to be named later. That is
+worse for the epic and better than a gate that cannot fail; I would rather be told which one he wants.
 
 **Q2 — the contact shadow.** The ticket *title* asks for "quad estimate, homography, `#F2F1EE`
 backdrop, contact shadow"; the DoD does not mention it; the module sets

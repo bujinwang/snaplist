@@ -829,13 +829,12 @@ fixture set (gap 0.0000) because the 9 alphas are hard-edged algorithm masks, ev
 255. ADR-011 §2.2's argument for alpha weighting is therefore *not exercised* by these fixtures,
 and D13's weighted-vs-binary signal is inert here.
 
-**Status of the criterion: `ADR-011` is `Proposed — pending Bert's review`, and its restatement
-of E2-T1's DoD is NOT adjudicated.** `docs/PLAN.md` still says "SSIM ≥ 0.85 inside the mask
-versus the source", which has no literal reading for a geometric stage; the ADR asks Bert
-(§8 Q1) whether the re-anchoring to "versus an independently re-rendered reference under the
-declared map, plus two conformance checks" is acceptable, or whether the row should stay
-`UNMEASURED` permanently with the reason named. **Nothing in `docs/PLAN.md` was edited** — that
-file is the lead's, and it waits on that ruling.
+**Status of the criterion: `ADR-011` was accepted by Bert on 2026-11-12 (keep 0.85 gate), and its
+re-anchoring of E2-T1's DoD is now adjudicated.** `docs/PLAN.md` still carries the original
+"SSIM ≥ 0.85 inside the mask versus the source" wording, which has no literal reading for a
+geometric stage, so the ADR's re-anchoring is the operative definition; `docs/PLAN.md` was not
+reworded (the lead's file) because the ADR is now the authoritative reading. **Nothing in
+`docs/PLAN.md` was edited** — that file is the lead's, and the ruling is recorded here and in the ADR.
 
 ## `python -m evals.metrics.prettify` — per case
 

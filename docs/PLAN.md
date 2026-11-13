@@ -416,8 +416,8 @@ none).
 > **The DoD sentence itself is under review, not corrected here.** "SSIM versus the source" has
 > no literal reading for a geometric transform; `docs/ADR-011-rectify-ssim-semantics.md`
 > proposes a two-part reading (transport SSIM against an independently re-rendered reference,
-> plus exact corner/canvas conformance) and is **`Proposed — pending Bert's review`**. Until
-> that ruling, the harness row is evidence with a stated definition, **not a ratified gate**.
+> plus exact corner/canvas conformance) and was **accepted by Bert on 2026-11-12** (the `0.85`
+> gate is kept). The harness row is now a **ratified gate**, not pending evidence.
 
 **E2-T2 acceptance**
 ```bash
