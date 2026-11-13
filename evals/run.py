@@ -15,19 +15,21 @@ The four attribute rows are deliberately read from a FROZEN artifact
 those four rows are `UNMEASURED` with the collection command named in the reason. The dedupe
 row needs no such artifact — its fixtures ship with the repo and are scored locally.
 
-**`--gate` and `--allow-inconclusive` are PARSED BUT NOT IMPLEMENTED.** They exist so the
-Makefile targets (`make evals`, `make evals-strict`) have a stable interface, and so nobody
-mistakes a green exit for a passing gate. The real gate — four exit codes, the nearest-rank
-percentile, the per-item `tool_time` summation, the single `excluded_rate > 0.20` guard — is
-docs/PLAN.md ticket **E0-T5**, and that ticket owns every line of it. Do not implement bits of
-it here in passing: a half-built gate is worse than a clearly absent one, because the exit code
-starts looking trustworthy before the arithmetic is right. That is also why a measured row does
-**not** turn into an exit code: the banner says `n=17 measured, but the gate itself is E0-T5`.
+**`--gate` and `--allow-inconclusive` are PARSED BUT NOT IMPLEMENTED in this runner.** They
+exist so the Makefile targets (`make evals`, `make evals-strict`) have a stable interface, and so
+nobody mistakes a green exit for a passing gate. The real gate — four exit codes, the nearest-rank
+percentile, the per-item `tool_time` summation, the single `excluded_rate > 0.20` guard — lives in
+**`evals/telemetry`** (E0-T5, `python -m evals.telemetry --gate`), and that module owns every line
+of it. Do not implement bits of it here in passing: a half-built gate is worse than a clearly
+absent one, because the exit code starts looking trustworthy before the arithmetic is right. That
+is also why a measured row does **not** turn into an exit code: the banner says
+`n=17 measured, but the gate itself is E0-T5`.
 
 Current behaviour:
 
     --suite X                       report only: prints the table, exit 0, no banner
-    --suite X --gate                RELEASE gate: refuses, exit 2 (the gate does not exist)
+    --suite X --gate                RELEASE gate: refuses, exit 2
+                                    (this runner has no gate; see `evals/telemetry --gate`)
     --suite X --allow-inconclusive  dev gate: prints the table, then the banner
                                     `GATE NOT EVALUATED — …`. This is NOT a pass.`, exit 0
 
@@ -563,7 +565,8 @@ def _measure_dedupe() -> tuple[Measurement | None, list[str]]:
 GATE_NOT_EVALUATED_BANNER = "GATE NOT EVALUATED — n=0. This is NOT a pass."
 
 RELEASE_GATE_REFUSAL = (
-    "RELEASE GATE NOT AVAILABLE — E0-T5 is not implemented yet (docs/PLAN.md).\n"
+    "RELEASE GATE NOT AVAILABLE in evals.run — the release gate is "
+    "`python -m evals.telemetry --gate` (E0-T5; `make evals-strict`), not this runner.\n"
     "Refusing to report a release-ready pipeline that nobody has measured."
 )
 
