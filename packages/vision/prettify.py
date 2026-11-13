@@ -25,6 +25,15 @@ executed for real:
      that "outside the feathered mask, the output is the white-balanced input" is true by
      construction rather than by observation.
 
+**Status (2026-11-12, Bert ruling).** The product path is `mode=CLASSICAL` and it meets E2-T2's
+DoD (`prettify SSIM (inside mask)` = 0.9936, n=9; logo protect overlap 0 px on 5 fixtures;
+`PASS_THROUGH` reported honestly). `mode=SDXL_INPAINT` is implemented, deterministic, protected
+and timed but **UNMEETABLE on the product path** — it scores 0.6920 / 0.7415 against the
+required ≥ 0.80, runs ~2× over the E0-T5 latency gate (38.3 / 42.5 s warm), and turns creases
+into scratch lines (HANDOFF-vision.md §9). It stays in the code as a not-shippable option; the
+only path to making it useful is a follow-up crease→region detector ticket. `mode=PASS_THROUGH`
+is the byte-identical no-op.
+
 Both model paths (this one and `segment.py`) refuse rather than fetch: a pipeline stage that
 downloads 7 GB on first call is a network call inside a zero-network contract, and it turns a
 missing file into a ten-minute stall inside a job.

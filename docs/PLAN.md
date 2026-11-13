@@ -429,6 +429,20 @@ DoD: SSIM ≥ 0.80 inside the mask; the inpaint mask never overlaps the logo/tex
 (unit test on 5 logo fixtures); `PrettifyMode.PASS_THROUGH` is reported honestly when the
 generative step is skipped.
 
+> **Correction, 2026-11-12 — verdict, not just acceptance.** Round 2 built `mode=SDXL_INPAINT`
+> and measured it (HANDOFF-vision.md §9); it is **UNMEETABLE on the product path**: `prettify
+> SSIM (inside mask)` = 0.6920 / 0.7415 vs the required ≥ 0.80 (classical scores 0.9856 /
+> 0.9792 on the same two); warm latency 38.3 / 42.5 s vs the E0-T5 p50 ≤ 20 s gate (~2×); and
+> the crease returns as a hard blue-grey scratch line — SDXL's VAE 8× downsamples the 1–3 px
+> wrinkle mask to 0.25–0.75 latent pixels the UNet cannot represent. **SDXL inpainting is the
+> wrong tool for a crease *network*; it wants a region (stain / hole / object), not hairlines.**
+> Per Bert's ruling (2026-11-12), the product ships `mode=CLASSICAL` (white balance + shadow
+> attenuation + composite), which meets the DoD — `prettify SSIM` = 0.9936 (n=9), logo protect
+> overlap 0 px on 5 fixtures, `PASS_THROUGH` reported honestly. `mode=SDXL_INPAINT` stays
+> implemented, deterministic, protected and documented as **not for the product path**; a
+> follow-up ticket (crease→region detector + coverage budget) is the only thing that could make
+> it useful. The generative mode is recorded as UNMEETABLE, never as a passing number.
+
 **E2-T3 acceptance**: `cat evals/reports/prettify.md` — 5 manual rubric scores with the image
 paths they were scored on. DoD: rubric ≥ 4/5 mean, and the report lists every failure, not just
 the average.
