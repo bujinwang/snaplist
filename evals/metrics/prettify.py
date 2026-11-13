@@ -38,14 +38,22 @@ failure the DoD forbids, so every row also reports, from the *same* mask the fil
   material supports: catalogue photography is pressed, so crease *recall* cannot be measured
   on it (see `evals/fixtures/prettify/README.md`).
 
-## SSIM is implemented here, not imported
+## SSIM lives next door, and is re-exported from here
 
 `scikit-image` is not a dependency (`docs/DEPS.md`) and adding it for one metric would put a
-15 MB wheel behind a number the harness must be able to print on a cold machine. The
-implementation below is the standard Wang et al. formulation with an 11×11 uniform window and
-`C1 = (0.01·L)²`, `C2 = (0.03·L)²` on 8-bit data — the same constants everyone quotes, so the
-number is comparable with the literature. Window means come from integral images, so it is
-exact (no truncated-kernel edge bias) and fast.
+15 MB wheel behind a number the harness must be able to print on a cold machine. The Wang et
+al. implementation — 11×11 uniform window, `C1 = (0.01·L)²`, `C2 = (0.03·L)²`, integral-image
+window means — now lives in `evals/metrics/ssim.py`, because `evals/metrics/rectify.py` needs
+the same `ssim_map` for ADR-011's alpha-weighted region and the two metrics must not drift
+apart. Every name this module used to define (`SSIM_*`, `ssim_map`, `ssim_inside_mask`,
+`_luminance`) is re-exported below unchanged, so callers and
+`evals/tests/test_prettify_metric.py` import exactly what they always did. **The move changed
+no number**: `mean SSIM (n=9) = 0.9936` before the extraction and after it.
+
+The region rule in *this* file stays boolean (`alpha >= 128`) on purpose. ADR-011 §2.2 argues
+that the rectify number must be alpha-*weighted* instead; the two rules differ because they
+make different claims, and `ssim.py` keeps both functions side by side so that claim is
+checkable rather than tribal.
 """
 
 from __future__ import annotations
@@ -60,6 +68,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from evals.metrics.ssim import (
+    SSIM_DATA_RANGE,
+    SSIM_K1,
+    SSIM_K2,
+    SSIM_WINDOW,
+    _luminance,
+    ssim_inside_mask,
+    ssim_map,
+)
 from packages.vision.prettify import (
     WRINKLE_COVERAGE_CAP,
     PrettifyBackendUnavailable,
@@ -68,87 +85,31 @@ from packages.vision.prettify import (
 )
 from packages.vision.types import PrettifyMode
 
+# The seven names above are **re-exports**, not imports: `evals/metrics/ssim.py` was extracted
+# out of this module, and callers (including `evals/tests/test_prettify_metric.py`, whose import
+# block must keep working byte-for-byte) still write `from evals.metrics.prettify import
+# ssim_inside_mask`. `__all__` is what tells ruff these imports are the point of the module
+# rather than dead code, and it is why no `as`-alias dance is needed.
+__all__ = [
+    "DEFAULT_FIXTURE_DIR",
+    "SSIM_DATA_RANGE",
+    "SSIM_K1",
+    "SSIM_K2",
+    "SSIM_WINDOW",
+    "_luminance",
+    "main",
+    "render",
+    "run",
+    "ssim_inside_mask",
+    "ssim_map",
+    "summarise",
+]
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FIXTURE_DIR = ROOT / "evals" / "fixtures" / "prettify"
 
-SSIM_WINDOW = 11
-SSIM_K1 = 0.01
-SSIM_K2 = 0.03
-SSIM_DATA_RANGE = 255.0
-
-
-# ----------------------------------------------------------------------------------- SSIM
-
-
-def _box_mean(array: np.ndarray, radius: int) -> np.ndarray:
-    """Mean over a (2r+1)² window, edges replicated, by integral image.
-
-    Replicated edges (rather than `valid` cropping) keep the map the same size as the image so
-    the mask can select from it directly; with `valid` the reported region would silently
-    shrink by 5 px on every side, which is exactly the kind of quiet change of denominator
-    this harness exists to prevent.
-    """
-    padded = np.pad(array.astype(np.float64, copy=False), radius, mode="edge")
-    integral = np.cumsum(np.cumsum(padded, axis=0), axis=1)
-    integral = np.pad(integral, ((1, 0), (1, 0)), mode="constant")
-    height, width = array.shape
-    window = 2 * radius + 1
-    ys = np.arange(height)
-    xs = np.arange(width)
-    total = (
-        integral[np.ix_(ys + window, xs + window)]
-        - integral[np.ix_(ys, xs + window)]
-        - integral[np.ix_(ys + window, xs)]
-        + integral[np.ix_(ys, xs)]
-    )
-    return total / float(window * window)
-
-
-def ssim_map(first: np.ndarray, second: np.ndarray, *, window: int = SSIM_WINDOW) -> np.ndarray:
-    """Per-pixel SSIM of two 2-D float images on a 0..255 scale."""
-    if first.shape != second.shape:
-        raise ValueError(f"ssim: shape mismatch {first.shape} vs {second.shape}")
-    radius = window // 2
-    c1 = (SSIM_K1 * SSIM_DATA_RANGE) ** 2
-    c2 = (SSIM_K2 * SSIM_DATA_RANGE) ** 2
-    mu_first = _box_mean(first, radius)
-    mu_second = _box_mean(second, radius)
-    var_first = np.maximum(_box_mean(first * first, radius) - mu_first * mu_first, 0.0)
-    var_second = np.maximum(_box_mean(second * second, radius) - mu_second * mu_second, 0.0)
-    covariance = _box_mean(first * second, radius) - mu_first * mu_second
-    numerator = (2.0 * mu_first * mu_second + c1) * (2.0 * covariance + c2)
-    denominator = (mu_first * mu_first + mu_second * mu_second + c1) * (
-        var_first + var_second + c2
-    )
-    return numerator / denominator
-
-
-def ssim_inside_mask(
-    first: np.ndarray, second: np.ndarray, mask: np.ndarray, *, window: int = SSIM_WINDOW
-) -> float:
-    """Mean SSIM over `mask`. Returns NaN for an empty mask (caller reports UNMEASURED)."""
-    selected = np.asarray(mask).astype(bool)
-    if selected.shape != np.shape(first):
-        # A mask of the wrong shape is a bug in the caller, and numpy's IndexError for a
-        # boolean index mismatch is the kind of message that gets worked around instead of
-        # fixed. Fail with the shapes named.
-        raise ValueError(
-            f"ssim_inside_mask: mask shape {selected.shape} does not match image shape "
-            f"{np.shape(first)}"
-        )
-    if not selected.any():
-        return float("nan")
-    values = ssim_map(first, second, window=window)[selected]
-    return float(values.mean())
-
 
 # ------------------------------------------------------------------------------- helpers
-
-
-def _luminance(rgb: np.ndarray) -> np.ndarray:
-    return 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
-
-
 def _decode(payload: bytes, what: str) -> np.ndarray:
     with Image.open(io.BytesIO(payload)) as opened:
         mode = "RGB" if what == "rgb" else "L"
