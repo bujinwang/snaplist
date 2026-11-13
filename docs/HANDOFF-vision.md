@@ -782,21 +782,38 @@ mean weighted SSIM (n=9) 0.9790 · median/worst/best 0.9823/0.9539/0.9962
 mean |ΔL| where alpha >= 0.5: 2.282 levels · wall clock 2.43 s total / 0.270 s mean
 ```
 
-**Read three things before quoting `0.9790`.**
+**Read four things before quoting `0.9790`.**
 
 1. **`0.9790` is not a defect rate.** The ceiling is ≈0.98, not 1.0: Pillow's
    `Image.transform(PERSPECTIVE, BILINEAR)` is the *antialiasing* resampler (the same machinery
-   as `Image.resize`), while the stage point-samples a 2-tap bilinear. ADR-011 §7 predicted
-   ≈0.999 with a ±1 level floor; **the measurement refutes that for any non-unit scale** — the
-   ±1 floor holds only for a 1:1 map (`max|Δ| = 0` on an identity checkerboard, and 1 level on a
-   sub-pixel translation). Consequence: a stage that smooths mildly can *gain* points.
-2. **It cannot see quad quality.** `H` comes from the alpha bounding box, so a wrong mask means
+   as `Image.resize`), while the stage point-samples a 2-tap bilinear. ADR-011 §7 predicted a
+   ±1 level floor and a ≈0.999 ceiling; **the measurement refutes both for any non-unit scale**.
+   Measured on `logo-02-breeches-waistband` inside the warped mask: **`max|Δ| = 33`,
+   `mean|Δ| = 2.47`, 99.9th percentile `= 16`** 8-bit levels. The ±1 figure holds only where the
+   map is 1:1 — `max|Δ| = 0` on an identity checkerboard, 1 level on a sub-pixel translation.
+2. **What that rewards is agreement with Pillow's kernel, not smoothness — and the difference
+   matters.** Rendering the same photograph through `Image.transform` itself scores `1.0000` on
+   `logo-02` against `0.9694` for the current 2-tap bilinear stage: the 0.03 is a filter
+   difference, not a defect. Smoothness is *not* rewarded; blurring the output only lowers the
+   score — `logo-02` `0.9694 → 0.9172 → 0.6727 → 0.5250`, `logo-01` `0.9942 → 0.9882 → 0.9351 →
+   0.8639` at Gaussian radius 0.6 / 1.2 / 2.0. So a future stage must **not** be written to
+   imitate this reference's filter. If kernel agreement ever matters enough to fix, the honest
+   fix is to render both operands through the same kernel and say the number moved.
+3. **`>= 0.85` tolerates ~10 % scattered repainting.** Repainting 10 % of `logo-02`'s
+   `alpha > 128` pixels (scattered, at (128,128,128)) in the source and re-rectifying moves the
+   score `0.9694 → 0.8758` and **`passes_dod` is still True**. That is the arithmetic of the
+   threshold, not a bug: `passes_dod` means "at most ~15 % of the garment's structure was
+   replaced or mis-transported, and the declared map and the canvas conform" — **never** "nothing
+   was repainted". E2-T1's stage has no generative step at all, so nothing here paints.
+4. **It cannot see quad quality.** `H` comes from the alpha bounding box, so a wrong mask means
    a wrong bbox, and a warp that crops or stretches the garment passes all three checks. There
    is no ground-truth quad on disk for any of the 9 photos: this verifies that the `alpha_bbox`
    convention was followed, not that it is right.
-3. **`weighted` and `binary` coincide** (gap 0.0000) because the 9 alphas are hard-edged
-   algorithm masks, every pixel 0 or 255. ADR-011 §2.2's argument for alpha weighting is *not
-   exercised* by this fixture set.
+
+**One more fact about the number, not a caveat:** `weighted` and `binary` SSIM coincide on this
+fixture set (gap 0.0000) because the 9 alphas are hard-edged algorithm masks, every pixel 0 or
+255. ADR-011 §2.2's argument for alpha weighting is therefore *not exercised* by these fixtures,
+and D13's weighted-vs-binary signal is inert here.
 
 **Status of the criterion: `ADR-011` is `Proposed — pending Bert's review`, and its restatement
 of E2-T1's DoD is NOT adjudicated.** `docs/PLAN.md` still says "SSIM ≥ 0.85 inside the mask

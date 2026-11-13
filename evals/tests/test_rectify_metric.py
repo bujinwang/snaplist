@@ -778,6 +778,13 @@ def test_the_render_carries_the_definition_and_the_limitations(measured) -> None
         "transport budget",
         "8-bit RGB",
         "not the gate",
+        # the two claims that measurement corrected the ADR on, pinned so they cannot be dropped
+        # back to the nicer-sounding versions (they were once "smoothing can gain points", which
+        # is false: blurring only lowers the score, measured 0.9694 -> 0.9172 -> 0.6727 -> 0.5250)
+        "agreement with Pillow's kernel",
+        "not an absence of repainting",
+        "max|Δ| = 33",
+        "0.8758",
     ):
         assert required in report, f"the report lost {required!r}"
     assert report.count("|") > 0

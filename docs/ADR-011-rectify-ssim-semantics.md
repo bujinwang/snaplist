@@ -381,6 +381,28 @@ expected to be **1 level**, not 0. That ±1 is the noise floor of this metric an
 ≈ 0.999, so `0.85` is not being met by luck — but a reviewer who sees `0.998` must know the last
 0.002 is interpolation quantisation, not a residual defect.
 
+> **Measured 2026-11-12 (T01 implementation): the ±1 prediction above is wrong, and so is its
+> stated mechanism.** Pillow's `transform(..., PERSPECTIVE, ..., BILINEAR)` is the
+> **antialiasing** resampler — the same resampling machinery as `Image.resize`, not a 2-tap
+> bilinear — so the disagreement between `Ref` and a numpy bilinear scales with the local
+> magnification. Measured on `logo-02-breeches-waistband` (`bottom-03`, 960×1200 canvas), inside
+> the warped mask: **`max|Δ| = 33`, `mean|Δ| = 2.47`, 99.9th percentile `= 16`** 8-bit levels.
+> `max|Δ| ≤ 1` holds **only where the map is 1:1**: 0 on an identity checkerboard, 1 level on a
+> sub-pixel translation — which is why the identity milestone below passes while the corpus sits
+> at 0.9790 mean / 0.9539 worst rather than ≈0.999. What Part A therefore rewards is **agreement
+> with Pillow's kernel, not smoothness**: a stage that renders through `Image.transform` itself
+> scores `1.0000` on `logo-02` against `0.9694` for the current 2-tap bilinear, and blurring the
+> output only *lowers* the score (`0.9694 → 0.9172 → 0.6727 → 0.5250` at Gaussian radius
+> 0.6 / 1.2 / 2.0). Two consequences for the next reader: do **not** write a stage to imitate this
+> filter, and if kernel agreement ever matters enough to fix, render *both* operands through the
+> same kernel and report that the number moved.
+>
+> **Also measured, and it belongs next to the `0.85` threshold:** the floor tolerates about 10 %
+> scattered destruction. Repainting 10 % of `logo-02`'s `alpha > 128` pixels (scattered, at
+> (128,128,128)) in the source and re-rectifying gives `0.9694 → 0.8758` and **`passes_dod` stays
+> True**. `passes_dod` means "at most ~15 % of the garment's structure was replaced or
+> mis-transported, and the declared map and canvas conform" — never "nothing was repainted".
+
 **Pixel-centre convention.** The one thing that can silently invalidate the whole design is a
 half-pixel disagreement between Pillow's `PERSPECTIVE` and the stage's inverse mapping: it would
 show up as a uniform SSIM loss and be "fixed" by loosening the threshold. Therefore T01's first

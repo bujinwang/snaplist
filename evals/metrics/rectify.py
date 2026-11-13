@@ -57,6 +57,12 @@ the other:
 > cannot tell a good quad from a bad quad, and it is blind to any error the declared homography
 > itself carries.
 
+The budget runs the other way too, and `THRESHOLD_SEMANTICS` says it in the artifact: **`>= 0.85`
+does not mean nothing was repainted** — a 10 % scattered repaint still clears the floor. And
+`RESAMPLER_FLOOR` records what the ceiling is: ~0.98, because the reference is Pillow's
+antialiasing resampler while the stage point-samples a 2-tap bilinear. What Part A rewards is
+agreement with Pillow's kernel, **not** smoothness; blurring the output only lowers the score.
+
 `ssim_binary` (mean over `alpha >= 128`) is reported next to the weighted value so the number
 stays comparable with prettify's binary-mask convention and so a large gap between the two is
 visible rather than hidden. The gate uses the weighted value; the binary value is evidence.
@@ -156,6 +162,28 @@ PROPOSAL_STATUS = (
 CANVAS_CAVEAT = (
     "B2 asserts 8-bit RGB with no alpha band and not 'carries an sRGB profile' — the encoder "
     "writes no ICC chunk, so no colour-management claim is tested"
+)
+
+# The resampler floor, measured. ADR-011 §7 predicted "max|Δ| = 1 level, achievable maximum
+# ≈0.999"; that is wrong, and the reason is not "Pillow's bilinear is fixed-point 8-bit" — it is
+# that Pillow's `transform` is the *antialiasing* resampler. Measured on `logo-02` (bottom-03,
+# 960x1200) inside the warped mask; the 1-level figure holds only where the map is 1:1.
+RESAMPLER_FLOOR = (
+    "the achievable ceiling is ~0.98, not 1.0: Pillow's `transform` is the *antialiasing* "
+    "resampler (the same machinery as `resize`), so the reference is smoother than the stage's "
+    "2-tap bilinear (logo-02: max|Δ| 33, mean 2.47, 99.9th pct 16 levels inside the mask; "
+    "ADR-011 §7's '±1 level' holds only at unit scale). What Part A rewards is **agreement with "
+    "Pillow's kernel, not smoothness** — a stage rendering through `Image.transform` itself "
+    "scores 1.0000 where the current one scores 0.9694, and blurring only lowers the score "
+    "(0.9694 -> 0.9172 -> 0.6727 -> 0.5250 at Gaussian radius 0.6 / 1.2 / 2.0)"
+)
+
+# What `>= 0.85` actually buys. Measured, and the reason the row must not be read as "nothing
+# was repainted": a 10 % scattered repaint in the source still clears the floor.
+THRESHOLD_SEMANTICS = (
+    "`>= 0.85` is a transport budget, not an absence of repainting: repainting 10 % of logo-02's "
+    "`alpha > 128` pixels (scattered, at (128,128,128)) in the source and re-rectifying scores "
+    "0.8758 and **still passes**, so `passes_dod` does not mean 'nothing was repainted'"
 )
 
 
@@ -831,14 +859,33 @@ def render(
         "",
         "**The ceiling is not 1.0, and the distance from it is not a defect.** Pillow's "
         "`Image.transform(PERSPECTIVE, BILINEAR)` is the *antialiasing* resampler — the same "
-        "machinery as `Image.resize` — while the stage point-samples a 2-tap bilinear. On a "
-        "scaled map the two renders differ by tens of 8-bit levels on high-frequency content, "
-        "so the achievable maximum is the mean in the table above, not `1.0000`. ADR-011 §7 "
-        "predicted ≈0.999 with a ±1 level floor; **the measurement refutes that for any "
-        "non-unit scale** (the ±1 floor holds only for a 1:1 map, which is what the identity "
-        "control uses), and the number printed here is the measured one. The practical "
-        "consequence to keep in mind: a stage that *smooths* the garment mildly can gain "
-        "points, because the reference is already smoother than a faithful transport.",
+        "machinery as `Image.resize` — while the stage point-samples a 2-tap bilinear. ADR-011 "
+        "§7 predicted a ±1 level floor and an achievable maximum of ≈0.999; **the measurement "
+        "refutes both for any non-unit scale**. On `logo-02-breeches-waistband` inside the "
+        "warped mask: `max|Δ| = 33`, `mean|Δ| = 2.47`, 99.9th percentile `= 16` 8-bit levels. "
+        "The ±1 figure holds only where the map is 1:1 (0 on an identity checkerboard, 1 level "
+        "on a sub-pixel translation), which is why the identity control passes and the corpus "
+        "sits at ~0.98.",
+        "",
+        "**What that rewards is *agreement with Pillow's kernel*, not smoothness.** Rendering "
+        "the same photograph through `Image.transform` itself scores `1.0000` on `logo-02`, "
+        "where the current 2-tap bilinear stage scores `0.9694` — the 0.03 is a filter "
+        "difference, not a defect. Smoothness is not rewarded: blurring the stage output only "
+        "lowers the score (`logo-02` `0.9694 -> 0.9172 -> 0.6727 -> 0.5250` at Gaussian radius "
+        "0.6 / 1.2 / 2.0; `logo-01` `0.9942 -> 0.9882 -> 0.9351 -> 0.8639`). The corollary is "
+        "the one to watch when a corner detector lands: a stage must **not** be written to "
+        "imitate this reference's filter — if kernel agreement ever matters enough to fix, the "
+        "honest fix is to render both operands through the same kernel and say the number "
+        "moved, not to change the stage.",
+        "",
+        "**`>= 0.85` is a transport budget, not an absence of repainting.** Repainting 10 % of "
+        "`logo-02`'s `alpha > 128` pixels (scattered, at (128,128,128)) in the source and "
+        "re-rectifying scores `0.8758` and **still passes**. Because the floor sits ~0.13 below "
+        "the resampler floor, *scattered* destruction is cheap: a tenth of the garment can be "
+        "replaced and the row still reads green. `passes_dod` means \"at most ~15 % of the "
+        "garment's structure was replaced or mis-transported, and the declared map and the "
+        "canvas conform\" — never \"nothing was repainted\". E2-T1's stage has no generative "
+        "step at all, so this is the arithmetic of the threshold, not a hole this metric opened.",
         "",
         "**`weighted` and `binary` coincide on this fixture set** (gap 0.0000): the 9 alphas are "
         "algorithmic and hard-edged, so every pixel is 0 or 255 and the continuous weight "

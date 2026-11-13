@@ -430,6 +430,7 @@ def _measure_rectify() -> tuple[Measurement | None, list[str]]:
         f"{stats['max_corner_residual_px']} px against a {rectify_metric.CORNER_TOLERANCE_PX} px "
         "tolerance, det(H) > 0), B2 pins the canvas (transcribed aspect table, long edge <= "
         f"{rectify_metric.MAX_LONG_EDGE_PX} px, 8-bit RGB, no alpha band) · "
+        f"{rectify_metric.RESAMPLER_FLOOR} · {rectify_metric.THRESHOLD_SEMANTICS} · "
         f"{rectify_metric.CAPABILITY_LIMITS} · {rectify_metric.PROPOSAL_STATUS} · per-case "
         "evidence: evals/reports/rectify.md (`python -m evals.metrics.rectify`)"
     )
