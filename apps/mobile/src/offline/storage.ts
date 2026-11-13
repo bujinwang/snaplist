@@ -22,12 +22,21 @@
  *      backend during manual QA, which is the failure mode this module fixes.
  *
  * Writes are staged: the payload goes to `<file>.tmp` first and is then moved onto
- * the target with `moveAsync`, so a truncated document is never observed by a
- * reader — a crash can at worst lose the newest snapshot, never corrupt the one
- * already on disk. Android implements the move as `renameTo`, a real atomic
- * replace; iOS deletes the target and then renames inside the same native call, so
- * there is a two-syscall window rather than a whole-payload one. Staged, not
- * perfectly atomic on both platforms.
+ * the target with `moveAsync`, so a reader never observes a half-written document.
+ * What a crash costs depends on how the platform implements that move, and it is
+ * **not the same on both**:
+ *
+ *   - Android implements the move as `renameTo`, a real atomic replace. A crash at
+ *     worst loses the newest snapshot; the previous document stays intact.
+ *   - iOS deletes the target and then renames the temporary file onto it, as two
+ *     steps. A crash between them leaves the target deleted and the new snapshot
+ *     still sitting in `<file>.tmp` — so neither the old nor the new document is at
+ *     the path a reader looks at. The read path does not promote that leftover yet
+ *     (a known gap, tracked as an E6-T5 follow-up), so in that window the queue can
+ *     read back empty.
+ *
+ * Staged, then — not atomic on both platforms, and on iOS the window can cost more
+ * than the newest snapshot.
  *
  * Saves are serialized onto a module-level promise chain, so concurrent callers
  * cannot interleave inside the shared `.tmp` path and the last call's payload is
@@ -169,8 +178,13 @@ async function persist(payload: string): Promise<void> {
       await FileSystem.moveAsync({ from: tmpPath, to: path });
       return;
     } catch {
-      // The previous document is still on disk and still readable — leaving it
-      // alone is better than half-writing the target. Fall through.
+      // Which document survives here is platform-dependent, and the older version of
+      // this comment claimed more than the code delivers. Android: the failed rename
+      // leaves the previous document intact, so falling through is right. iOS: if the
+      // delete inside `moveAsync` succeeded and the rename did not, the previous
+      // document is already gone and only `<path>.tmp` holds anything — and the read
+      // path does not promote that leftover yet. What staging does guarantee on both
+      // is that the target was never half-written. Fall through.
     }
   }
 
@@ -201,10 +215,19 @@ async function persist(payload: string): Promise<void> {
  * chain is ordered, so the last call's payload is the last one on disk. The queue
  * survives a rejection of the previous entry, although `persist` never rejects.
  *
- * The write goes to the file system when this platform has one, otherwise to web
- * `localStorage`. Those two are mutually exclusive rather than redundant: if the
- * file-system write fails, the previous document stays on disk and the next launch
- * reads that older snapshot — it is not re-written through `localStorage`.
+ * The two backends are mutually exclusive **by platform**, not by fallback order: a
+ * native build has the file system and no `localStorage`, web has `localStorage` and
+ * no `documentDirectory`. `persist` still walks them in sequence, so a file-system
+ * failure does fall through and attempt `localStorage` — that attempt simply never
+ * succeeds on native, where there is no `localStorage` to write to. On a device,
+ * therefore, a failed file-system write leaves the previous document as the only
+ * readable snapshot, and the next launch reads that older one.
+ *
+ * Were a platform ever to have both backends, the new payload would land in
+ * `localStorage` while the file stayed authoritative for reads — `loadDraftItems`
+ * tries the file first and does not compare the two. That split is unreachable
+ * today; it is spelled out so the mutual-exclusion claim above is not mistaken for
+ * a property of the code.
  *
  * Never rejects once it returns: the path lookup and every backend failure are
  * caught. `JSON.stringify` runs synchronously before the write is enqueued, so an
