@@ -21,6 +21,13 @@
  *      module-level cache: a silent pseudo-persistence would hide a broken
  *      backend during manual QA, which is the failure mode this module fixes.
  *
+ * Writes are atomic: the payload goes to `<file>.tmp` first and is then moved
+ * onto the target with `moveAsync`, so the draft document is never observed
+ * half-written — a crash can only lose the newest snapshot, never corrupt the
+ * one already on disk. (Android implements the move as `renameTo`, i.e. a real
+ * atomic replace; iOS deletes the target and then renames, both inside the same
+ * native call, so the window is two syscalls rather than a whole write.)
+ *
  * Why a single JSON document and not SQLite: the queue is one ordered array that
  * is read once on mount and rewritten whole on every mutation, so a schema, a
  * migration path and a second native module buy nothing measurable here —
@@ -29,9 +36,9 @@
  * swapped in later without touching `DraftsProvider`.
  *
  * The API used below is the legacy promise API (`documentDirectory`,
- * `getInfoAsync`, `readAsStringAsync`, `writeAsStringAsync`) — that is what
- * expo-file-system 17 / SDK 51 exposes. The `File` / `Directory` classes are
- * SDK 52+ and must not be used here.
+ * `getInfoAsync`, `readAsStringAsync`, `writeAsStringAsync`, `moveAsync`) — that
+ * is what expo-file-system 17 / SDK 51 exposes. The `File` / `Directory` classes
+ * are SDK 52+ and must not be used here.
  */
 
 import * as FileSystem from "expo-file-system";
@@ -108,9 +115,15 @@ export async function loadDraftItems(): Promise<DraftItem[]> {
 /**
  * Persists the whole draft queue, overwriting the previous snapshot.
  *
+ * The snapshot is written to `<file>.tmp` and then moved onto the target, so an
+ * interrupted write cannot leave a truncated document behind: readers see either
+ * the previous snapshot or the new one. The move is rename-based, so it also
+ * replaces an existing target without a copy.
+ *
  * The write goes to the first backend that accepts it (file system → web
  * `localStorage`), so a failure on one backend still leaves the photo
- * recoverable from another.
+ * recoverable from another. A leftover `.tmp` is harmless — the next write
+ * truncates it.
  *
  * @param items Complete draft queue — this is a snapshot, not a delta.
  */
@@ -119,8 +132,10 @@ export async function saveDraftItems(items: DraftItem[]): Promise<void> {
 
   const path = getDraftFilePath();
   if (path) {
+    const tmpPath = `${path}.tmp`;
     try {
-      await FileSystem.writeAsStringAsync(path, payload);
+      await FileSystem.writeAsStringAsync(tmpPath, payload);
+      await FileSystem.moveAsync({ from: tmpPath, to: path });
       return;
     } catch {
       // fall through to other backends
