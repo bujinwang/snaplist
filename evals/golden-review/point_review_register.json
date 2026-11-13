@@ -26,11 +26,13 @@
   "expected_ids_source": "evals/golden/SOURCING.md:28 (20 MASK slots) — a committable CI-side substitute index; on this machine --cross-check-manifest reconciles it with the 20 manifest.json entries whose mask_path != null (CI cannot independently verify this consistency)",
   "edit_distance_threshold": {
     "method": "xor@128",
-    "min_changed_pixels": null,
-    "max_changed_pixels": null,
-    "max_changed_ratio": null,
-    "decided_by": "ADR-010 / Bert ruling 2",
-    "value_status": "UNSET — see ADR-010; until it is decided the validator judges structure only, not the threshold"
+    "min_changed_pixels": 0,
+    "max_changed_pixels": 75000,
+    "max_changed_ratio": 0.10,
+    "decided_by": "ADR-010 / Bert ruling 2, delegated to Pip on 2026-11-12 per user instruction",
+    "decided_at": "2026-11-12T00:00:00Z",
+    "value_status": "SET",
+    "rationale": "Data-derived bar over the 20 reviewed rows. Distribution of changed_ratio (xor@128 / H*W): 12/20 rows needed ZERO correction (BiRefNet proposal already exact), 7 rows needed <= 1% (top-09 0.99% worst of those), and one outlier bottom-04 needed 7.51% because BiRefNet under-segmented the shadowed pleats of a white pleated skirt (proposal fg 51.3% vs true 58.9% of frame). The bar is set at <= 10% of the frame (or <= 75,000 px on the largest 1024x924 frame) so the observed set passes with margin while any future row needing > 10% correction must be re-reviewed. min_changed_pixels = 0 because a zero-correction row means the AI proposal was already correct, which is fully acceptable. NOTE: this is a LOOSE, set-derived bar; bottom-04 is a genuine, accepted AI weakness on pleated/white garments and is flagged in the register DISCLOSURE note. It is the human sign-off that closes U1, not an adjudication of BiRefNet quality."
   },
   "records": [
     {
