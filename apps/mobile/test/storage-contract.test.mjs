@@ -437,6 +437,49 @@ test("stale_tmp_is_ignored", { timeout: TIMEOUT }, async () => {
   assert.equal(state.files.has(TMP), false, "only the next successful write consumes it");
 });
 
+test("corrupt_target_is_not_replaced_by_a_valid_tmp", { timeout: TIMEOUT }, async () => {
+  // The narrow edge of the promotion rule, and the reason it is narrow: with something AT the
+  // target, the target is the authority even when its bytes are unusable.
+  //
+  // A tmp is whatever a failed write left behind, so it can PREDATE the document next to it.
+  // Promoting it over a present-but-corrupt target would resurrect a snapshot nobody can date,
+  // and would hide "the document is corrupt" from every caller upstream. The cost is stated
+  // plainly rather than papered over: this read returns nothing even though a readable snapshot
+  // is sitting beside the target.
+  //
+  // This case exists because the alternative — widening the rule to "try the tmp whenever the
+  // target did not yield a draft array" — passed every other test in this file. An unpinned
+  // decision is one that gets reversed by accident.
+  const cases = [
+    { label: "unparseable-target", target: "{not json" },
+    { label: "non-array-target", target: JSON.stringify({ drafts: [item("x")] }) },
+  ];
+  const outcomes = {};
+
+  for (const c of cases) {
+    const storage = freshStorage();
+    // No localStorage: the file backend is the only thing in play, as on a device.
+    removeLocalStorage();
+    state.files.set(PATH, c.target);
+    state.files.set(TMP, JSON.stringify([item("from-tmp")]));
+
+    const loaded = await storage.loadDraftItems();
+    outcomes[c.label] = JSON.stringify(loaded);
+
+    assert.deepEqual(
+      loaded,
+      [],
+      `a corrupt target must not be replaced by the tmp (${c.label})`,
+    );
+    assert.equal(
+      state.files.get(TMP),
+      JSON.stringify([item("from-tmp")]),
+      `the tmp must be left untouched (${c.label})`,
+    );
+    assert.equal(state.files.get(PATH), c.target, `the target must not be rewritten (${c.label})`);
+  }
+});
+
 // ---------------------------------------------------------------------------------------------
 // Concurrency
 // ---------------------------------------------------------------------------------------------
