@@ -35,7 +35,16 @@ const srcRoot = join(mobileRoot, "src");
 /** Every .ts/.tsx under `src/`, depth-first, in a stable order. */
 function listSourceFiles(dir) {
   const found = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // Missing or unreadable `src/`. Return nothing so `scannerFindsTheSourceTree`
+    // reports it as a named failure, instead of the whole file dying with an ENOENT
+    // stack trace that names no guard at all.
+    return found;
+  }
+  for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       found.push(...listSourceFiles(full));
@@ -58,23 +67,73 @@ function lineOf(content, index) {
   return content.slice(0, index).split("\n").length;
 }
 
+/** The full text of the line containing `index`. */
+function lineAt(content, index) {
+  const start = content.lastIndexOf("\n", index) + 1;
+  const end = content.indexOf("\n", index);
+  return content.slice(start, end === -1 ? content.length : end);
+}
+
+/**
+ * Whether `index` sits inside a comment.
+ *
+ * This matters only for how a hit is *reported*, never for whether it counts: the
+ * guards scan raw text on purpose (see `noRequireCalls`), so a comment can trip
+ * them. Without a label, a maintainer reading `storage.ts:8  globalThis.require`
+ * goes to line 8, finds prose, and the cheapest way to get CI green is to loosen
+ * the guard — the exact outcome the guard exists to prevent. So a comment hit is
+ * reported as `[comment]` with the wording that would keep everyone honest.
+ */
+function isInComment(content, index) {
+  const lineStart = content.lastIndexOf("\n", index) + 1;
+  const beforeOnLine = content.slice(lineStart, index);
+  // A `//` earlier on the same line comments out everything after it.
+  if (/\/\//.test(beforeOnLine)) return true;
+  // Inside a `/* … */` block that has not been closed yet.
+  const upToHere = content.slice(0, index);
+  const opens = (upToHere.match(/\/\*/g) ?? []).length;
+  const closes = (upToHere.match(/\*\//g) ?? []).length;
+  if (opens > closes) return true;
+  // Leading `*` is a JSDoc body line, `//` or `/*` starts a comment line.
+  return /^\s*(\/\/|\*|\/\*)/.test(lineAt(content, index));
+}
+
 /**
  * Every match of `pattern` across the source tree, reported as `file:line`.
  *
  * A guard that matches nothing and a guard that never ran look identical, which
  * is why `scannerFindsTheSourceTree` below asserts the walk itself works before
  * the other guards are trusted.
+ *
+ * Hits inside comments are prefixed `[comment]` and carry `commentHint`, so the
+ * failure text says "this is prose, reword it" instead of looking like offending
+ * code. That label is a reporting detail — it does not exempt the hit.
  */
-function offenders(pattern) {
+function offenders(pattern, commentHint) {
   const hits = [];
   for (const file of sourceFiles) {
     const content = readFileSync(file, "utf8");
     const global = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
     for (const match of content.matchAll(global)) {
-      hits.push(`${rel(file)}:${lineOf(content, match.index)}  ${match[0]}`);
+      hits.push(formatHit({ file, content, index: match.index, matched: match[0], commentHint }));
     }
   }
   return hits;
+}
+
+/**
+ * One line of failure text for a hit.
+ *
+ * Split out of `offenders` so it can be asserted against synthetic content: a
+ * formatting test that only runs over the real tree would go vacuous the moment the
+ * tree is clean, which it currently is.
+ */
+function formatHit({ file, content, index, matched, commentHint }) {
+  const inComment = isInComment(content, index);
+  const where = `${rel(file)}:${lineOf(content, index)}`;
+  const label = inComment ? "[comment] " : "";
+  const hint = inComment && commentHint ? `\n    ${commentHint}` : "";
+  return `${where}  ${label}${matched.trim()}${hint}`;
 }
 
 /**
@@ -184,19 +243,19 @@ test("scannerFindsTheSourceTree", () => {
 const DYNAMIC_REQUIRE_ACCESS = /\.\s*require\b/;
 const DYNAMIC_REQUIRE_GLOBAL = /globalThis\s*\[\s*["']require["']\s*\]/;
 
+/**
+ * Shown next to a `[comment]` hit so the fix is "reword the prose", not "widen the
+ * guard". This sentence is itself written to avoid the banned adjacency.
+ */
+const DYNAMIC_REQUIRE_COMMENT_HINT =
+  'comment mentions the banned pattern; write it as "a dynamic require reached through globalThis"';
+
 /** Discovered violations of the "dynamic require" guard, across the tree. */
 function dynamicRequireHits() {
-  const hits = [];
-  for (const file of sourceFiles) {
-    const content = readFileSync(file, "utf8");
-    for (const pattern of [DYNAMIC_REQUIRE_ACCESS, DYNAMIC_REQUIRE_GLOBAL]) {
-      const global = new RegExp(pattern.source, "g");
-      for (const match of content.matchAll(global)) {
-        hits.push(`${rel(file)}:${lineOf(content, match.index)}  ${match[0].trim()}`);
-      }
-    }
-  }
-  return hits;
+  return [
+    ...offenders(DYNAMIC_REQUIRE_ACCESS, DYNAMIC_REQUIRE_COMMENT_HINT),
+    ...offenders(DYNAMIC_REQUIRE_GLOBAL, DYNAMIC_REQUIRE_COMMENT_HINT),
+  ];
 }
 
 test("noDynamicRequireThroughGlobalThis", () => {
@@ -270,12 +329,59 @@ test("noRequireCalls", () => {
   // Any CommonJS require in the app source is a resolution risk Metro cannot
   // police at build time. There are zero today; keep it that way.
   //
-  // This scans raw text, comments included, and that is deliberate: a comment
-  // that spells out `require(` teaches the next reader the banned pattern. This
-  // team already rewrote storage.ts's header for exactly that reason, so keeping
-  // the scan strict is consistent rather than incidental.
-  const hits = offenders(/(?:^|[^\w.$])require\s*\(/m);
+  // Raw-text scan, so comments and string literals can trip it. That is a decision,
+  // not an oversight: telling comments apart from code needs a parser, and the
+  // failure mode of a parser we get subtly wrong is a *missed* violation. Prose that
+  // spells out the banned pattern also teaches it to the next reader — storage.ts's
+  // own header was reworded for exactly that reason. The cost is that a comment hit
+  // is reported as such (with a reword hint) instead of being silently exempted; a
+  // string literal hit has to be reworded too, which no message in this app needs to
+  // do today.
+  const hits = offenders(
+    /(?:^|[^\w.$])require\s*\(/m,
+    'comment or string mentions the banned call; reword it rather than widening the guard',
+  );
   assert.deepEqual(hits, [], `require() calls in app source:\n${hits.join("\n")}`);
+});
+
+test("commentHitsAreLabelledNotSilentlyExempt", () => {
+  // The point of the label: someone who rewrites storage.ts's header to the accurate
+  // `globalThis.require` must see "this is prose, reword it" — not a hit that reads
+  // like offending code at line 8, whose cheapest fix is to loosen the guard.
+  const comment = " * The old code reached through globalThis.require and Metro failed.\n";
+  const commentIndex = comment.indexOf("globalThis");
+  assert.equal(isInComment(comment, commentIndex), true, "a JSDoc line is a comment");
+
+  const inline = "const x = 1; // never globalThis.require here\n";
+  assert.equal(isInComment(inline, inline.indexOf("globalThis")), true, "// starts a comment mid-line");
+
+  const block = "/*\n * globalThis.require\n */\n";
+  assert.equal(isInComment(block, block.indexOf("globalThis")), true, "inside a block comment");
+
+  const code = "const req = (globalThis as { require?: unknown }).require;\n";
+  assert.equal(isInComment(code, code.indexOf("globalThis")), false, "real code is not a comment");
+
+  // The formatted message is what a maintainer actually reads, so assert on it
+  // directly rather than hoping the tree contains a comment hit today.
+  const commentHit = formatHit({
+    file: join(srcRoot, "offline", "storage.ts"),
+    content: comment,
+    index: commentIndex,
+    matched: ".require",
+    commentHint: DYNAMIC_REQUIRE_COMMENT_HINT,
+  });
+  assert.match(commentHit, /storage\.ts:1 {2}\[comment\] \.require/);
+  assert.match(commentHit, /write it as/);
+
+  const codeHit = formatHit({
+    file: join(srcRoot, "offline", "storage.ts"),
+    content: code,
+    index: code.indexOf(".require"),
+    matched: ".require",
+    commentHint: DYNAMIC_REQUIRE_COMMENT_HINT,
+  });
+  assert.ok(!codeHit.includes("[comment]"), "code hits must not be labelled as comments");
+  assert.ok(!codeHit.includes("write it as"), "code hits get no reword hint");
 });
 
 test("noImportsFromTestDoubles", () => {
