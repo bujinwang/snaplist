@@ -107,6 +107,8 @@ __all__ = [
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FIXTURE_DIR = ROOT / "evals" / "fixtures" / "prettify"
+#: The combined SSIM + rubric report. E2-T3 owns it; gitignored like every report.
+DEFAULT_REPORT = ROOT / "evals" / "reports" / "prettify.md"
 
 
 # ------------------------------------------------------------------------------- helpers
@@ -131,15 +133,21 @@ def _box_region(box: list[int], shape: tuple[int, int]) -> np.ndarray:
 # ---------------------------------------------------------------------------------- run
 
 
-def run(fixture_dir: Path) -> tuple[list[dict], dict]:
+def run(fixture_dir: Path, *, emit_dir: Path | None = None) -> tuple[list[dict], dict]:
     """Measure every fixture case. Returns per-case rows and the run's provenance.
 
     Raises on a broken fixture (missing file, no manifest) rather than skipping: a metric that
     quietly drops a case has a different denominator from the one it reports.
+
+    `emit_dir` is optional and used only by the report writer: when given, the prettified output
+    of every `logo` case is written there, because the E2-T3 rubric asks a human to look at those
+    images. It changes nothing about the measurement — omitted (the harness path), the function
+    computes exactly the same rows.
     """
     manifest = json.loads((fixture_dir / "manifest.json").read_text(encoding="utf-8"))
     cases = manifest["cases"] if isinstance(manifest, dict) else manifest
     rows: list[dict] = []
+    emitted: dict[str, Path] = {}
     rectify_seconds: list[tuple[str, float]] = []
     rectify_notes: list[str] = []
 
@@ -151,6 +159,13 @@ def run(fixture_dir: Path) -> tuple[list[dict], dict]:
         protect = [tuple(protect_box)] if protect_box else None
 
         result = prettify(flat_bytes, alpha_bytes, mode=PrettifyMode.CLASSICAL, protect=protect)
+        if emit_dir is not None and case.get("kind") == "logo":
+            # The E2-T3 rubric scores a human's reading of this image; without it on disk the
+            # scorer has nothing to look at. Report-side only — see the docstring.
+            emit_dir.mkdir(parents=True, exist_ok=True)
+            image_path = emit_dir / f"{case['id']}.png"
+            image_path.write_bytes(result.prettified_png)
+            emitted[case["id"]] = image_path
         elapsed = time.perf_counter() - started
         audit = wrinkle_mask_for(flat_bytes, alpha_bytes, protect=protect)
 
@@ -261,6 +276,9 @@ def run(fixture_dir: Path) -> tuple[list[dict], dict]:
         # Present only when a rectify timing could not be taken. Surfaced, never swallowed: a
         # number that quietly disappears is the failure mode this harness exists to prevent.
         "rectify_notes": rectify_notes,
+        # case id -> the prettified PNG the rubric scorer looks at. Empty unless `emit_dir` was
+        # given; kept here so the report can name each image next to its score.
+        "emitted_outputs": emitted,
     }
     return rows, meta
 
@@ -417,22 +435,104 @@ def render(rows: list[dict], meta: dict, stats: dict, threshold: float = 0.80) -
     return "\n".join(lines)
 
 
+def _rubric_section(fixture_dir: Path, images: dict[str, Path]) -> str:
+    """The E2-T3 half of the report — scores if a human has written them, otherwise the reason.
+
+    It never guesses: an unscored template renders as an explicit `UNMEASURED` block naming what
+    is missing. That is also what makes the report complete on a clean clone, where nobody has
+    scored anything yet.
+    """
+    from evals.metrics import prettify_rubric  # local: keeps the harness import cheap
+
+    scores_path = fixture_dir / "rubric_scores.json"
+    try:  # relative in prose, for the same reason as the image paths below
+        scores_shown: object = scores_path.relative_to(ROOT)
+    except ValueError:
+        scores_shown = scores_path
+    try:
+        rubric_rows, rubric_meta = prettify_rubric.run(scores_path, fixture_dir / "manifest.json")
+        rubric_stats = prettify_rubric.summarise(rubric_rows)
+    except (OSError, ValueError) as exc:
+        return "\n".join(
+            [
+                "## `prettify hallucinated-text rubric` — UNMEASURED",
+                "",
+                f"{type(exc).__name__}: {exc}",
+                "",
+                "This row needs a **human** to read the prettified `logo` images and write an "
+                "integer 1-5 per case into "
+                f"`{scores_shown}`, together with `rubric_version`, `scorer` and `scored_at`. "
+                "No model in this repo may fill it in: a plausible invented score is worse than "
+                "an honest UNMEASURED.",
+                "",
+            ]
+        )
+    # Repo-relative paths in the report: the reader is a person opening the file next to it, and
+    # an absolute /Users/... path is noise that also leaks someone's home directory into a paste.
+    display: dict[str, str] = {}
+    for case_id, path in images.items():
+        try:
+            display[case_id] = str(Path(path).relative_to(ROOT))
+        except ValueError:
+            display[case_id] = str(path)
+    return prettify_rubric.render(rubric_rows, rubric_meta, rubric_stats, images=display)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.metrics.prettify")
     parser.add_argument("--fixture-dir", type=Path, default=DEFAULT_FIXTURE_DIR)
     parser.add_argument("--threshold", type=float, default=0.80, help="DoD line to quote")
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_REPORT,
+        help="combined SSIM + rubric report (E2-T3); gitignored like every generated report",
+    )
+    parser.add_argument(
+        "--no-report", action="store_true", help="print only, write no report and no images"
+    )
     args = parser.parse_args(argv)
 
     if not (args.fixture_dir / "manifest.json").is_file():
         print(f"no manifest.json in {args.fixture_dir}", file=sys.stderr)
         return 2
+    emit_dir = None if args.no_report else args.report.parent / "prettify-rubric"
     try:
-        rows, meta = run(args.fixture_dir)
+        rows, meta = run(args.fixture_dir, emit_dir=emit_dir)
     except PrettifyBackendUnavailable as exc:
         print(f"PRETTIFY UNAVAILABLE: {exc}", file=sys.stderr)
         return 2
     stats = summarise(rows)
-    print(render(rows, meta, stats, args.threshold))
+    ssim_half = render(rows, meta, stats, args.threshold)
+    print(ssim_half)
+    if args.no_report:
+        return 0
+
+    rubric_half = _rubric_section(args.fixture_dir, meta["emitted_outputs"])
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        "\n".join(
+            [
+                ssim_half,
+                "",
+                "---",
+                "",
+                rubric_half,
+                "",
+                "---",
+                "",
+                "This file is generated and gitignored (`evals/reports/*`). The SSIM half is "
+                "measured by `python -m evals.metrics.prettify`; the rubric half is a human's "
+                "scores, validated by `evals/metrics/prettify_rubric.py`. Neither half is "
+                "recomputed from the other.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"wrote {args.report}")
+    if emit_dir is not None:
+        print(f"prettified logo images for the rubric: {emit_dir}")
     return 0
 
 

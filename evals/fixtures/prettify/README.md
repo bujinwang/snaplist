@@ -115,3 +115,56 @@ column and row of the drawn patch **outside the ground-truth box** — QA measur
 pixels on logo-01. The manifest box and the pixels now agree by construction, and
 `test_fixture_manifest_records_provenance_and_truth_boxes` asserts that `ink ⊂ protect_box`.
 
+## Scoring the hallucinated-text rubric (E2-T3)
+
+The `prettify hallucinated-text rubric` row is the one number in this epic that a machine cannot
+produce. It asks a person: **did the prettify step invent text or a logo that is not in the
+photograph?** Only the five `logo-*` cases are scored — they are the only fixtures with printed
+text, so the only ones that can hallucinate it. Scoring a `crease-*` case on "hallucinated text"
+would dilute the mean with cases that cannot fail.
+
+### How to score
+
+1. Generate the images to look at: `python -m evals.metrics.prettify`. That writes the combined
+   report to `evals/reports/prettify.md` and the prettified output of each logo case to
+   `evals/reports/prettify-rubric/<case-id>.png`. Both are gitignored generated artifacts. The
+   report's per-case table names the file for each row, so you do not have to guess which image
+   goes with which score.
+2. Open each image and compare it with the input flat-lay in `flat/<case-id>.png`.
+3. Write an **integer 1–5** per case into `rubric_scores.json` in this directory:
+
+   | score | meaning |
+   |---|---|
+   | 5 | nothing invented — no text, logo or glyph appeared that is not in the photograph |
+   | 4 | nothing clearly invented; at most a soft artefact inside the garment |
+   | 3 | a plausible-looking mark that is not in the photograph, in the wrong place |
+   | 2 | legible invented text or a recognisable invented logo |
+   | 1 | the fill painted invented text over the garment |
+
+4. Fill in all three provenance fields in the same file — `rubric_version`, `scorer`,
+   `scored_at`. A score with no scorer and no date is a number without a source, and the validator
+   rejects it. Bump `rubric_version` whenever a revision of the copy changes how the images look.
+
+### Why the file is committed and the report is not
+
+`evals/reports/*` is gitignored, so anything written there is absent from a clean clone. The
+scores therefore live in `evals/fixtures/prettify/rubric_scores.json`, **committed**: the row
+reproduces on any machine, and `git log` on that file is the audit trail of who scored what and
+when. The committed state today is a **template with every score `null` and every provenance field
+empty**, which is why the row reads `UNMEASURED`. It is not a placeholder to be filled in with a
+plausible number — an invented score is worse than an honest `UNMEASURED`.
+
+### What the number does not mean
+
+* **Not** "the logo is intact". Erasing printed text completely can still score 5: the rubric asks
+  whether anything was *invented*, not whether everything *survived*.
+* **Not** "the protect region was respected". That is a pixel property, pinned by
+  `packages/vision/tests/test_prettify.py` (`protect_overlap_px == 0` on all five cases) and
+  reported in the SSIM half of the report. A 5 is compatible with a mask that grazed the logo.
+* **Not** inter-rater reliability. It is five judgements by one person on one day; the provenance
+  fields let a reader audit that, not transcend it.
+
+The gate reads `>= 4 / 5` as the **mean** of the five scores (`RUBRIC_PASS_MEAN = 4.0` in
+`evals/metrics/prettify_rubric.py`). The other defensible reading — "at least 4 of the 5 cases are
+acceptable" — needs a per-case pass threshold the DoD does not define, so it is not implemented;
+the report prints every individual score so that reading can be computed by eye.
