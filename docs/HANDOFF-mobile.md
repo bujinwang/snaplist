@@ -48,8 +48,11 @@ Scope rule: stay in `apps/mobile/`. Reads `packages/shared` vocabulary and the A
 ## E6-T5 — Local drafts + offline queue
 
 - `DraftsProvider` is the single source of truth for items; every change is persisted.
-- Persistence is lazy: `expo-file-system` → `localStorage` → in-memory (native modules are not
-  installed). On mount, any `queued`/`running` item is resumed, so a force-quit mid-job recovers.
+- Persistence is real and durable: `./storage.ts` statically imports `expo-file-system` (17.0.1) and
+  writes the whole queue to a versioned JSON document in `documentDirectory` on every change;
+  `localStorage` is the web fallback. On mount, any `queued`/`running` item is resumed, so a
+  force-quit mid-job recovers. Deliberately one JSON document, not SQLite: the queue is one ordered
+  array rewritten whole on each mutation, so a schema + a second native module buy nothing.
 - The free-tier wall interacts with **drafts, not the camera**: the 4th capture is saved as
   `blocked_by_quota` and is never discarded.
 - `Drafts` screen lists every persisted item, in-flight / quota-blocked counts, §6 failure copy,
@@ -94,8 +97,8 @@ static supabase import.
 - **`expo-camera` is not installed** (registry mirror refused tarballs): the camera preview is a
   styled mock and the torch is a state toggle. Real capture wiring is deferred until the package
   can be installed. This is why screenshots are "code-renderable" but not device-captured.
-- **`expo-file-system` / `expo-sqlite` are not installed**: persistence falls back to
-  `localStorage` (web) / in-memory. A native build must swap in the real backends.
+- **`expo-file-system` is installed** (17.0.1): the draft queue really does survive a force-quit.
+  `expo-sqlite` is intentionally NOT added — see E6-T5 above. `localStorage` covers web.
 - **Supabase is installed and imported statically** (`@supabase/supabase-js` ^2.119.0 +
   `expo-constants` 16.0.0): the client is constructed only when `hasSupabase` is true, so mock mode is
   unchanged when env is absent. `@snaplist/shared` is still NOT imported — the analytics vocabulary
@@ -116,6 +119,5 @@ static supabase import.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.
 7. Offline queue persists and resumes; the 4th capture is saved, not lost.
 8. Batch is per-item with partial success and per-row retry.
-9. Deferred: real camera/FS/SQLite native modules, server-assigned paywall variant.
-10. Next: install `expo-camera` + `expo-file-system` when the registry recovers,
-    then run `npx expo start` on a device.
+9. Deferred: real camera native module, SQLite (not needed), server-assigned paywall variant.
+10. Next: install `expo-camera` when the registry recovers, then run `npx expo start` on a device.

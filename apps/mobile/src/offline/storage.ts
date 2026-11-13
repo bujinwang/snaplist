@@ -1,32 +1,54 @@
 /**
  * Local persistence for the draft queue (E6-T5).
  *
- * `expo-file-system` and `expo-sqlite` are NOT installed in this workspace, so we
- * never static-import them. We lazy-`require` them and, if they are absent (mock
- * mode / web / missing native module), fall back to `localStorage` (web) and then
- * to a pure in-memory `Map` so the app compiles and the queue still works in
- * mock mode. See docs/HANDOFF-mobile.md for the documented fallback.
+ * A captured photo must NEVER be lost (E6-T5 DoD), so the queue is written to
+ * durable on-device storage on every change. `expo-file-system` is a real
+ * dependency of this app (17.0.1 — the version Expo 51 already resolves) and is
+ * imported statically so Metro can resolve it at build time. The previous
+ * attempt used a dynamic `require`, reached through `globalThis`, which Metro
+ * could not resolve, threw at runtime and was swallowed by a `catch` — that
+ * silently degraded persistence to a backend React Native does not have, so the
+ * queue looked fine for a session and vanished on force-quit.
+ *
+ * Backends, in this order:
+ *   1. `expo-file-system` — one versioned JSON document in `documentDirectory`,
+ *      which is app-private and survives process exit / force-quit. This is the
+ *      backend that runs on a device.
+ *   2. `localStorage` — web / react-native-web, where the expo-file-system shim
+ *      reports `documentDirectory === null`.
+ *   3. Nothing — on a platform with neither (a bare Node process), the queue
+ *      still works but only for that session. It is deliberately NOT backed by a
+ *      module-level cache: a silent pseudo-persistence would hide a broken
+ *      backend during manual QA, which is the failure mode this module fixes.
+ *
+ * Why a single JSON document and not SQLite: the queue is one ordered array that
+ * is read once on mount and rewritten whole on every mutation, so a schema, a
+ * migration path and a second native module buy nothing measurable here —
+ * `expo-sqlite` is deliberately NOT a dependency. Everything storage-specific
+ * stays behind `loadDraftItems` / `saveDraftItems`, so a table-based store can be
+ * swapped in later without touching `DraftsProvider`.
+ *
+ * The API used below is the legacy promise API (`documentDirectory`,
+ * `getInfoAsync`, `readAsStringAsync`, `writeAsStringAsync`) — that is what
+ * expo-file-system 17 / SDK 51 exposes. The `File` / `Directory` classes are
+ * SDK 52+ and must not be used here.
  */
+
+import * as FileSystem from "expo-file-system";
 
 import { DraftItem } from "../lib/types";
 
 const STORAGE_KEY = "snaplist.drafts.v1";
 
-interface FileSystemLike {
-  documentDirectory?: string;
-  writeAsStringAsync: (path: string, content: string) => Promise<void>;
-  readAsStringAsync: (path: string) => Promise<string>;
-  getInfoAsync: (path: string) => Promise<{ exists: boolean }>;
-}
-
-function getFileSystem(): FileSystemLike | null {
-  const req = (globalThis as { require?: (id: string) => unknown }).require;
-  if (!req) return null;
-  try {
-    return req("expo-file-system") as FileSystemLike;
-  } catch {
-    return null;
-  }
+/**
+ * Absolute `file://` URI of the draft document, or `null` when the file system
+ * is unavailable (web, or a build where the native module is not linked).
+ * `documentDirectory` is typed `string | null` and already ends with a slash.
+ */
+function getDraftFilePath(): string | null {
+  const dir = FileSystem.documentDirectory;
+  if (!dir) return null;
+  return `${dir}${STORAGE_KEY}.json`;
 }
 
 function getLocalStorage(): Storage | null {
@@ -43,14 +65,22 @@ function isDraftArray(value: unknown): value is DraftItem[] {
   return Array.isArray(value);
 }
 
+/**
+ * Loads the persisted draft queue.
+ *
+ * Tries the file system, then `localStorage`; the first backend that yields a
+ * structurally valid draft array wins. A corrupt or unreadable payload is
+ * skipped rather than thrown — a launch must never be blocked by bad bytes.
+ *
+ * @returns The persisted drafts, or an empty array when nothing is stored.
+ */
 export async function loadDraftItems(): Promise<DraftItem[]> {
-  const fs = getFileSystem();
-  if (fs && fs.documentDirectory) {
-    const path = `${fs.documentDirectory}${STORAGE_KEY}.json`;
+  const path = getDraftFilePath();
+  if (path) {
     try {
-      const info = await fs.getInfoAsync(path);
+      const info = await FileSystem.getInfoAsync(path);
       if (info.exists) {
-        const raw = await fs.readAsStringAsync(path);
+        const raw = await FileSystem.readAsStringAsync(path);
         const parsed: unknown = JSON.parse(raw);
         if (isDraftArray(parsed)) return parsed;
       }
@@ -75,16 +105,22 @@ export async function loadDraftItems(): Promise<DraftItem[]> {
   return [];
 }
 
+/**
+ * Persists the whole draft queue, overwriting the previous snapshot.
+ *
+ * The write goes to the first backend that accepts it (file system → web
+ * `localStorage`), so a failure on one backend still leaves the photo
+ * recoverable from another.
+ *
+ * @param items Complete draft queue — this is a snapshot, not a delta.
+ */
 export async function saveDraftItems(items: DraftItem[]): Promise<void> {
   const payload = JSON.stringify(items);
 
-  const fs = getFileSystem();
-  if (fs && fs.documentDirectory) {
+  const path = getDraftFilePath();
+  if (path) {
     try {
-      await fs.writeAsStringAsync(
-        `${fs.documentDirectory}${STORAGE_KEY}.json`,
-        payload,
-      );
+      await FileSystem.writeAsStringAsync(path, payload);
       return;
     } catch {
       // fall through to other backends
@@ -97,9 +133,10 @@ export async function saveDraftItems(items: DraftItem[]): Promise<void> {
       ls.setItem(STORAGE_KEY, payload);
       return;
     } catch {
-      // quota or unavailable — in-memory only
+      // quota or unavailable — session-only
     }
   }
-  // In-memory fallback: the queue works for the session but does not survive a
-  // process exit. Acceptable in mock mode; documented in HANDOFF-mobile.md.
+  // No durable backend on this platform: the queue keeps working for the
+  // session, but a process exit loses it. Reached only by a bare Node process,
+  // i.e. never on a device build.
 }
