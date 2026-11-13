@@ -70,19 +70,22 @@ $ cd apps/mobile && npx tsc --noEmit
 ```
 
 ```
-$ npx expo export --platform ios
-(node:86630) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. ...
+$ npx expo export --platform ios --output-dir /tmp/sn-metro-after
 Starting Metro Bundler
-iOS Bundled 30632ms index.ts (573 modules)
+iOS Bundled 5091ms index.ts (623 modules)
 
 Exporting , bundle, for ,: 1  ios
-_expo/static/js/ios/index-fbd84db8057f8b73845b6b7a88c9a27c.hbc (,) 1.57 MB
+_expo/static/js/ios/index-bf638c1f8984ddde44320a3a387abd56.hbc (,) 2.15 MB
 
 Exporting , file,: 1
 metadata.json (,) 142 B
 
-App exported to: dist
+App exported to: /tmp/sn-metro-after
 ```
+
+Before the `metro.config.js` resolver fix the same command failed at 555 modules with
+`Unable to resolve module @supabase/functions-js`. The earlier 573-module figure predates the
+static supabase import.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
@@ -93,8 +96,11 @@ App exported to: dist
   can be installed. This is why screenshots are "code-renderable" but not device-captured.
 - **`expo-file-system` / `expo-sqlite` are not installed**: persistence falls back to
   `localStorage` (web) / in-memory. A native build must swap in the real backends.
-- **Supabase and `@snaplist/shared` are not installed**: both are lazy-`require`d; the analytics
-  vocabulary is a local typed mirror of `packages/shared/src/analytics.ts` (must not drift).
+- **Supabase is installed and imported statically** (`@supabase/supabase-js` ^2.119.0 +
+  `expo-constants` 16.0.0): the client is constructed only when `hasSupabase` is true, so mock mode is
+  unchanged when env is absent. `@snaplist/shared` is still NOT imported — the analytics vocabulary
+  is a local typed mirror of `packages/shared/src/analytics.ts` (must not drift), because CI runs
+  `lint_ts` before `test_js` builds `packages/shared/dist` and `dist/` is gitignored.
 - **`paywall_variant` is a deterministic mock** derived from a hash of the subject. The API must
   return the sticky server-assigned variant (E8-T4).
 - **On-model renders are mock**: `requestOnModel` only flips local state. Real renders are BLOCKED
@@ -104,12 +110,12 @@ App exported to: dist
 
 1. E6 is built end-to-end in mock mode: Capture → Review/Attributes → On-model → Export, plus Drafts.
 2. `tsc --noEmit` is clean; no `any` in the app.
-3. `expo export --platform ios` succeeds (573 modules, 1.57 MB bundle).
+3. `expo export --platform ios` succeeds (623 modules, 2.15 MB bundle).
 4. Every screen renders with mock data when `API_BASE` is unset.
 5. All frozen analytics events are emitted from the screen that owns them.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.
 7. Offline queue persists and resumes; the 4th capture is saved, not lost.
 8. Batch is per-item with partial success and per-row retry.
-9. Deferred: real camera/FS/SQLite native modules, Supabase client, server-assigned paywall variant.
-10. Next: install `expo-camera` + `expo-file-system` + `supabase-js` when the registry recovers,
+9. Deferred: real camera/FS/SQLite native modules, server-assigned paywall variant.
+10. Next: install `expo-camera` + `expo-file-system` when the registry recovers,
     then run `npx expo start` on a device.
