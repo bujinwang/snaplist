@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from evals.mask_provenance import ReviewState
 from evals.tools import seg_iou
 from packages.vision.runtime import RuntimeInfo
 from packages.vision.segment import SegmentResult
@@ -275,3 +276,65 @@ def test_the_report_states_the_denominator_and_lists_the_mask_paths(
     assert "masks/top-01.png" in text and "masks/top-02.png" in text
     assert "| masked entries scored (n) | 2 |" in text
     assert "| entries without a mask (not scored) | 2 |" in text
+
+
+# ------------------------------------------------------- the U1 sentence follows the register
+
+
+def _reviewed_set(workdir: Path, fake_segment: FakeSegment) -> tuple[Path, list, dict]:
+    """The same throwaway set, but every mask carries the reviewed `mask_source`."""
+    golden = build_set(workdir, MASKED)
+    manifest = json.loads((golden / "manifest.json").read_text())
+    for item in manifest:
+        item["mask_source"] = "ai-assisted:birefnet+point-reviewed"
+    (golden / "manifest.json").write_text(json.dumps(manifest))
+    rows, meta = seg_iou.run(golden)
+    return golden, rows, meta
+
+
+def test_the_report_says_u1_met_when_the_injected_state_says_so(
+    workdir: Path, fake_segment: FakeSegment
+) -> None:
+    """A 20/20 register with a decided threshold must not print 'U1 UNMET' any more."""
+    golden, rows, meta = _reviewed_set(workdir, fake_segment)
+
+    text = seg_iou.render(
+        rows, meta, seg_iou.summarise(rows), golden, 0.92,
+        review_state=ReviewState(20, 20, True, "SET"),
+    )
+
+    assert "U1 is MET" in text
+    assert "hand-mask gate is closed" in text
+    assert "U1 UNMET" not in text
+    assert "stays open" not in text, "the gate sentence must follow the state, not a literal"
+
+
+def test_the_report_says_u1_unmet_when_the_injected_state_says_so(
+    workdir: Path, fake_segment: FakeSegment
+) -> None:
+    """The sceptical direction still works: an unreviewed register keeps the gate open."""
+    golden, rows, meta = _reviewed_set(workdir, fake_segment)
+
+    text = seg_iou.render(
+        rows, meta, seg_iou.summarise(rows), golden, 0.92,
+        review_state=ReviewState(0, 20, False, "UNSET"),
+    )
+
+    assert "U1 is UNMET" in text
+    assert "stays open" in text
+    assert "U1 is MET" not in text
+
+
+def test_a_registered_golden_set_prints_the_threshold_outcome_not_informational(
+    workdir: Path, fake_segment: FakeSegment
+) -> None:
+    """On the golden set with U1 MET the verdict is PASS/BELOW, not 'informational'."""
+    golden, rows, meta = _reviewed_set(workdir, fake_segment)
+
+    text = seg_iou.render(
+        rows, meta, seg_iou.summarise(rows), golden, 0.92,
+        review_state=ReviewState(20, 20, True, "SET"),
+    )
+
+    assert "**PASS**" in text or "**BELOW**" in text
+    assert "informational on this set" not in text

@@ -25,7 +25,8 @@ PNG changes its byte hash without changing its pixels, so the hash is
 not a pixel-equivalence judgement. A size mismatch is reported as a named failing check
 (entry id + both sizes); B2 never silently resizes.
 
-Exit codes: `0` = the register is structurally valid (and, today, prints `U1 UNMET`);
+Exit codes: `0` = the register is structurally valid (the `U1 MET` / `U1 UNMET` verdict it
+prints is derived from the register itself, not from this exit code);
 `1` = broken/conflicting register or a failed reconciliation; `2` = register missing or not
 usable JSON. **`0` is NOT a DoD verdict.** U1's last step is a human sign-off, and while the
 edit-distance threshold is `UNSET`, `u1_met` is False even if all 20 rows say `reviewed`.

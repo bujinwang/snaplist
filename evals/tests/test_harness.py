@@ -156,3 +156,87 @@ def test_golden_state_is_honest_about_a_missing_manifest() -> None:
         assert int(state["entries"]) > 0
     else:
         assert state["entries"] == 0
+
+
+def _segment_note_with(monkeypatch, review_state, rows, tmp: Path) -> str:
+    """Run `_measure_segmentation` against fixed rows and a fixed register summary."""
+    import evals.run as run_mod
+    import packages.vision.segment as segment_mod
+    from evals.mask_provenance import ReviewState
+    from evals.tools import seg_iou
+
+    assert isinstance(review_state, ReviewState)
+    golden = tmp / "golden"
+    golden.mkdir()
+    (golden / "manifest.json").write_text(json.dumps([{"id": "a", "mask_path": "masks/a.png"}]))
+    weights = tmp / "weights.onnx"
+    weights.write_bytes(b"stub")
+
+    monkeypatch.setattr(run_mod, "masked_set", lambda: golden)
+    monkeypatch.setattr(segment_mod, "weights_path", lambda: weights)
+    monkeypatch.setattr(
+        seg_iou, "run", lambda _g: (rows, {"backend": "u2net", "device": "cpu", "n": len(rows)})
+    )
+    monkeypatch.setattr(seg_iou, "current_review_state", lambda: review_state)
+
+    measurement, _notes = run_mod._measure_segmentation()
+    assert measurement is not None
+    return measurement.note
+
+
+def _three_reviewed_rows() -> list[dict]:
+    source = "ai-assisted:birefnet+point-reviewed"
+    return [
+        {
+            "id": f"top-0{i}",
+            "category": "top",
+            "iou": 0.95 + i / 100,
+            "pred_coverage": 0.4,
+            "ref_coverage": 0.4,
+            "seconds": 0.3,
+            "mask": f"masks/top-0{i}.png",
+            "mask_source": source,
+        }
+        for i in (1, 2, 3)
+    ]
+
+
+def test_the_harness_note_counts_entries_per_tier_not_source_names(monkeypatch) -> None:
+    """Three rows sharing one `mask_source` are three masks in that tier, not one."""
+    import tempfile
+
+    from evals.mask_provenance import ReviewState
+
+    with tempfile.TemporaryDirectory() as tmp:
+        note = _segment_note_with(
+            monkeypatch, ReviewState(20, 20, True, "SET"), _three_reviewed_rows(), Path(tmp)
+        )
+
+    assert "AI-assisted point-reviewed=3" in note
+    assert "AI-assisted point-reviewed=1" not in note
+
+
+def test_the_harness_note_follows_the_register_instead_of_asserting_unmet(monkeypatch) -> None:
+    """The note once hardcoded 'U1 is UNMET (register 0/20 reviewed)' and outlived the fact."""
+    import tempfile
+
+    from evals.mask_provenance import ReviewState
+
+    with tempfile.TemporaryDirectory() as tmp:
+        met = _segment_note_with(
+            monkeypatch, ReviewState(20, 20, True, "SET"), _three_reviewed_rows(), Path(tmp)
+        )
+    assert "the point-review register is 20/20 reviewed" in met
+    assert "U1 is MET" in met
+    assert "the hand-mask gate is closed" in met
+    assert "U1 is UNMET" not in met
+    assert "register 0/20" not in met
+
+    with tempfile.TemporaryDirectory() as tmp:
+        unmet = _segment_note_with(
+            monkeypatch, ReviewState(0, 20, False, "UNSET"), _three_reviewed_rows(), Path(tmp)
+        )
+    assert "the point-review register is 0/20 reviewed" in unmet
+    assert "U1 is UNMET" in unmet
+    assert "the hand-mask gate stays open" in unmet
+    assert "U1 is MET" not in unmet
