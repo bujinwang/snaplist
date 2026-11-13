@@ -820,9 +820,8 @@ def test_the_harness_row_is_a_number_and_its_note_carries_the_caveats() -> None:
         "ADR-011 §2.2",
         "quad quality",
         "no ground-truth quad",
-        "Proposed",
-        "pending Bert",
-        "NOT",
+        "accepted",          # ADR-011 adjudicated by Bert 2026-11-12
+        "approved gate",     # the row is now an approved gate, not pending evidence
         # the threshold semantics and the resampler ceiling travel with the number too
         "agreement with Pillow's kernel",
         "not proof that nothing was repainted",
@@ -843,7 +842,7 @@ def test_the_render_carries_the_definition_and_the_limitations(measured) -> None
     report = metric.render(scores, meta, metric.summarise(scores))
     for required in (
         "ADR-011 §2.2",
-        "Proposed",
+        "accepted",          # ADR-011 adjudicated by Bert 2026-11-12
         "quad quality",
         "no ground-truth quad",
         "transport budget",
