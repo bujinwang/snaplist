@@ -397,12 +397,27 @@ after those 20 masks are re-made; that is a follow-up ticket.
 
 **E2-T1 acceptance**
 ```bash
-python -m packages.vision.cli --in evals/fixtures/bottom-03.jpg --out /tmp/sn2
+python -m packages.vision.cli --in evals/golden-provisional/photos/bottom-03.jpg --out /tmp/sn2 --category bottom
 python -m evals.run --suite vision    # "rectify SSIM (inside mask)" must be a number
 ```
 DoD: SSIM ≥ 0.85 inside the mask versus the source; output is sRGB PNG ≤ 1600px on the long
 edge; **no generative repainting in this module** (grep the diff for `diffusers` — there must be
 none).
+
+> **Correction, 2026-11-12 — the command above, not the DoD.** The original path
+> `evals/fixtures/bottom-03.jpg` never existed: `git log --all` has no record of any
+> `evals/fixtures/*.jpg`, so this acceptance had never run as written (the same is true of
+> `top-01.jpg` in E1-T2, `dress-02.jpg` in E3 and `top-04.jpg` in E4 — a PLAN-level gap, not
+> one ticket's). The bytes live at `evals/golden-provisional/photos/bottom-03.jpg` (tracked,
+> 17 photos) and `--category bottom` is required: the default is `top`, and because both
+> categories use a 4/5 aspect the output would have the right shape with
+> `meta.notes["category"] = "top"` — wrong, and silently so.
+>
+> **The DoD sentence itself is under review, not corrected here.** "SSIM versus the source" has
+> no literal reading for a geometric transform; `docs/ADR-011-rectify-ssim-semantics.md`
+> proposes a two-part reading (transport SSIM against an independently re-rendered reference,
+> plus exact corner/canvas conformance) and is **`Proposed — pending Bert's review`**. Until
+> that ruling, the harness row is evidence with a stated definition, **not a ratified gate**.
 
 **E2-T2 acceptance**
 ```bash
