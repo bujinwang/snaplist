@@ -231,7 +231,10 @@ def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
         return None, [f"segmentation: UNMEASURED — the measurement failed ({reason})"]
 
     stats = seg_iou.summarise(rows)
-    sources = sorted({str(row.get("mask_source", "unspecified")) for row in rows})
+    # Entries per `mask_source`, NOT distinct source names: 20 rows that share one source
+    # string are 20 masks in that tier, and `len(list_of_names)` printed them as "1".
+    counts = seg_iou._source_counts(rows)
+    sources = sorted(counts)
     tiers = {name: mp.classify(name).tier for name in sources}
     machine_sources = [name for name in sources if tiers[name] is mp.MaskSourceTier.MACHINE]
     ai_assisted_sources = [
@@ -239,8 +242,12 @@ def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
         if tiers[name] is mp.MaskSourceTier.AI_ASSISTED_REVIEWED
     ]
     hand_sources = [name for name in sources if _is_hand_made_source(name)]
+    hand_entries = sum(counts[name] for name in hand_sources)
+    ai_entries = sum(counts[name] for name in ai_assisted_sources)
+    machine_entries = sum(counts[name] for name in machine_sources)
     # ADR-010: this function does NOT call the segmentation renderer and does not inject a
-    # ReviewState; only seg_iou.main() does that. The note states the register fact in prose.
+    # ReviewState into it; only seg_iou.main() does that. It states the register fact in prose,
+    # read through the same helper the E1-T4 report uses so the two cannot disagree.
     note = (
         f"backend {meta['backend']} on {meta['device']}, mask source: {', '.join(sources)}; "
         f"median {stats['median']:.4f}, worst {stats['min']:.4f}"
@@ -252,16 +259,28 @@ def _measure_segmentation() -> tuple[Measurement | None, list[str]]:
             "not the E1-T4 DoD number; the hand-mask gate stays open"
         )
     else:
+        state = seg_iou.current_review_state()
         tier_summary = (
-            f"hand-drawn={len(hand_sources)}, "
-            f"AI-assisted point-reviewed={len(ai_assisted_sources)}, "
-            f"machine-made={len(machine_sources)}"
+            f"hand-drawn={hand_entries}, "
+            f"AI-assisted point-reviewed={ai_entries}, "
+            f"machine-made={machine_entries}"
+        )
+        # Derived, never typed in. This sentence hardcoded "U1 is UNMET (register 0/20
+        # reviewed)" and kept printing it after the register reached 20/20 with the threshold
+        # SET, which made the eval report contradict the ledger it summarises.
+        verdict = (
+            "the hand-mask gate is closed"
+            if state.u1_met
+            else "the hand-mask gate stays open"
         )
         note += (
             f"; ADR-010 tiers: {tier_summary}; the relaxed-DoD decision is the "
             "\"source field + evidence record\" two-condition check in "
-            "python -m evals.tools.validate_point_reviews; for this run U1 is UNMET "
-            "(register 0/20 reviewed), so the hand-mask gate stays open"
+            "python -m evals.tools.validate_point_reviews; the point-review register is "
+            f"{state.reviewed}/{state.slots} reviewed with the edit-distance threshold "
+            f"{state.threshold_status}, so U1 is {'MET' if state.u1_met else 'UNMET'} and "
+            f"{verdict}; per-fixture IoU and the mask paths are in evals/reports/seglab.md "
+            "(`python -m evals.tools.seg_iou --golden-dir evals/golden`)"
         )
     measurement = Measurement(
         value=stats["mean"],

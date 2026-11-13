@@ -189,6 +189,12 @@ def run(golden_dir: Path) -> tuple[list[dict], dict]:
                 "seconds": round(result.meta.seconds or 0.0, 3),
                 "pred_coverage": round(float((predicted >= 128).mean()), 4),
                 "ref_coverage": round(float((reference >= 128).mean()), 4),
+                # Which way a low score leans. An IoU of 0.56 can mean "the model missed most
+                # of the garment" or "the model painted the sofa too"; they are different
+                # defects and a reader cannot tell them apart from the single number.
+                "ref_only_px": int(((reference >= 128) & ~(predicted >= 128)).sum()),
+                "pred_only_px": int(((predicted >= 128) & ~(reference >= 128)).sum()),
+                "ref_px": int((reference >= 128).sum()),
                 "mask_source": entry.get("mask_source", "unspecified"),
                 "mask": mask_rel,
             }
@@ -335,13 +341,23 @@ def render(
     elif ai_assisted_sources or hand_sources:
         described = _describe_sources(counts, ai_assisted_sources or hand_sources)
         tier_word = "AI-assisted point-reviewed" if ai_assisted_sources else "hand-drawn"
+        # The U1 sentence is DERIVED from the injected state, never typed in. It was once a
+        # literal "(U1 UNMET)" and kept saying so after the register reached 20/20 with the
+        # threshold SET — a report that contradicts its own numbers is worse than no report.
+        if state.u1_met:
+            gate = (
+                f"MET (edit-distance threshold {state.threshold_status}), so the hand-mask gate "
+                "is closed."
+            )
+        else:
+            gate = "UNMET, so the hand-mask gate stays open."
         lines += [
             f"> **Reference masks are {tier_word}:** {described}.",
             "> The relaxed-DoD decision is the \"source field + evidence record\" two-condition",
             "> check in `python -m evals.tools.validate_point_reviews` (ADR-010). For this run the",
-            f"> register is {state.reviewed}/{state.slots} point-reviewed (U1 UNMET), so the",
-            "> hand-mask gate stays open. ADR-010 does not pre-adjudicate the IoU semantics after",
-            "> the 20 masks are re-made; that is a follow-up ticket.",
+            f"> register is {state.reviewed}/{state.slots} point-reviewed and U1 is {gate}",
+            "> ADR-010 does not pre-adjudicate the IoU semantics after the 20 masks are re-made;",
+            "> that is a follow-up ticket.",
             "",
         ]
     if unscored:
@@ -367,6 +383,30 @@ def render(
             f"{row['pred_coverage']:.3f} | {row['ref_coverage']:.3f} | {row['seconds']:.2f} | "
             f"`{row['mask']}` |"
         )
+    # A low IoU invites two opposite readings — "the model cannot see the garment" and "the
+    # model painted the furniture too" — and the single number cannot tell them apart. The
+    # counts can, so a row that drags the mean is explained next to the mean.
+    outlier_cut = 0.90
+    outliers = [row for row in rows if row["iou"] < outlier_cut and row.get("ref_px")]
+    if outliers:
+        parts = []
+        for row in outliers:
+            ref_px = row["ref_px"]
+            missed = row.get("ref_only_px", 0)
+            contained = 100.0 * (ref_px - missed) / ref_px
+            parts.append(
+                f"`{row['id']}` {row['iou']:.4f}: {contained:.2f}% of the reference is inside "
+                f"the prediction, {missed} reference px missed, "
+                f"{row.get('pred_only_px', 0)} px predicted beyond it"
+            )
+        lines += [
+            "",
+            f"**Rows below {outlier_cut:.2f} — which way the error leans.** " + "; ".join(parts)
+            + ". The two counts separate the two failure directions: high containment with a",
+            "large predicted-beyond count means the model covered extra area; a large missed",
+            "count with low containment is the opposite failure. Read them together, not the",
+            "IoU alone.",
+        ]
     lines += [
         "",
         "## Summary",
@@ -431,14 +471,18 @@ def render(
         # hand-mask line, only approach it.
         verdict = machine_verdict()
     else:
-        # Reachable on purpose: ADR-010 does not pre-adjudicate the IoU semantics of a fully
-        # registered set. A follow-up ticket owns that decision.
+        # Reachable for the first time now that a set can be fully registered: every reference
+        # sits in a reviewed tier and U1 is MET. E1-T4's DoD is this report, so the verdict
+        # states the threshold comparison plainly instead of calling the number informational
+        # on the very set the DoD names.
         outcome = "PASS" if stats["mean"] >= threshold else "BELOW"
+        where = "the golden set" if golden_dir.name == "golden" else f"`{golden_dir.name}`"
         verdict = (
             f"Against the E0-T1 threshold of {threshold}: **{outcome}** "
-            f"({stats['mean']:.4f} {comparison} {threshold}) — informational on this set, a gate "
-            "only on the golden set. DoD semantics for a fully registered set are defined by a "
-            "follow-up ticket; ADR-010 does not pre-adjudicate them."
+            f"({stats['mean']:.4f} {comparison} {threshold}) on {where}, with every reference in "
+            "a reviewed tier and U1 MET. The threshold above is the gate this report quotes; "
+            "the absolute quality bar that IoU implies is not adjudicated here — ADR-010 "
+            "leaves that to a follow-up ticket."
         )
     lines += ["", verdict, ""]
     return "\n".join(lines)
