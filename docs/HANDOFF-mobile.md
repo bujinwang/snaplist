@@ -100,11 +100,20 @@ metadata.json (,) 49 B
 App exported to: /tmp/sn-final-web
 ```
 
-Both are measured with `--clear`, i.e. from a cold cache — a warm-cache web run reports
-242 modules for the same 647 kB bundle, so quote the cold figure or the count will not
-reproduce. Before the `metro.config.js` resolver fix the iOS command failed at 555 modules
-with `Unable to resolve module @supabase/functions-js`; the older 573-module / 1.57 MB
-figures predate both the static supabase import and expo-file-system.
+Both are measured with `--clear`, i.e. from a cold cache — and **the module count is not a
+fixed number**: it drifts with cache state and with the tree (warm-cache web runs have been seen
+across 241–254 modules for the same 647 kB bundle). Quote the byte figure, which is stable; treat
+the count as indicative. Before the `metro.config.js` resolver fix the iOS command failed with
+`Unable to resolve module @supabase/functions-js` — that message is the reproducible part; the
+count it reached before failing drifts too (560–564). The older 573-module / 1.57 MB figures
+predate both the static supabase import and expo-file-system.
+
+**The Hermes `.hbc` is not byte-reproducible, and build identity must not pretend it is.**
+Exporting an identical source tree twice has produced the same file name, the same
+`index-<hash>` stamp and the same size while the **file md5 differed**. Mobile build identity
+here therefore pins the **filename hash** (`index-aea7da23…` — what `metadata.json` and the
+native build reference) and never the bytes: do not diff `.hbc` md5s between builds and call the
+difference a regression, and do not use them as a cache key.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
@@ -129,7 +138,7 @@ figures predate both the static supabase import and expo-file-system.
 
 1. E6 is built end-to-end in mock mode: Capture → Review/Attributes → On-model → Export, plus Drafts.
 2. `tsc --noEmit` is clean; no `any` in the app.
-3. `expo export` succeeds for iOS (628 modules, 2.17 MB) and web (254 modules, 647 kB).
+3. `expo export` succeeds for iOS (628 modules, 2.17 MB) and web (647 kB; module count drifts with cache).
 4. Every screen renders with mock data when `API_BASE` is unset.
 5. All frozen analytics events are emitted from the screen that owns them.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.

@@ -138,7 +138,16 @@ export async function loadDraftItems(): Promise<DraftItem[]> {
  * @param payload Serialized draft queue.
  */
 async function persist(payload: string): Promise<void> {
-  const path = getDraftFilePath();
+  // The path lookup is guarded separately, not folded into the write/move try below: if it
+  // throws there is no document on disk to talk about, so that catch's reasoning ("the previous
+  // document is still on disk") would not apply. Catching it here is what makes `never rejects`
+  // a structural fact instead of a property of today's platform support.
+  let path: string | null = null;
+  try {
+    path = getDraftFilePath();
+  } catch {
+    // no file backend on this platform
+  }
   if (path) {
     const tmpPath = `${path}.tmp`;
     try {
@@ -183,7 +192,12 @@ async function persist(payload: string): Promise<void> {
  * file-system write fails, the previous document stays on disk and the next launch
  * reads that older snapshot — it is not re-written through `localStorage`.
  *
- * Never rejects — it resolves once this snapshot has been written or skipped.
+ * Never rejects once it returns: the path lookup and every backend failure are
+ * caught. `JSON.stringify` runs synchronously before the write is enqueued, so an
+ * unserialisable snapshot throws at the call site instead of rejecting.
+ *
+ * Note for callers that update in-memory state before calling this
+ * (`DraftsProvider` does): a throw leaves memory ahead of disk.
  *
  * @param items Complete draft queue — this is a snapshot, not a delta.
  * @returns A promise for the queued write (and therefore for every write queued
