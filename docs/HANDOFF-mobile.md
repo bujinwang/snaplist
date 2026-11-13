@@ -70,19 +70,22 @@ $ cd apps/mobile && npx tsc --noEmit
 ```
 
 ```
-$ npx expo export --platform ios
-(node:86630) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. ...
+$ npx expo export --platform ios --output-dir /tmp/sn-metro-after
 Starting Metro Bundler
-iOS Bundled 30632ms index.ts (573 modules)
+iOS Bundled 5091ms index.ts (623 modules)
 
 Exporting , bundle, for ,: 1  ios
-_expo/static/js/ios/index-fbd84db8057f8b73845b6b7a88c9a27c.hbc (,) 1.57 MB
+_expo/static/js/ios/index-bf638c1f8984ddde44320a3a387abd56.hbc (,) 2.15 MB
 
 Exporting , file,: 1
 metadata.json (,) 142 B
 
-App exported to: dist
+App exported to: /tmp/sn-metro-after
 ```
+
+Before the `metro.config.js` resolver fix the same command failed at 555 modules with
+`Unable to resolve module @supabase/functions-js`. The earlier 573-module figure predates the
+static supabase import.
 
 `apps/mobile/dist/` is gitignored (`.gitignore:14`).
 
@@ -107,12 +110,12 @@ App exported to: dist
 
 1. E6 is built end-to-end in mock mode: Capture → Review/Attributes → On-model → Export, plus Drafts.
 2. `tsc --noEmit` is clean; no `any` in the app.
-3. `expo export --platform ios` succeeds (573 modules, 1.57 MB bundle).
+3. `expo export --platform ios` succeeds (623 modules, 2.15 MB bundle).
 4. Every screen renders with mock data when `API_BASE` is unset.
 5. All frozen analytics events are emitted from the screen that owns them.
 6. On-model quotes the E9 consent block verbatim and gates the render on acknowledgement.
 7. Offline queue persists and resumes; the 4th capture is saved, not lost.
 8. Batch is per-item with partial success and per-row retry.
-9. Deferred: real camera/FS/SQLite native modules, Supabase client, server-assigned paywall variant.
-10. Next: install `expo-camera` + `expo-file-system` + `supabase-js` when the registry recovers,
+9. Deferred: real camera/FS/SQLite native modules, server-assigned paywall variant.
+10. Next: install `expo-camera` + `expo-file-system` when the registry recovers,
     then run `npx expo start` on a device.
