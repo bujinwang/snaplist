@@ -4,41 +4,28 @@
  * First launch signs in *anonymously* (ADR-003): a seller can capture and export before any
  * email is asked for. When Supabase env is configured we use `@supabase/supabase-js`; otherwise
  * we run a mock anonymous session so the app is fully usable (and every screen renders) in mock
- * mode. Supabase is loaded via a lazy global `require` so the app builds without the package
- * installed in this workspace. TODO(E6): consolidate onto a static `@supabase/supabase-js`
- * import once `pnpm install` can fetch it.
+ * mode.
+ *
+ * The client is created only when `hasSupabase` is true, so mock mode never constructs one.
+ *
+ * NOTE (React Native session storage): supabase-js persists sessions through `localStorage` by
+ * default, which RN does not provide. Without an explicit `storage` adapter it falls back to
+ * memory, so the anonymous subject is re-created on each launch. Wiring
+ * `@react-native-async-storage/async-storage` is the follow-up; it is not added here because it
+ * is a native module.
  */
 
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { config, hasSupabase } from "../lib/env";
 import { uuidv4 } from "../lib/uuid";
 import { configureAnalytics } from "../lib/analytics";
 
-interface SupabaseAuthLike {
-  getUser: () => Promise<{ data: { user: { id: string } | null } }>;
-  signInAnonymously: () => Promise<{
-    data: { user: { id: string } | null };
-    error: unknown;
-  }>;
-  signInWithOtp: (opts: { email: string; options?: unknown }) => Promise<{ error: unknown }>;
-  signInWithOAuth: (opts: { provider: "apple" | "google" }) => Promise<{ error: unknown }>;
-  signOut: () => Promise<{ error: unknown }>;
-}
-interface SupabaseClientLike {
-  auth: SupabaseAuthLike;
-}
-interface SupabaseModuleLike {
-  createClient: (url: string, key: string, opts?: unknown) => SupabaseClientLike;
-}
-
-function createSupabaseClient(): SupabaseClientLike | null {
+function createSupabaseClient(): SupabaseClient | null {
   if (!hasSupabase) return null;
-  const req = (globalThis as { require?: (id: string) => unknown }).require;
-  if (!req) return null;
   try {
-    const mod = req("@supabase/supabase-js") as SupabaseModuleLike;
-    return mod.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    return createClient(config.supabaseUrl, config.supabaseAnonKey, {
       auth: { persistSession: true, autoRefreshToken: true },
     });
   } catch {
@@ -77,7 +64,7 @@ export function AuthProvider(props: { children: React.ReactNode }): JSX.Element 
   const [subject, setSubject] = useState("anon_unknown");
   const [userId, setUserId] = useState<string | null>(null);
   const [isAnon, setIsAnon] = useState(true);
-  const clientRef = useRef<SupabaseClientLike | null>(null);
+  const clientRef = useRef<SupabaseClient | null>(null);
   const sessionIdRef = useRef<string>(uuidv4());
 
   useEffect(() => {
