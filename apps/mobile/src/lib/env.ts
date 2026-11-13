@@ -2,23 +2,17 @@
  * Runtime configuration. PLAN.md E6-T1 mandates that API_BASE and the Supabase creds come from
  * `expo-constants` (the `extra` block in app.json / EAS env), never a hardcoded string.
  *
- * We read it through a lazy global `require` so the app still *compiles and runs in mock mode*
- * when `expo-constants` is not installed in this workspace (the registry mirror is currently
- * refusing tarball downloads). When the package is present, its values win; otherwise we fall
- * back to the committed defaults below, which are all empty -> mock mode.
+ * `expo-constants` is a real dependency now (the registry is reachable again), so this is a
+ * static import. When `extra` is absent the defaults below are all empty -> mock mode, which
+ * keeps every screen renderable without a backend.
  */
+
+import Constants from "expo-constants";
 
 interface ExtraConfig {
   apiBase?: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
-}
-interface ExpoConfigLike {
-  extra?: ExtraConfig;
-  version?: string;
-}
-interface ConstantsLike {
-  expoConfig?: ExpoConfigLike | null;
 }
 
 function readConfig(): { extra: ExtraConfig; version: string } {
@@ -26,19 +20,11 @@ function readConfig(): { extra: ExtraConfig; version: string } {
     extra: { apiBase: "", supabaseUrl: "", supabaseAnonKey: "" },
     version: "0.0.0",
   };
-  const req = (globalThis as { require?: (id: string) => unknown }).require;
-  if (!req) return fallback;
-  try {
-    const Constants = req("expo-constants") as ConstantsLike;
-    const ec = Constants.expoConfig ?? null;
-    if (ec) {
-      fallback.extra = (ec.extra ?? {}) as ExtraConfig;
-      if (typeof ec.version === "string" && ec.version.length > 0) {
-        fallback.version = ec.version;
-      }
-    }
-  } catch {
-    // expo-constants not installed — use committed defaults (mock mode).
+  const ec = Constants.expoConfig ?? null;
+  if (!ec) return fallback;
+  fallback.extra = (ec.extra ?? {}) as ExtraConfig;
+  if (typeof ec.version === "string" && ec.version.length > 0) {
+    fallback.version = ec.version;
   }
   return fallback;
 }
