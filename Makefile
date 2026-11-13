@@ -13,7 +13,7 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 .DEFAULT_GOAL := help
 
 .PHONY: help install test lint fmt evals evals-strict evals-report evals-vision \
-        golden golden-provisional masks-provisional seg-iou golden-proposals \
+        golden golden-provisional masks-provisional seg-iou seg-iou-golden golden-proposals \
         fetch-models fetch-sdxl \
         install-sdxl dev dev-web dev-mobile contract clean
 
@@ -35,7 +35,8 @@ help:
 	@echo "  make golden     validate golden-set file/count structure; exit 0 only when those checks pass (mask provenance NOT verified)"
 	@echo "  make golden-provisional  structure check of the web-sourced stand-in set"
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
-	@echo "  make seg-iou    segment the provisional set and report IoU (evals/reports/seglab.md)"
+	@echo "  make seg-iou    smoke signal: segment the provisional set -> evals/reports/seglab-provisional.md"
+	@echo "  make seg-iou-golden  the E1-T4 report: segment the golden set -> evals/reports/seglab.md"
 	@echo "  make golden-proposals  regenerate the 20 ADR-010 proposal drafts (floodfill-border, zero-dep)"
 	@echo "  make fetch-models  download the u2net weights (176 MB) into $(MODEL_DIR)"
 	@echo "  make fetch-sdxl download the SDXL inpainting weights (6.9 GB, fp16) for mode=sdxl_inpaint"
@@ -102,8 +103,14 @@ masks-provisional:
 
 # E1-T4, first half: segment every photo in the provisional set and report IoU. It reports,
 # it does not gate — the denominator is algorithmic masks, so the number is a smoke signal.
+# It writes a SEPARATE report: the real E1-T4 evidence is seglab.md (golden set), and a
+# smoke-signal run must never overwrite it.
 seg-iou:
-	$(PY) -m evals.tools.seg_iou --golden-dir evals/golden-provisional
+	$(PY) -m evals.tools.seg_iou --golden-dir evals/golden-provisional --report evals/reports/seglab-provisional.md
+
+# E1-T4, the DoD number: the 20 AI-assisted point-reviewed masks in the golden set.
+seg-iou-golden:
+	$(PY) -m evals.tools.seg_iou --golden-dir evals/golden
 
 # ADR-010 golden-mask SOP step 1 (the automated half): regenerate the 20 proposal drafts with the
 # zero-dependency floodfill-border backend. The Gemini google-nano-banana backend is opt-in:

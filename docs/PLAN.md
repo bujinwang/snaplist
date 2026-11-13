@@ -200,7 +200,7 @@ wrong — use one of the rows above or drop the claim.
 | id | ticket | owner | priority | files it may touch | depends on |
 |---|---|---|---|---|---|
 | E0-T1 | Golden set: 40 real garment photos + manifest + 20 reference masks (ADR-010 three-tier provenance: hand-drawn / AI-assisted point-reviewed / machine-made) | vision | P0 | `evals/golden/**`, `evals/fixtures/**` | — |
-| E0-T2 | Harness runner: suites, thresholds, report writer | vision | P0 | `evals/run.py`, `evals/suites/**`, `evals/tests/**` | E0-T1 |
+| E0-T2 | Harness runner: suites, thresholds, report writer | vision | P0 | `evals/run.py`, `evals/tests/**` | E0-T1 |
 | E0-T3 | CI pipeline: lint + test + evals on every PR | qa | P0 | `.github/workflows/**`, `infra/ci/**` | E0-T2 |
 | E0-T4 | Regression gate + cost dashboard | qa | P1 | `infra/ci/gates/**`, `docs/QA.md` | E0-T3 |
 | E0-T5 | Telemetry report: tool time, fields-touched, export burst — from real events | qa | P0 | `evals/telemetry/**`, `docs/QA.md` | E5-T6, E0-T2 |
