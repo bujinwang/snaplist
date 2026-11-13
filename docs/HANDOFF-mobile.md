@@ -93,8 +93,11 @@ App exported to: dist
   can be installed. This is why screenshots are "code-renderable" but not device-captured.
 - **`expo-file-system` / `expo-sqlite` are not installed**: persistence falls back to
   `localStorage` (web) / in-memory. A native build must swap in the real backends.
-- **Supabase and `@snaplist/shared` are not installed**: both are lazy-`require`d; the analytics
-  vocabulary is a local typed mirror of `packages/shared/src/analytics.ts` (must not drift).
+- **Supabase is installed and imported statically** (`@supabase/supabase-js` ^2.119.0 +
+  `expo-constants` 16.0.0): the client is constructed only when `hasSupabase` is true, so mock mode is
+  unchanged when env is absent. `@snaplist/shared` is still NOT imported — the analytics vocabulary
+  is a local typed mirror of `packages/shared/src/analytics.ts` (must not drift), because CI runs
+  `lint_ts` before `test_js` builds `packages/shared/dist` and `dist/` is gitignored.
 - **`paywall_variant` is a deterministic mock** derived from a hash of the subject. The API must
   return the sticky server-assigned variant (E8-T4).
 - **On-model renders are mock**: `requestOnModel` only flips local state. Real renders are BLOCKED
