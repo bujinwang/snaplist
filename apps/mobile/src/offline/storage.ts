@@ -21,12 +21,23 @@
  *      module-level cache: a silent pseudo-persistence would hide a broken
  *      backend during manual QA, which is the failure mode this module fixes.
  *
- * Writes are atomic: the payload goes to `<file>.tmp` first and is then moved
- * onto the target with `moveAsync`, so the draft document is never observed
- * half-written — a crash can only lose the newest snapshot, never corrupt the
- * one already on disk. (Android implements the move as `renameTo`, i.e. a real
- * atomic replace; iOS deletes the target and then renames, both inside the same
- * native call, so the window is two syscalls rather than a whole write.)
+ * Writes are staged: the payload goes to `<file>.tmp` first and is then moved onto
+ * the target with `moveAsync`, so a truncated document is never observed by a
+ * reader — a crash can at worst lose the newest snapshot, never corrupt the one
+ * already on disk. Android implements the move as `renameTo`, a real atomic
+ * replace; iOS deletes the target and then renames inside the same native call, so
+ * there is a two-syscall window rather than a whole-payload one. Staged, not
+ * perfectly atomic on both platforms.
+ *
+ * Saves are serialized onto a module-level promise chain, so concurrent callers
+ * cannot interleave inside the shared `.tmp` path and the last call's payload is
+ * the last one on disk.
+ *
+ * The two backends are mutually exclusive, not complementary: a native build has
+ * the file system and no `localStorage`, web has `localStorage` and no
+ * `documentDirectory`. So a failed file-system write is not "recovered" by
+ * `localStorage` — the previous document simply stays on disk and the next launch
+ * reads that older snapshot. The staged write is what keeps it readable.
  *
  * Why a single JSON document and not SQLite: the queue is one ordered array that
  * is read once on mount and rewritten whole on every mutation, so a schema, a
@@ -46,6 +57,12 @@ import * as FileSystem from "expo-file-system";
 import { DraftItem } from "../lib/types";
 
 const STORAGE_KEY = "snaplist.drafts.v1";
+
+/**
+ * Tail of the save chain. Every `saveDraftItems` call appends to it, so writes
+ * land in call order even though the callers do not await.
+ */
+let saveQueue: Promise<void> = Promise.resolve();
 
 /**
  * Absolute `file://` URI of the draft document, or `null` when the file system
@@ -113,23 +130,14 @@ export async function loadDraftItems(): Promise<DraftItem[]> {
 }
 
 /**
- * Persists the whole draft queue, overwriting the previous snapshot.
+ * Writes one snapshot to whichever backend this platform has.
  *
- * The snapshot is written to `<file>.tmp` and then moved onto the target, so an
- * interrupted write cannot leave a truncated document behind: readers see either
- * the previous snapshot or the new one. The move is rename-based, so it also
- * replaces an existing target without a copy.
+ * Never rejects: every backend failure is caught, because a persistence problem
+ * must not surface as an unhandled rejection in a fire-and-forget caller.
  *
- * The write goes to the first backend that accepts it (file system → web
- * `localStorage`), so a failure on one backend still leaves the photo
- * recoverable from another. A leftover `.tmp` is harmless — the next write
- * truncates it.
- *
- * @param items Complete draft queue — this is a snapshot, not a delta.
+ * @param payload Serialized draft queue.
  */
-export async function saveDraftItems(items: DraftItem[]): Promise<void> {
-  const payload = JSON.stringify(items);
-
+async function persist(payload: string): Promise<void> {
   const path = getDraftFilePath();
   if (path) {
     const tmpPath = `${path}.tmp`;
@@ -138,7 +146,8 @@ export async function saveDraftItems(items: DraftItem[]): Promise<void> {
       await FileSystem.moveAsync({ from: tmpPath, to: path });
       return;
     } catch {
-      // fall through to other backends
+      // The previous document is still on disk and still readable — leaving it
+      // alone is better than half-writing the target. Fall through.
     }
   }
 
@@ -154,4 +163,37 @@ export async function saveDraftItems(items: DraftItem[]): Promise<void> {
   // No durable backend on this platform: the queue keeps working for the
   // session, but a process exit loses it. Reached only by a bare Node process,
   // i.e. never on a device build.
+}
+
+/**
+ * Persists the whole draft queue, overwriting the previous snapshot.
+ *
+ * The snapshot is written to `<file>.tmp` and then moved onto the target, so an
+ * interrupted write cannot leave a truncated document behind. The move replaces
+ * an existing target instead of copying it.
+ *
+ * Saves are serialized against each other through a module-level promise chain:
+ * callers (see `DraftsProvider`, which does not await) would otherwise interleave
+ * inside the single shared `.tmp` path and an older snapshot could land last. The
+ * chain is ordered, so the last call's payload is the last one on disk. The queue
+ * survives a rejection of the previous entry, although `persist` never rejects.
+ *
+ * The write goes to the file system when this platform has one, otherwise to web
+ * `localStorage`. Those two are mutually exclusive rather than redundant: if the
+ * file-system write fails, the previous document stays on disk and the next launch
+ * reads that older snapshot — it is not re-written through `localStorage`.
+ *
+ * Never rejects — it resolves once this snapshot has been written or skipped.
+ *
+ * @param items Complete draft queue — this is a snapshot, not a delta.
+ * @returns A promise for the queued write (and therefore for every write queued
+ *     before it).
+ */
+export function saveDraftItems(items: DraftItem[]): Promise<void> {
+  const payload = JSON.stringify(items);
+  const run = (): Promise<void> => persist(payload);
+  // Both handlers are the same: a failure earlier in the chain must not drop
+  // this snapshot.
+  saveQueue = saveQueue.then(run, run);
+  return saveQueue;
 }
