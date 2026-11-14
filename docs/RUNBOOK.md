@@ -142,17 +142,24 @@ rate card, terms and the OPEN legal items are in **`docs/ADR-006-attributes-vlm-
 the hosted-service row is in `docs/DEPS.md`. Exact config is in `.env.example`. API model id is
 `deepseek-flash`, base URL `https://api.deepseek.com`.
 
-**Run state (2026-11-08): the key is configured and real provider calls HAVE run.** A non-empty
-`VLM_API_KEY` is present in the local `.env` (its value is never printed here), 40 real
-attribute predictions were collected in `evals/reports/attrs_predictions.json` (39 measured,
-1 failed), and E3-T3 accuracy HAS been measured on this machine. See `evals/reports/vision.md`,
-a gitignored local report: category **0.9250** (≥ 0.95, **NOT met**), colour **0.6500**
-(≥ 0.90, **NOT met**), pattern **0.9750** (≥ 0.85, met), material **0.2750** (≥ 0.80,
-**NOT met**), dedupe false-merge **0.0000** (≤ 0.05, met). Three of the four attribute targets
-are NOT met. `material` is `[]` for most catalogue photos under the current evidence-only
-policy, so ≥ 0.80 is unreachable without a product decision; that policy was **not** relaxed to
-chase the number. These are LOCAL, UNCOMMITTED numbers from the local golden set: on a clean
-checkout they fall back to `UNMEASURED`. `cost per item` is still `UNMEASURED`.
+**Run state — historical (2026-11-08).** On that date a non-empty `VLM_API_KEY` was present in
+the local `.env` (its value is never printed here), 40 real attribute predictions were collected
+in `evals/reports/attrs_predictions.json` (39 measured, 1 failed), and E3-T3 was measured on that
+machine. The numbers recorded then, from the local golden set: category **0.9250** (≥ 0.95,
+**NOT met**), colour **0.6500** (≥ 0.90, **NOT met**), pattern **0.9750** (≥ 0.85, met),
+material **0.2750** (≥ 0.80, **NOT met**), dedupe false-merge **0.0000** (≤ 0.05, met). Three of
+the four attribute targets are NOT met. `material` is `[]` for most catalogue photos under the
+current evidence-only policy, so ≥ 0.80 is unreachable without a product decision; that policy
+was **not** relaxed to chase the number. `cost per item` is still `UNMEASURED`.
+
+**Those four figures are a past observation, not current evidence.** The artifact was never in
+the repo and cannot be: it is produced against `evals/golden/`, which is gitignored under
+ADR-010. Last checked 2026-11-14, this machine had no `.env` and no
+`evals/reports/attrs_predictions.json`, so `evals/reports/vision.md` here reports all four
+attribute rows `UNMEASURED` — a pointer to that file is historical, not a live reference. To
+re-confirm the numbers, restore `VLM_API_KEY` and run `python -m evals.tools.collect_attrs`
+(40 calls); until then treat the figures above as **something to be re-measured**, never as
+"E3-T3 currently measures 0.925".
 
 **OPEN before seller photos are sent:** the DeepSeek
 privacy policy puts personal-data processing and storage in the PRC and the terms are PRC-governed;
@@ -174,7 +181,7 @@ quoted from a local measured report, not invented, and `$/item` remains `UNMEASU
 | `STRIPE_WEBHOOK_SECRET` | E8-T2 | yes — `stripe listen` |
 | `FASHN_API_KEY` | E4-T1, E4-T3, any on-model demo | **no** |
 | `MODAL_TOKEN_ID/SECRET` | E5-T3 deploy, E4-T2 | partly — run the worker in-process |
-| `VLM_API_KEY` | E3-T2, E3-T3 | **no** on a clean checkout (the key is still required); **already unblocked on this machine** — non-empty value in local `.env`, 40 real provider calls run |
+| `VLM_API_KEY` | E3-T2, E3-T3 | **no** on a clean checkout (the key is still required); it **was** unblocked on this machine on 2026-11-08 (40 real provider calls ran), but as of 2026-11-14 there is no `.env` here and the collected artifact is gone — re-run `collect_attrs` to restore it |
 | Apple Developer account | E6-T1 Apple sign-in, `expo export` to a device | partly — email magic link works without it |
 
 ## 8. Reporting rules that go with this file

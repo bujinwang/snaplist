@@ -952,6 +952,10 @@ was silently rewritten or deleted.**
   targets are NOT met; the figures are local, uncommitted, and fall back to `UNMEASURED` on a
   clean checkout. This is a measured accuracy input to `METRICS §3.2`, not a product decision
   reopened here.
+  **(2026-11-14 pointer — original text above left as written)** The local `.env` and
+  `evals/reports/attrs_predictions.json` are no longer on this machine, so those four figures are
+  now a past observation that has to be re-measured before anyone quotes them as current.
+  `docs/RUNBOOK.md` §6 records the state and the one command that re-confirms it.
 * **F is still `待 Bert 拍`.** The **$600** interview incentive (12 × $50) remains
   `AWAITING-APPROVAL` in `INTERVIEWS §1.4`; interviews cannot start until Bert clears it.
 * **So the "two `待 Bert` items" sentence above describes 2026-10-28, not today:** as of this
