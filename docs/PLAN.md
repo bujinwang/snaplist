@@ -475,7 +475,9 @@ Must also **print the provider round-trip seconds** per call and record them in 
 `StageMeta`. No latency gate on this ticket.
 DoD: the response validates against `apps/api/schemas.py::ItemAttributes` with
 `extra="forbid"`; a schema violation is retried exactly once then fails the job with
-`reason_code=low_confidence`; `brand` and `material` are only populated with evidence.
+`reason_code=low_confidence`; `brand` is only populated with a legible mark, and `material`
+with either direct evidence or a category/structure prior that is marked as inferred and
+kept below the publish floor (Bert ruling 2026-11-14, landed in E3-T3).
 
 **E3-T3 acceptance**: `python -m evals.run --suite vision` — category ≥ 0.95, colour ≥ 0.90,
 pattern ≥ 0.85, material ≥ 0.80, plus a printed confusion list of the misses.

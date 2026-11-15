@@ -20,7 +20,9 @@ the CLI calls `get_extractor()` with **no argument**. `attrs.py` imports no prov
 
 **E3-T2 (wire machinery) — landed, real provider call RUN on 2026-11-04.** `attrs_adapters/base.py`
 holds the provider-independent half: `extra="forbid"` schema enforcement, exactly one repair
-retry, evidence gating for `brand`/`material`, confidence defaults of 0.0 (never a guess),
+retry, evidence gating for `brand` (a legible mark, no exceptions) and `material` (an
+observation, or an explicit category prior marked as inferred — E3-T3), confidence defaults
+of 0.0 (never a guess),
 and `needs_review` for sub-threshold fields. Failure after retry raises
 `AttributeExtractionFailed(reason_code="low_confidence")`, never `internal` (CONTRACTS §4).
 The real acceptance path produced a `measured` record against `deepseek-flash` (golden-web
@@ -54,10 +56,12 @@ Consequently:
   `attr colour accuracy` **0.6500** (≥ 0.90, **NOT met**), `attr pattern accuracy` **0.9750**
   (≥ 0.85, met), `attr material accuracy` **0.2750** (≥ 0.80, **NOT met**), and
   `dedupe false-merge rate` **0.0000** (≤ 0.05, met).
-  **Three of the four attribute targets are NOT met.** `material` is `[]` for most catalogue
-  photos under the current evidence-only
-  policy, so ≥ 0.80 is unreachable without a product decision; the policy was **not** relaxed
-  to chase the number. These are LOCAL, UNCOMMITTED numbers from the local golden set — on a
+  **Three of the four attribute targets are NOT met.** `material` was `[]` for most catalogue
+  photos under the evidence-only policy in force then, which made ≥ 0.80 arithmetically
+  unreachable — it was NOT relaxed to chase the number *that round*. **Bert has since ruled
+  (2026-11-14) that it be relaxed**, and E3-T3 landed that: an inferred fibre is now allowed,
+  marked below the publish floor so it is reviewable and never published. The prediction is
+  untested — the row is `UNMEASURED` until a retest — and no number here was adjusted for it. These are LOCAL, UNCOMMITTED numbers from the local golden set — on a
   clean clone they fall back to `UNMEASURED`. Still `UNMEASURED`: rectify SSIM, the prettify
   hallucinated-text rubric, and `cost per item`.
 * **SUPERSEDED 2026-11-12 — see "E1-T4" at the end of this file.** This bullet used to say the
@@ -117,8 +121,9 @@ acceptance has produced a measured record. Current status and what remains, as o
    UNMEASURED here. `evals/reports/vision.md` records category 0.9250 (≥ 0.95, NOT met), colour
    0.6500 (≥ 0.90, NOT met), pattern 0.9750 (≥ 0.85, met), material 0.2750 (≥ 0.80, NOT met)
    and dedupe false-merge 0.0000 (≤ 0.05, met).
-   **Three of the four attribute targets are NOT met.** `material` is unreachable under the
-   current evidence-only policy, which was NOT relaxed to chase the number. These are
+   **Three of the four attribute targets are NOT met.** `material` was unreachable under the
+   evidence-only policy in force at the time; Bert ruled on 2026-11-14 to relax it (see E3-T3),
+   which is landed but not yet retested. These are
    LOCAL, UNCOMMITTED numbers from the local golden set; on a clean clone they fall back to `UNMEASURED`.
 3. **The 20 reference masks are no longer missing** (this item read "0/20; 18
    `algorithmic:matting` + 2 `ai:google-ai-mode-nano-banana`" until 2026-11-12). They are

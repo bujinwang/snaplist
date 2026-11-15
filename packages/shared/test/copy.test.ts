@@ -36,6 +36,8 @@ function bareTee(overrides: Record<string, unknown> = {}) {
     fit: "regular",
     size_label: "M",
     condition: "good",
+    // A declared fibre clears the publish gate; the inference cases below lower this on purpose.
+    confidence: { material: 0.9 },
     ...overrides,
   });
 }
@@ -76,6 +78,54 @@ test("copy never names a brand or fibre the attributes do not have", () => {
   assert.deepEqual(claims, { brands: [], fibres: [] });
   assert.equal(copy.description.includes("Brand:"), false, "no brand line when brand is null");
   assert.equal(copy.description.includes("cashmere"), false);
+});
+
+/* -------------------------------------------------------------------------------------------- */
+/* The publish gate (E3-T3): an inferred fibre is reviewable, not publishable                     */
+/* -------------------------------------------------------------------------------------------- */
+
+test("a low-confidence fibre never reaches the title, description or keywords", () => {
+  // 0.55 is what the engine pins an INFERRED material to. It is deliberately visible in review
+  // and deliberately absent from anything a buyer sees.
+  const attributes = bareTee({
+    brand: null,
+    material: ["cotton"],
+    confidence: { material: 0.55 },
+  });
+  const copy = buildListingCopy(attributes);
+
+  assert.equal(copy.title.includes("cotton"), false, `title leaked the inference: ${copy.title}`);
+  assert.equal(copy.description.includes("cotton"), false, "description leaked the inference");
+  assert.equal(copy.description.includes("Material:"), false, "no Material line for an inference");
+  assert.equal(copy.keywords.includes("cotton"), false, "keywords leaked the inference");
+});
+
+test("the title still renders without a fibre when the gate blocks it", () => {
+  // The gate must not cost the title: no fibre, but still a real garment type.
+  const attributes = bareTee({ brand: null, material: ["cashmere"], confidence: { material: 0.2 } });
+  const title = buildListingCopy(attributes).title;
+  assert.equal(title.includes("cashmere"), false);
+  assert.equal(title.includes("undefined"), false, "no placeholder may leak into the title");
+  assert.equal(title.trim().length > 0, true, "the title must never be empty");
+  assert.equal(title.includes("crewneck"), true, "the garment type survives the gate");
+});
+
+test("a fibre with no confidence at all is treated as unpublishable", () => {
+  // "No number, no claim": the Python pipeline always fills one, so a missing entry means a
+  // caller that cannot vouch for the value.
+  const attributes = bareTee({ brand: null, material: ["denim"], confidence: {} });
+  const copy = buildListingCopy(attributes);
+  assert.equal(copy.title.includes("denim"), false);
+  assert.equal(copy.description.includes("denim"), false);
+  assert.equal(copy.keywords.includes("denim"), false);
+});
+
+test("a fibre that clears the floor is published exactly as before", () => {
+  const attributes = bareTee({ brand: null, material: ["denim"], confidence: { material: 0.6 } });
+  const copy = buildListingCopy(attributes);
+  assert.equal(copy.title.includes("denim"), true, ">= floor publishes (boundary is inclusive)");
+  assert.equal(copy.description.includes("Material: denim"), true);
+  assert.equal(copy.keywords.includes("denim"), true);
 });
 
 test("the unsupported-claim checker itself catches an injected brand (proof it can fail)", () => {

@@ -15,12 +15,16 @@ What each DoD line is proven by
 * E3-T2 "a schema violation is retried exactly once"     -> test_repair_happens_exactly_once
   and test_two_failures_raise_low_confidence (attempts == 2, never 3)
 * E3-T2 "brand/material only with evidence"     -> test_unevidenced_brand_and_material_dropped
+* E3-T3 material inference + publish gate       ->
+  test_inferred_material_is_kept_but_capped_below_the_floor
+  and test_the_publish_gate_matches_the_engine_floor (Python floor == both TypeScript copies)
 * Honest UNMEASURED                              -> test_no_config_raises_attributes_unavailable
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -126,6 +130,7 @@ def test_valid_fixture_validates_and_preserves_evidenced_fields() -> None:
 
 
 def test_unevidenced_brand_and_material_dropped() -> None:
+    """No evidence of any kind: the `attrs_hallucinated_brand` shape, both fields dropped."""
     complete, _ = _once(_fixture("attrs_hallucinated_brand.json"))
     outcome = extract_from_response(complete, model_version=MODEL_VERSION)
     assert outcome.attributes.brand is None
@@ -134,6 +139,67 @@ def test_unevidenced_brand_and_material_dropped() -> None:
     for field in outcome.dropped_fields:
         assert field in outcome.attributes.needs_review
         assert outcome.attributes.confidence[field] == 0.0
+
+
+def test_inferred_material_is_kept_but_capped_below_the_floor() -> None:
+    """Tier (a) of the Bert ruling: a category prior keeps the fibre, with a confidence that
+    cannot be published.
+
+    The cap is the whole mechanism: 0.55 < CONFIDENCE_FLOOR puts the field in `needs_review`, and
+    0.55 < ATTR_CONFIDENCE_FLOOR (packages/shared) keeps `copy.ts`/`csv.ts` from printing it. If
+    either half of that stops holding, a guess becomes a listing.
+    """
+    doc = json.loads(_fixture("attrs_hallucinated_brand.json"))
+    doc["attributes"]["material"] = ["cotton"]
+    doc["attributes"]["confidence"]["material"] = 0.93  # the model's own, ignored for an inference
+    doc["attributes"]["brand"] = None
+    doc["evidence"] = {"material_inferred": "jersey knit + ribbed crew neck"}
+    complete, _ = _once(json.dumps(doc))
+    outcome = extract_from_response(complete, model_version=MODEL_VERSION)
+
+    assert outcome.attributes.material == ["cotton"], "an inference is kept, not discarded"
+    assert outcome.attributes.confidence["material"] == pytest.approx(CONFIDENCE_FLOOR - 0.05)
+    assert outcome.attributes.confidence["material"] < CONFIDENCE_FLOOR
+    assert "material" in outcome.attributes.needs_review, "an inference must be reviewable"
+    assert "material" not in outcome.dropped_fields, "kept fields are not 'dropped'"
+
+
+def test_the_inference_cap_never_raises_a_low_model_score() -> None:
+    """`min`, not assignment: a model that already scored 0.30 keeps 0.30."""
+    doc = json.loads(_fixture("attrs_hallucinated_brand.json"))
+    doc["attributes"]["material"] = ["cotton"]
+    doc["attributes"]["confidence"]["material"] = 0.30
+    doc["attributes"]["brand"] = None
+    doc["evidence"] = {"material_inferred": "flat knit"}
+    complete, _ = _once(json.dumps(doc))
+    attrs = extract_from_response(complete, model_version=MODEL_VERSION).attributes
+    assert attrs.confidence["material"] == pytest.approx(0.30)
+
+
+def test_evidenced_material_keeps_the_models_own_confidence() -> None:
+    """Tier (b): a care label is evidence, so the model's own score stands and it is publishable."""
+    doc = json.loads(_fixture("attrs_hallucinated_brand.json"))
+    doc["attributes"]["material"] = ["cotton"]
+    doc["attributes"]["brand"] = None
+    doc["attributes"]["confidence"]["material"] = 0.88
+    doc["evidence"] = {"material": "care label: 100% cotton"}
+    complete, _ = _once(json.dumps(doc))
+    attrs = extract_from_response(complete, model_version=MODEL_VERSION).attributes
+    assert attrs.material == ["cotton"]
+    assert attrs.confidence["material"] == pytest.approx(0.88), "no cap for real evidence"
+    assert "material" not in attrs.needs_review
+
+
+def test_evidence_with_both_bases_uses_the_model_score() -> None:
+    """Direct evidence outranks the prior: seeing a care label is not an inference."""
+    doc = json.loads(_fixture("attrs_hallucinated_brand.json"))
+    doc["attributes"]["material"] = ["cotton"]
+    doc["attributes"]["brand"] = None
+    doc["attributes"]["confidence"]["material"] = 0.90
+    doc["evidence"] = {"material": "care label: 100% cotton", "material_inferred": "jersey knit"}
+    complete, _ = _once(json.dumps(doc))
+    attrs = extract_from_response(complete, model_version=MODEL_VERSION).attributes
+    assert attrs.confidence["material"] == pytest.approx(0.90)
 
 
 def test_confidence_defaults_to_zero_not_a_guess() -> None:
@@ -426,3 +492,46 @@ def test_dotenv_values_are_read_without_a_network_call(monkeypatch: pytest.Monke
     monkeypatch.setenv("SNAPLIST_VLM_MODEL", "exported-model")
     assert _config_from_env().model == "exported-model"  # override=False honours env
     (workdir / ".env").unlink()
+
+
+# ---------------------------------------------------------------------------- the publish gate
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SHARED_GATE = REPO_ROOT / "packages" / "shared" / "src" / "listing" / "confidence.ts"
+MOBILE_GATE = REPO_ROOT / "apps" / "mobile" / "src" / "lib" / "csv.ts"
+
+
+def _constant_in(path: Path, name: str) -> float:
+    """Pull `const NAME = <number>` out of a TypeScript file, with a failure that names the file."""
+    text = path.read_text(encoding="utf-8")
+    match = re.search(rf"const {name}\s*=\s*([0-9.]+)\s*;", text)
+    if match is None:
+        raise AssertionError(f"{path} does not declare `{name}`; the publish gate is missing")
+    return float(match.group(1))
+
+
+def test_the_publish_gate_matches_the_engine_floor() -> None:
+    """`CONFIDENCE_FLOOR` (Python) and both TypeScript mirrors must be the same number.
+
+    The whole ticket rests on one inequality: an inferred material is pinned to
+    `CONFIDENCE_FLOOR - 0.05`, and the listing generator publishes only at or above
+    `ATTR_CONFIDENCE_FLOOR`. If the two numbers drift apart — a one-line edit on either side —
+    the gate opens silently and a guess ships as a fact. This test is the only thing that would
+    notice, which is why it is a test and not a comment.
+    """
+    shared = _constant_in(SHARED_GATE, "ATTR_CONFIDENCE_FLOOR")
+    mobile = _constant_in(MOBILE_GATE, "ATTR_CONFIDENCE_FLOOR")
+    assert shared == pytest.approx(CONFIDENCE_FLOOR), (
+        f"packages/shared says {shared}, packages/vision says {CONFIDENCE_FLOOR}"
+    )
+    assert mobile == pytest.approx(CONFIDENCE_FLOOR), (
+        f"apps/mobile/src/lib/csv.ts says {mobile}, packages/vision says {CONFIDENCE_FLOOR}"
+    )
+
+
+def test_the_inference_marker_sits_strictly_below_the_publish_gate() -> None:
+    """The 0.05 gap is what makes an inference unpublishable — not a tie, a margin."""
+    inference_confidence = CONFIDENCE_FLOOR - 0.05
+    assert inference_confidence < _constant_in(SHARED_GATE, "ATTR_CONFIDENCE_FLOOR")
+    assert inference_confidence < CONFIDENCE_FLOOR
+    # And the floor itself must not be so low that ordinary scores fall under it.
+    assert CONFIDENCE_FLOOR >= 0.5

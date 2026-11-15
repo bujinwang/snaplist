@@ -19,6 +19,7 @@
  */
 
 import type { Condition, ItemAttributes } from "../schemas";
+import { ATTR_CONFIDENCE_FLOOR } from "./confidence";
 
 /** eBay allows 80 characters in a title. Vinted is stricter; see the mapper. */
 export const TITLE_MAX_CHARS = 80;
@@ -110,6 +111,24 @@ export interface ListingCopy {
 }
 
 /**
+ * Whether `attributes.material` may be printed as fact (E3-T3).
+ *
+ * Material can now be *inferred* from a category/structure prior, and the engine marks an
+ * inference by pinning its confidence below `ATTR_CONFIDENCE_FLOOR`. Publication therefore needs
+ * a number that clears the floor — and **a missing number does not clear it**. The Python
+ * pipeline always fills one for `material`, so absent confidence means a caller that cannot vouch
+ * for the value; "no number, no claim" is the conservative reading, and the alternative is a guess
+ * that silently becomes a listing.
+ *
+ * Everything here that can put a fibre in front of a buyer — title, description details, keywords
+ * — goes through this function, so there is one place to look when asking "can a fibre escape?"
+ */
+function isPublishableMaterial(attributes: ItemAttributes): boolean {
+  const confidence = attributes.confidence?.material;
+  return typeof confidence === "number" && confidence >= ATTR_CONFIDENCE_FLOOR;
+}
+
+/**
  * Title order is the order a buyer searches in: brand (when known) → colour → fibre → garment
  * type → fit → size → era. Everything is optional except the garment type, so the title is
  * never empty.
@@ -119,7 +138,8 @@ function buildTitle(attributes: ItemAttributes): string {
   if (attributes.brand) parts.push(normalizeShouting(attributes.brand));
   const primaryColor = attributes.colors[0];
   if (primaryColor) parts.push(primaryColor);
-  const primaryFibre = attributes.material[0];
+  // Gated: an inferred fibre stays out of the title, which is what a buyer searches on.
+  const primaryFibre = isPublishableMaterial(attributes) ? attributes.material[0] : undefined;
   if (primaryFibre) parts.push(primaryFibre);
   if (attributes.subcategory) {
     parts.push(normalizeShouting(attributes.subcategory));
@@ -182,7 +202,9 @@ function buildDescription(attributes: ItemAttributes): string {
   const details: string[] = [];
   if (attributes.size_label) details.push(`Size: ${attributes.size_label}`);
   if (attributes.brand) details.push(`Brand: ${normalizeShouting(attributes.brand)}`);
-  if (attributes.material.length > 0) details.push(`Material: ${joinList(attributes.material)}`);
+  if (isPublishableMaterial(attributes) && attributes.material.length > 0) {
+    details.push(`Material: ${joinList(attributes.material)}`);
+  }
   details.push(`Colour: ${joinList(attributes.colors)}`);
   if (attributes.pattern !== "unknown") details.push(`Pattern: ${attributes.pattern.replace(/_/g, " ")}`);
   if (attributes.fit !== "unknown") details.push(`Fit: ${attributes.fit.replace(/_/g, " ")}`);
@@ -206,7 +228,9 @@ function buildKeywords(attributes: ItemAttributes, title: string): string[] {
 
   if (attributes.brand) candidates.push(attributes.brand);
   for (const color of attributes.colors) candidates.push(color);
-  for (const fibre of attributes.material) candidates.push(fibre);
+  if (isPublishableMaterial(attributes)) {
+    for (const fibre of attributes.material) candidates.push(fibre);
+  }
   candidates.push(garmentType);
   if (primaryColor) candidates.push(`${primaryColor} ${garmentType}`);
   if (attributes.fit !== "unknown") candidates.push(attributes.fit.replace(/_/g, " "));

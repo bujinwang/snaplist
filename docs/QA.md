@@ -1580,18 +1580,22 @@ Secondary statistics: `colors_exact_list` = 19/40 = 0.4750; `material` empty pre
 numbers above are the measured numbers; nothing was rounded up, no failed or empty prediction
 was excluded, and no threshold was moved.
 
-### 15.4 The `material` verdict is an evidence-policy consequence, not a bug
+### 15.4 The `material` verdict was an evidence-policy consequence, not a bug
 
-`apps/api/schemas.py::ItemAttributes` and `packages/vision/attrs_adapters/base.py` require
-`material` to contain ONLY fibres with visual or care-label evidence; with no such evidence the
-adapter MUST emit `[]`. The golden photos are catalogue shots with no legible care labels, so
-`material=[]` is the CORRECT output for most of them (26 of 40 rows), and an empty list can
-never intersect a non-empty ground-truth material list. **`>= 0.80` is UNREACHABLE under the
-current evidence policy. This is NOT a bug and NOT a model defect.** This round did **NOT**
-relax the evidence policy, did **NOT** widen the adapter, did **NOT** change the VLM prompt,
-and did **NOT** edit any ground truth to chase the threshold. Reaching 0.80 would require a
-product decision to change the schema contract or a golden set with visible care labels —
-neither is in this ticket's scope.
+At the time of that measurement, `apps/api/schemas.py::ItemAttributes` and
+`packages/vision/attrs_adapters/base.py` required `material` to contain ONLY fibres with visual or
+care-label evidence. The golden photos are catalogue shots with no legible care labels, so
+`material=[]` was the CORRECT output for most of them (26 of 40 rows), and an empty list can
+never intersect a non-empty ground-truth material list — so **`>= 0.80` was UNREACHABLE under
+that policy. That was NOT a bug and NOT a model defect**, and the round that measured it did not
+reach the threshold by relaxing anything.
+
+**Superseded 2026-11-14:** Bert ruled that the policy be relaxed, and E3-T3 landed it — a
+category/structure prior is now an accepted second basis, recorded in `Evidence.material_inferred`
+and pinned below `ATTR_CONFIDENCE_FLOOR` so an inferred fibre is reviewable but never published.
+The 0.2750 above is a **historical** observation under the old policy; the row is `UNMEASURED`
+until a retest runs with a live key. No number in this section has been adjusted in anticipation
+of that retest, and `>= 0.80` itself has not moved.
 
 ### 15.5 Confusion summary
 

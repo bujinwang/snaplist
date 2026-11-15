@@ -78,10 +78,14 @@ copy generator and every marketplace mapper.
 | `source` | `MeasurementSource` (default `estimated`) | `estimated` \| `seller_provided` |
 
 **Attribution policy (a correctness rule, not a style rule).** `brand` may only be populated when
-the mark is legible in the photo. `material` may only contain fibres with visual or care-label
-evidence. The copy generator must never state a brand or fibre that is absent here — E7-T3 ships
-a test that fails if it does. Everything else is a judgement call and is allowed to be wrong;
-that is what `confidence` and `needs_review` exist for.
+the mark is legible in the photo — no exceptions. `material` has two accepted bases since the Bert
+ruling of 2026-11-14 (E3-T3): a visual or care-label observation, or a category/structure prior
+recorded in `Evidence.material_inferred`. An **inferred** fibre is pinned below
+`ATTR_CONFIDENCE_FLOOR`, which puts it in `needs_review` and blocks it from published copy — an
+inference may be shown for confirmation, it may not be stated as fact. The copy generator must
+never state a brand or fibre that is absent here, **nor one whose confidence is below the floor**
+— E7-T3 ships tests that fail if either happens. Everything else is a judgement call and is
+allowed to be wrong; that is what `confidence` and `needs_review` exist for.
 
 ### Enumerations (order is part of the contract)
 

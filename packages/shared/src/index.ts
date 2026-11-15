@@ -9,5 +9,6 @@ export * from "./schemas";
 export * from "./analytics";
 export * from "./csv";
 export * from "./marketplaces/index";
+export * from "./listing/confidence";
 export * from "./listing/copy";
 export * from "./listing/pricing";

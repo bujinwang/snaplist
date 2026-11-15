@@ -252,9 +252,17 @@ def test_confusion_list_lists_every_miss_verbatim_and_report_states_the_caveat(
         assert item["field"] in report
     assert "8 primary misses" in report
     assert "no metric is rounded up in prose" in report
-    assert "UNREACHABLE under this policy" in report
-    assert "did NOT relax the evidence policy" in report
-    assert "NOT a bug and NOT a model defect" in report
+    # The material caveat changed with the Bert ruling (E3-T3). What must still hold is that the
+    # report states the *history* honestly, names the ruling, and refuses to claim a number the
+    # retest has not produced — the old text claimed the policy was never relaxed, which stopped
+    # being true the moment the ruling landed.
+    assert "UNREACHABLE" in report
+    assert "Bert ruled on 2026-11-14" in report
+    assert "not a bug and not a model defect" in report
+    assert "NOT a measurement" in report, "the report must not imply the relaxation was measured"
+    assert "did NOT relax the evidence policy" not in report, (
+        "the report still claims the policy was never relaxed; it was, on 2026-11-14"
+    )
     # A verdict is computed on raw hits/n, and the exact fraction is printed, not rounded up.
     assert "| 2/4 |" in report
     assert "DOES NOT MEET" in report
