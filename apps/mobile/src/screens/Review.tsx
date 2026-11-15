@@ -32,6 +32,7 @@ import {
 import { useDrafts } from "../offline/DraftsProvider";
 import { useNav } from "../navigation/NavContext";
 import { failureCopy } from "../lib/failureCopy";
+import { applyHumanConfirmation } from "../lib/attributes";
 import {
   CONDITIONS,
   DraftItem,
@@ -84,20 +85,6 @@ function countEdited(orig: ItemAttributes, cur: ItemAttributes): number {
   if (JSON.stringify(orig.fit) !== JSON.stringify(cur.fit)) n++;
   if (JSON.stringify(orig.condition) !== JSON.stringify(cur.condition)) n++;
   return n;
-}
-
-function buildPatch(
-  field: ActiveField,
-  value: string | string[],
-): Partial<ItemAttributes> {
-  const patch: Partial<ItemAttributes> = {};
-  if (field === "colors") patch.colors = value as string[];
-  else if (field === "material") patch.material = value as string[];
-  else if (field === "category") patch.category = value as ItemAttributes["category"];
-  else if (field === "pattern") patch.pattern = value as ItemAttributes["pattern"];
-  else if (field === "fit") patch.fit = value as ItemAttributes["fit"];
-  else if (field === "condition") patch.condition = value as ItemAttributes["condition"];
-  return patch;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,16 +190,20 @@ function ReviewItem(props: { item: DraftItem }): JSX.Element {
   ): Promise<void> => {
     if (!field) return;
     markTouched(field);
-    const patch = buildPatch(field, value);
     const prev = draftAttrsRef.current;
-    const nextAttrs = { ...prev, ...patch };
+    // A seller edit IS a confirmation: send the whole attribute set with the confirmed
+    // field's confidence raised and the field off `needs_review`. Passing a partial patch
+    // (`{ confidence: { [field]: 1 } }`) would look equivalent locally but the provider
+    // merges shallowly, so it would wipe every other field's score on the way through.
+    const nextAttrs = applyHumanConfirmation(prev, field, value);
     setDraftAttrs(nextAttrs);
     draftAttrsRef.current = nextAttrs;
     setPatchError(null);
     try {
-      await drafts.patchAttributes(item.item_id, patch);
+      await drafts.patchAttributes(item.item_id, nextAttrs);
     } catch {
-      // Optimistic update rolled back (provider reverted + we revert locally).
+      // Optimistic update rolled back (provider reverted + we revert locally). `prev` is a
+      // whole snapshot, so the confidence map and needs_review roll back with it.
       setDraftAttrs(prev);
       draftAttrsRef.current = prev;
       setPatchError(failureCopy("internal").body);
