@@ -985,6 +985,10 @@ mutations = 8
 
 ## 9. Four gates — measured numbers
 
+> **This table is the E0-T5 record at `3cc029e` (2026-11-05) — the numbers that closed that
+> ticket, not today's.** Current gates are in §9.1 below. The section is kept verbatim because
+> it is the evidence the R7/R4 closure was signed off against.
+
 | gate | command | rc | measured |
 |---|---|---|---|
 | 1 | `python -m pytest evals/telemetry/tests -q` | **0** | `99 passed, 0 xfailed` (the R4 tripwire is gone — see §1/§10) |
@@ -1017,8 +1021,33 @@ vary between runs.
 
 Environmental note (not a code defect): pytest's built-in `tmp_path` fixture hits this
 sandbox's `Path.mkdir(exist_ok=True)` shim with `EEXIST` when the shared basetemp already
-exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on
-`tempfile.mkdtemp()`, so the **plain** acceptance command above passes without `--basetemp`.
+exists. `fixtures.py` therefore supplies a shim-safe `tmp_path` built on `tempfile.mkdtemp()` —
+but that fixture is **imported by the telemetry test modules by name**, so it only covers them.
+The whole-repo command above has been measured to pass without `--basetemp` (2026-11-15), yet a
+run that touches the builtin first can still hit the shim: `pytest evals/tests/test_prettify_rubric.py`
+alone produced 12 `EEXIST` setup errors on the same day. Treat `--basetemp=$(mktemp -d)` as the
+robust form for any partial run; a red that says `EEXIST` on `pytest-of-*` is the sandbox, not the
+code.
+
+### 9.1 Current gates (2026-11-15, `fc242d0`)
+
+Re-measured after the E6-T5 / E3-T3 / E2-T3 / E6-T3 work landed. Same commands, same machine,
+`.venv/bin/python`:
+
+| gate | command | measured | vs `3cc029e` |
+|---|---|---|---|
+| 1 | `python -m pytest evals/telemetry/tests -q` | `108 tests, 0 failures, 1 skipped` | 99 → 108 |
+| 1b | `python -m pytest -q` (whole repo) | `991 tests, 984 passed, 0 failures, 7 skipped` | 692 → 991 |
+| 2 | `pnpm -w test` | `Scope: 3 of 4 workspace projects`, `apps/mobile 39 / 39`, `packages/shared 80 / 80` | 76 → 119 |
+| 3 | `.venv/bin/ruff check .` | `All checks passed!` | unchanged |
+| 4 | `git diff --check` | not re-run: it is a per-change check, not a standing number | — |
+
+The growth is real coverage, not churn: `apps/mobile` had **no** tests at `3cc029e` and now has 39
+(9 static guards + 7 analytics-mirror + 18 storage-contract + 5 human-confirmation);
+`packages/shared` went 76 → 80 with the publish-gate cases; the Python side grew by the E2-T3
+rubric validator, the E3-T3 evidence-basis gate and their tests. Re-run these before quoting them
+— a table like this is exactly the kind of number that goes stale quietly, which is why this
+section carries the commit it was measured at.
 
 ## 10. Named residuals (deliberately NOT solved here)
 
