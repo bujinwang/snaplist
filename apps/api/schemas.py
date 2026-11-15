@@ -159,10 +159,13 @@ class Measurements(BaseModel):
 class ItemAttributes(BaseModel):
     """Structured attributes for one garment.
 
-    Attribution policy (enforced by packages/vision/attrs.py and the listing generator):
-    `brand` may only be populated when the mark is legible in the photo; `material` may only
-    contain fibres with visual or care-label evidence. Everything else is a judgement call
-    and is allowed to be wrong — that is what `confidence` + `needs_review` are for.
+    Attribution policy (enforced by packages/vision/attrs_adapters/base.py and the listing
+    generator): `brand` may only be populated when the mark is legible in the photo.
+    `material` has two accepted bases — a visual or care-label observation, or a category/structure
+    prior recorded in `Evidence.material_inferred` — and an inferred value carries a confidence
+    below `ATTR_CONFIDENCE_FLOOR` so the listing generator will not print it as fact. An inference
+    may exist and be shown for confirmation; it may not be published. Everything else is a
+    judgement call and is allowed to be wrong — that is what `confidence` + `needs_review` are for.
     """
 
     model_config = ConfigDict(extra="forbid")

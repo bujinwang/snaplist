@@ -30,17 +30,20 @@ broken batch can never flatter an accuracy.
 * `material` — a NON-EMPTY intersection between the predicted list and the ground-truth list.
   An empty predicted list is a MISS. `empty_predictions` counts those separately.
 
-## Why `material` cannot reach its 0.80 target under the current evidence policy
+## The `material` history: unreachable under the old policy, awaiting a retest under the new one
 
-`apps/api/schemas.py::ItemAttributes` and `packages/vision/attrs_adapters/base.py` require
-`material` to contain ONLY fibres with visual or care-label evidence; with no such evidence the
-adapter must emit `[]`. The golden photos are catalogue shots with no legible care labels, so
-`material=[]` is the CORRECT output for most of them, and an empty list can never intersect a
-non-empty ground-truth material list. `>= 0.80` is therefore UNREACHABLE under this policy.
-That is a consequence of the schema's evidence contract, NOT a bug and NOT a model defect.
-**This ticket did not relax the evidence policy, widen the adapter, change the prompt, or edit
-any ground truth to chase the threshold.** The verdict is reported as measured, with no rounding
-up and no euphemism.
+When E3-T3 was written, `material` could only contain fibres with visual or care-label evidence,
+and the golden photos are catalogue shots with no legible care labels — so `material=[]` was the
+CORRECT output for most of them and `>= 0.80` was arithmetically unreachable. That was a
+consequence of the evidence contract, not a bug and not a model defect.
+
+**Bert ruled on 2026-11-14 that the policy be relaxed**: `packages/vision/attrs_adapters/base.py`
+now accepts a category/structure prior (`Evidence.material_inferred`) as a second basis, with the
+inferred value pinned below the confidence floor so it is reviewable but never published
+(`ATTR_CONFIDENCE_FLOOR` in `packages/shared`). The prediction that this lifts the accuracy is
+**not yet a measurement**: the four attribute rows stay `UNMEASURED` until somebody re-runs
+`python -m evals.tools.collect_attrs` with a live key and regenerates this artifact. Nothing in
+this module invents that number.
 """
 
 from __future__ import annotations
@@ -515,19 +518,21 @@ def render(rows: list[dict], meta: dict, stats: dict) -> str:
         )
         + " |",
         "",
-        "## Why `material` cannot reach >= 0.80 under the current evidence policy",
+        "## `material`: unreachable under the old policy, awaiting a retest under the new one",
         "",
-        "`apps/api/schemas.py::ItemAttributes` and "
-        "`packages/vision/attrs_adapters/base.py` require `material` to contain ONLY fibres "
-        "with visual or care-label evidence; with no such evidence the adapter MUST emit `[]`. "
-        "The golden photos are catalogue shots with no legible care labels, so `material=[]` is "
-        "the CORRECT output for most of them. An empty list can never intersect a non-empty "
-        "ground-truth material list, so the >= 0.80 target is UNREACHABLE under this policy. "
-        "This is a consequence of the schema's evidence contract — it is NOT a bug and NOT a "
-        "model defect. **This ticket did NOT relax the evidence policy, did NOT widen the "
-        "adapter, did NOT change the VLM prompt, and did NOT edit any ground truth to reach "
-        "the threshold.** The measured material accuracy above is reported exactly as it is, "
-        "with no rounding up.",
+        "Under the original evidence-only rule — `material` could contain ONLY fibres with "
+        "visual or care-label evidence — the golden catalogue photos produced `material=[]` for "
+        "most rows, an empty list could never intersect a non-empty ground truth, and the "
+        ">= 0.80 target was arithmetically UNREACHABLE. That was a consequence of the evidence "
+        "contract, not a bug and not a model defect.",
+        "",
+        "**Bert ruled on 2026-11-14 that the policy be relaxed.** `attrs_adapters/base.py` now "
+        "accepts a category/structure prior recorded in `Evidence.material_inferred` as a second "
+        "basis; the inferred value is pinned below the confidence floor, so it appears in "
+        "`needs_review` and is blocked from published copy by `ATTR_CONFIDENCE_FLOOR`. The "
+        "prediction that this lifts accuracy is NOT a measurement: these rows stay UNMEASURED "
+        "until `python -m evals.tools.collect_attrs` is re-run with a live key. This report "
+        "never fills that gap with a hopeful number.",
         "",
         f"Measured evidence for that statement: {stats['material_empty_predictions']} of {n} "
         "rows emitted an empty material list, and every one of them is a miss under the "

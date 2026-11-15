@@ -19,7 +19,9 @@ Adapter contract (frozen by test_public_signatures_are_stable):
 
 Rules enforced by the machinery in attrs_adapters/base.py (docs/CONTRACTS.md §4):
   * never invent `brand` — only when the mark is legible in the photo
-  * never invent `material` — only with visual or care-label evidence
+  * never invent `material` — it needs either visual/care-label evidence or an explicit
+    category/structure prior recorded in `evidence.material_inferred`, and an inferred value
+    is capped below the confidence floor so it is reviewable but never published (E3-T3)
   * fill `confidence` per field and list sub-threshold fields in `needs_review`
   * a schema-violating VLM response is retried exactly once, then fails the job as
     `low_confidence` (never `internal` — that would hide a provider problem as our bug)

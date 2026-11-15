@@ -12,6 +12,19 @@
 import { DraftItem } from "./types";
 import { MarketplaceId } from "./analytics";
 
+/**
+ * The publish gate for `material` (E3-T3), mirrored rather than imported.
+ *
+ * This module is deliberately dependency-free — the mobile app builds without
+ * `@snaplist/shared` — so the number is duplicated here instead of imported. It must equal
+ * `ATTR_CONFIDENCE_FLOOR` in `packages/shared/src/listing/confidence.ts` and `CONFIDENCE_FLOOR` in
+ * `packages/vision/attrs_adapters/base.py`;
+ * `packages/vision/tests/test_attrs.py::test_the_publish_gate_matches_the_engine_floor` asserts all
+ * three agree. If they drift, an inferred fibre — confidence 0.55 — would ship in the CSV as if it
+ * had been observed.
+ */
+const ATTR_CONFIDENCE_FLOOR = 0.6;
+
 type MarketplaceCols = {
   ebay: string[];
   poshmark: string[];
@@ -61,7 +74,12 @@ function rowFor(item: DraftItem, marketplace: MarketplaceId): string[] {
   const description = `Prettified ${category}. Condition: ${a?.condition ?? "good"}.`;
   const brand = a?.brand ?? "";
   const size = a?.size_label ?? "";
-  const material = (a?.material ?? []).join(", ");
+  // Same gate as the copy generator: an inferred fibre is reviewable, not publishable.
+  const materialConfidence = a?.confidence?.material;
+  const material =
+    typeof materialConfidence === "number" && materialConfidence >= ATTR_CONFIDENCE_FLOOR
+      ? (a?.material ?? []).join(", ")
+      : "";
   const pattern = a?.pattern && a.pattern !== "unknown" ? a.pattern : "";
   const condition = a?.condition ?? "good";
 

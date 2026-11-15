@@ -148,9 +148,13 @@ in `evals/reports/attrs_predictions.json` (39 measured, 1 failed), and E3-T3 was
 machine. The numbers recorded then, from the local golden set: category **0.9250** (≥ 0.95,
 **NOT met**), colour **0.6500** (≥ 0.90, **NOT met**), pattern **0.9750** (≥ 0.85, met),
 material **0.2750** (≥ 0.80, **NOT met**), dedupe false-merge **0.0000** (≤ 0.05, met). Three of
-the four attribute targets are NOT met. `material` is `[]` for most catalogue photos under the
-current evidence-only policy, so ≥ 0.80 is unreachable without a product decision; that policy
-was **not** relaxed to chase the number. `cost per item` is still `UNMEASURED`.
+the four attribute targets are NOT met. `material` was `[]` for most catalogue photos under the
+evidence-only policy in force at the time, which made ≥ 0.80 arithmetically unreachable. **Bert
+ruled on 2026-11-14 that the policy be relaxed**: `attrs_adapters/base.py` now accepts a
+category/structure prior (`Evidence.material_inferred`), with the inferred value pinned below
+`ATTR_CONFIDENCE_FLOOR` so it is reviewable in the app but never published to a listing. The
+policy change is landed and untested — the four attribute rows stay `UNMEASURED` until a retest
+runs, and no number here has been adjusted in anticipation. `cost per item` is still `UNMEASURED`.
 
 **Those four figures are a past observation, not current evidence.** The artifact was never in
 the repo and cannot be: it is produced against `evals/golden/`, which is gitignored under

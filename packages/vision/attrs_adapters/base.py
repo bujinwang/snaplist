@@ -11,10 +11,18 @@ the evidence gate below is a guarantee. The VLM returns an envelope:
 
     {"attributes": {...ItemAttributes...}, "evidence": {"brand": "...", "material": ["..."]}}
 
-`evidence` is a *claim*, not proof, but requiring it means brand/material can never be emitted
-as a silent hallucination: without the key the value is dropped and the field is marked for
-review. Confidence defaults to 0.0 for every field the VLM did not score — UNMEASURED, never a
-flattering guess — and sub-threshold fields land in `needs_review`.
+`evidence` is a *claim*, not proof, but requiring it means a value cannot be emitted without
+saying why: **brand still needs a legible logo, and nothing else will do**. Material has two
+accepted bases since the Bert ruling of 2026-11-14 (E3-T3): a visual or care-label observation
+(`evidence.material`), or a category/structure prior spelled out in `evidence.material_inferred`
+("jersey knit + ribbed crew neck" → cotton).
+
+The distinction between those two is what keeps the gate honest, so it is carried in the data
+rather than in a new field: an inference is pinned to `CONFIDENCE_FLOOR - 0.05`, which puts it in
+`needs_review` and — through `ATTR_CONFIDENCE_FLOOR` in `packages/shared` — keeps it out of the
+published title/description/keywords/CSV. A guess is allowed to exist; it is not allowed to be
+published as a fact. Confidence defaults to 0.0 for every field the VLM did not score —
+UNMEASURED, never a flattering guess — and sub-threshold fields land in `needs_review`.
 """
 
 from __future__ import annotations
@@ -50,7 +58,7 @@ SYSTEM_PROMPT = """You extract resale-listing attributes from ONE garment photo.
 
 Respond in strict json. Return ONLY a json object with exactly two keys and no markdown fence:
   "attributes": an object matching the ItemAttributes schema
-  "evidence": an object with optional string keys "brand" and "material"
+  "evidence": an object with optional string keys "brand", "material", "material_inferred"
 
 Shape example — keys and types only, NOT values to copy, and no brand/material guessed:
 {"attributes": {"category": "top", "colors": ["navy"], "pattern": "solid",
@@ -61,8 +69,14 @@ Omit a field entirely when you did not observe it; never fill it from this examp
 Hard rules:
 - "brand": set attributes.brand ONLY when a logo/label is legible in the photo. When you do,
   put the legible text you read into evidence.brand. Otherwise use null and omit the key.
-- "material": list fibres ONLY with visual or care-label evidence. Put what you saw into
-  evidence.material. Otherwise use an empty list.
+- "material": two accepted bases, and you must say which one you used.
+  (a) VISUAL or CARE-LABEL evidence (a care label, a visible weave, a fibre-content stamp): put
+      what you saw into evidence.material and list the fibres.
+  (b) A STRONG CATEGORY/STRUCTURE PRIOR when there is no direct evidence: jersey-knit tee -> cotton,
+      denim jeans -> denim, a leather shoe -> leather. Put the reasoning itself into
+      evidence.material_inferred ("jersey knit + ribbed crew neck") and list the fibre.
+  If the cloth is genuinely ambiguous — a plain woven shirt could be cotton, polyester or linen —
+  do NOT guess: use an empty list and omit both evidence keys.
 - Never guess measurements, era, size_label or condition from nothing; omit them.
 - Give a "confidence" object mapping each attribute field name to a number in 0.0..1.0.
   Fields you did not assess must be scored 0.0, not a hopeful middle value.
@@ -92,7 +106,12 @@ class Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     brand: str | None = None
+    #: What the model saw: a care label, a printed fibre content, a visible weave.
     material: str | None = None
+    #: Why the model believes it anyway, when there is no direct evidence: the category/structure
+    #: prior ("jersey knit + ribbed crew neck"). Kept separate from `material` on purpose — the
+    #: gate treats the two differently, and one of them can be published.
+    material_inferred: str | None = None
 
 
 class VlmEnvelope(BaseModel):
@@ -140,7 +159,23 @@ def _parse(text: str) -> dict[str, Any]:
 def _apply_evidence_and_confidence(
     env: VlmEnvelope, model_version: str
 ) -> tuple[ItemAttributes, tuple[str, ...]]:
-    """Drop unevidenced brand/material, fill confidence/needs_review, stamp model_version."""
+    """Gate brand/material on their evidence, fill confidence/needs_review, stamp model_version.
+
+    Two bases keep material alive (Bert ruling 2026-11-14, E3-T3):
+
+    * `evidence.material` — the model saw a care label, a fibre stamp or a weave. Published, and
+      scored by the model itself, exactly as before.
+    * `evidence.material_inferred` — no direct evidence, but the category/structure points at one
+      fibre ("jersey knit + ribbed crew neck"). Kept, because an inference the seller can confirm
+      in review is more useful than an empty field — but its confidence is pinned to
+      `CONFIDENCE_FLOOR - 0.05`. That single number does two jobs: it puts the field in
+      `needs_review`, and it sits below `ATTR_CONFIDENCE_FLOOR` in `packages/shared`, so
+      `copy.ts`/`csv.ts` will not publish it. The 0.05 gap is deliberate — an inference is one
+      band below an observation, and that band is the only thing between a guess and a listing.
+
+    A claim with *neither* basis is still dropped and recorded in `dropped_fields`: "I said
+    nothing" remains unrepresentable. Brand is untouched — a legible logo or nothing.
+    """
     attrs = env.attributes
     dropped: list[str] = []
     brand = attrs.brand
@@ -148,9 +183,16 @@ def _apply_evidence_and_confidence(
     if brand and not (env.evidence.brand or "").strip():
         brand = None
         dropped.append("brand")
-    if material and not (env.evidence.material or "").strip():
-        material = []
-        dropped.append("material")
+
+    direct_evidence = (env.evidence.material or "").strip()
+    inferred_evidence = (env.evidence.material_inferred or "").strip()
+    material_is_inferred_only = False
+    if material:
+        if not direct_evidence and not inferred_evidence:
+            material = []
+            dropped.append("material")
+        elif not direct_evidence:
+            material_is_inferred_only = True
 
     confidence: dict[str, float] = {}
     for field in _TRACKED_FIELDS:
@@ -158,6 +200,10 @@ def _apply_evidence_and_confidence(
         confidence[field] = round(max(0.0, min(1.0, float(score))), 4)
     for field in dropped:
         confidence[field] = 0.0
+    if material_is_inferred_only:
+        # Cap, never raise: a model that already scored this lower keeps its lower number.
+        inference_ceiling = round(CONFIDENCE_FLOOR - 0.05, 4)
+        confidence["material"] = min(confidence["material"], inference_ceiling)
 
     review = set(attrs.needs_review)
     for field, score in confidence.items():
