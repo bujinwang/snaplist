@@ -497,7 +497,7 @@ def test_dotenv_values_are_read_without_a_network_call(monkeypatch: pytest.Monke
 # ---------------------------------------------------------------------------- the publish gate
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHARED_GATE = REPO_ROOT / "packages" / "shared" / "src" / "listing" / "confidence.ts"
-MOBILE_GATE = REPO_ROOT / "apps" / "mobile" / "src" / "lib" / "csv.ts"
+MOBILE_GATE = REPO_ROOT / "apps" / "mobile" / "src" / "lib" / "confidence.ts"
 
 
 def _constant_in(path: Path, name: str) -> float:
@@ -524,7 +524,24 @@ def test_the_publish_gate_matches_the_engine_floor() -> None:
         f"packages/shared says {shared}, packages/vision says {CONFIDENCE_FLOOR}"
     )
     assert mobile == pytest.approx(CONFIDENCE_FLOOR), (
-        f"apps/mobile/src/lib/csv.ts says {mobile}, packages/vision says {CONFIDENCE_FLOOR}"
+        f"apps/mobile/src/lib/confidence.ts says {mobile}, packages/vision says {CONFIDENCE_FLOOR}"
+    )
+
+
+def test_a_human_confirmation_clears_the_publish_gate() -> None:
+    """A confirmed value must outrank the gate, or confirming does nothing to the listing.
+
+    The Review screen raises a seller-confirmed field to `ATTR_CONFIRMED_CONFIDENCE` and
+    drops it from `needs_review`; publication then depends on that number alone. If it ever
+    sits at or below `ATTR_CONFIDENCE_FLOOR`, the seller confirms a fibre, the field stays
+    withheld, and the UI has told them it was accepted. The two numbers are in the same file
+    precisely so this inequality can be asserted against the gate rather than a literal.
+    """
+    confirmed = _constant_in(MOBILE_GATE, "ATTR_CONFIRMED_CONFIDENCE")
+    gate = _constant_in(MOBILE_GATE, "ATTR_CONFIDENCE_FLOOR")
+    assert confirmed > gate, (
+        f"apps/mobile confirms at {confirmed} but publishes only at or above {gate}: "
+        "a confirmed field would still be withheld"
     )
 
 

@@ -11,19 +11,14 @@
 
 import { DraftItem } from "./types";
 import { MarketplaceId } from "./analytics";
+import { ATTR_CONFIDENCE_FLOOR } from "./confidence";
 
 /**
- * The publish gate for `material` (E3-T3), mirrored rather than imported.
- *
- * This module is deliberately dependency-free — the mobile app builds without
- * `@snaplist/shared` — so the number is duplicated here instead of imported. It must equal
- * `ATTR_CONFIDENCE_FLOOR` in `packages/shared/src/listing/confidence.ts` and `CONFIDENCE_FLOOR` in
- * `packages/vision/attrs_adapters/base.py`;
- * `packages/vision/tests/test_attrs.py::test_the_publish_gate_matches_the_engine_floor` asserts all
- * three agree. If they drift, an inferred fibre — confidence 0.55 — would ship in the CSV as if it
- * had been observed.
+ * The publish gate for `material` (E3-T3) now lives in `./confidence`, next to the value a
+ * human confirmation carries, because the two numbers only mean anything relative to each
+ * other. `packages/vision/tests/test_attrs.py` reads it from there — moving the constant
+ * again means moving that test with it.
  */
-const ATTR_CONFIDENCE_FLOOR = 0.6;
 
 type MarketplaceCols = {
   ebay: string[];
