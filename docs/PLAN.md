@@ -595,11 +595,11 @@ free text — `field_names` is a name list, and PII has nowhere to land.
 | id | ticket | owner | priority | files it may touch | depends on |
 |---|---|---|---|---|---|
 | E6-T1 | App shell, routing, Supabase auth (anonymous first, magic link, Apple, Google), analytics emitter wiring | mobile | P0 | `apps/mobile/**`, `packages/shared/src/analytics.ts` (consumer only) | E5-T5 |
-| E6-T2 | Capture, **single item only**: quad guide overlay, auto-capture, torch, "shoot the back" | mobile | P0 | `apps/mobile/src/screens/Capture/**` | E6-T1 |
-| E6-T3 | Review + attribute editing: optimistic PATCH with rollback, `fields_touched` instrumentation, failure copy from CONTRACTS §6 | mobile | P0 | `apps/mobile/src/screens/Review/**`, `.../Attributes/**` | E6-T2, E5-T2 |
-| E6-T4 | On-model and export screens, Pro gating, server-assigned paywall variant | mobile | P1 | `apps/mobile/src/screens/OnModel/**`, `.../Export/**` | E6-T3, E7-T1, E8-T4 |
+| E6-T2 | Capture, **single item only**: quad guide overlay, auto-capture, torch, "shoot the back" | mobile | P0 | `apps/mobile/src/screens/Capture.tsx` | E6-T1 |
+| E6-T3 | Review + attribute editing: optimistic PATCH with rollback, `fields_touched` instrumentation, failure copy from CONTRACTS §6 | mobile | P0 | `apps/mobile/src/screens/Review.tsx` | E6-T2, E5-T2 |
+| E6-T4 | On-model and export screens, Pro gating, server-assigned paywall variant | mobile | P1 | `apps/mobile/src/screens/OnModel.tsx`, `apps/mobile/src/screens/Export.tsx` | E6-T3, E7-T1, E8-T4 |
 | E6-T5 | Local drafts + offline queue: `expo-file-system` + SQLite, retry on reconnect, **never lose a captured photo** | mobile | P0 | `apps/mobile/src/offline/**` | E6-T2 |
-| E6-T6 | Batch capture: keep shooting, queue N uploads, per-item progress | mobile | P1 | `apps/mobile/src/screens/Capture/batch/**` | E6-T3, E6-T5 |
+| E6-T6 | Batch capture: keep shooting, queue N uploads, per-item progress | mobile | P1 | `apps/mobile/src/screens/Capture.tsx` (batch mode lives in the same file) | E6-T3, E6-T5 |
 
 **Why batch is last, not first (R2, accepted).** A single item that fails is a retry. Thirty
 items that half-fail is a support catastrophe on day one, and there is no UI in v1 to recover a
@@ -669,7 +669,7 @@ with no recovery UI is the failure mode this ordering exists to prevent.
 
 | id | ticket | owner | priority | files it may touch | depends on |
 |---|---|---|---|---|---|
-| E7-T1 | eBay map: real Inventory/Trading CSV headers, byte-for-byte test | growth | **P0 — first slice** | `packages/shared/src/marketplaces/ebay.ts`, `packages/shared/test/marketplaces/**` | `docs/CONTRACTS.md` v1.0.0 (frozen — no code dependency) |
+| E7-T1 | eBay map: real Inventory/Trading CSV headers, byte-for-byte test | growth | **P0 — first slice** | `packages/shared/src/marketplaces/ebay.ts`, `packages/shared/test/marketplaces.test.ts` | `docs/CONTRACTS.md` v1.0.0 (frozen — no code dependency) |
 | E7-T3 | Copy generator: ≤80-char title, description with measurements, 10 keywords | growth | P0 | `packages/shared/src/listing/copy.ts`, `packages/shared/test/copy.test.ts` | E3-T2 *(may start against `evals/golden/manifest.json` labels)* |
 | E7-T5 | `apps/web` landing page: offer, before/after pair, honest time claim, checkout link | growth | P1 | `apps/web/**` | E8-T1 |
 | E7-T6 | `docs/EXPORT.md`: what we automate and what we deliberately do not | growth | P0 | `docs/EXPORT.md` | E7-T1 |
