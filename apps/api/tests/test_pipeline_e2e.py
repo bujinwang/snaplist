@@ -137,11 +137,13 @@ def worker_for(
 
 def test_a_photo_becomes_two_assets_and_an_attribute_record(
     wired: tuple[SqliteRepository, LocalStorage, TestClient],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository, storage, client = wired
     item_id, job_id = enqueue_and_upload(client)
     extractor = FakeExtractor()
 
+    use_full_frame_mask(monkeypatch)
     assert worker_for(repository, storage, extractor=extractor).run_pending() == 1
 
     job = repository.get_job(job_id, user_id=USER)
@@ -192,10 +194,13 @@ def test_a_photo_becomes_two_assets_and_an_attribute_record(
 
 def test_replaying_the_handler_is_idempotent(
     wired: tuple[SqliteRepository, LocalStorage, TestClient],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Re-running the same job must not duplicate rows or change the stored bytes."""
     repository, storage, client = wired
     item_id, job_id = enqueue_and_upload(client)
+    mask = full_frame_segment(PHOTO.read_bytes())
+    monkeypatch.setattr(pipeline, "segment", lambda *_a, **_k: mask)
     worker = worker_for(repository, storage)
     assert worker.run_pending() == 1
 
@@ -222,6 +227,30 @@ def test_replaying_the_handler_is_idempotent(
 
 
 # --------------------------------------------------------- 2. the failure mapping, row by row
+
+
+def use_full_frame_mask(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point `pipeline.segment` at the deterministic mask for the fixture photo."""
+    monkeypatch.setattr(
+        pipeline, "segment", lambda *_a, **_k: full_frame_segment(PHOTO.read_bytes())
+    )
+
+
+def full_frame_segment(photo: bytes) -> SegmentResult:
+    """Segmentation replaced by "the whole photo is the garment".
+
+    CI has no u2net weights (176 MB, downloaded once by `make fetch-models`), so a test that
+    calls the real segmenter can only pass on a machine that has them — the "works on my laptop"
+    failure mode this project keeps removing. Replacing *only* this stage keeps matte, rectify,
+    prettify and the asset derivations real and deterministic, so the wiring is still what is
+    under test on every machine. `test_the_fully_real_pipeline_also_runs` covers the segmenter
+    itself, and skips with a reason where the weights are absent.
+    """
+    with Image.open(io.BytesIO(photo)) as opened:
+        width, height = opened.size
+    buffer = io.BytesIO()
+    Image.new("L", (width, height), 255).save(buffer, format="PNG")
+    return SegmentResult(mask_png=buffer.getvalue(), meta=_stage_meta("segment"))
 
 
 def _tiny_png(mode: str = "L", size: tuple[int, int] = (8, 8)) -> bytes:
@@ -433,6 +462,7 @@ def test_prettify_is_called_with_classical_and_never_with_sdxl(
     def forbidden(*_args: object, **_kwargs: object) -> PrettifyResult:
         raise AssertionError("prettify_sdxl must never be called from the pipeline")
 
+    use_full_frame_mask(monkeypatch)
     monkeypatch.setattr(pipeline, "prettify", recording_prettify)
     monkeypatch.setattr(pipeline, "prettify_sdxl", forbidden, raising=False)
 
@@ -450,16 +480,15 @@ def test_attributes_are_extracted_before_segmentation_so_rectify_gets_the_catego
     _item_id, _job_id = enqueue_and_upload(client)
 
     order: list[str] = []
-    real_segment = pipeline.segment
 
     class OrderedExtractor(FakeExtractor):
         def extract(self, image: bytes) -> ItemAttributes:
             order.append("attributes")
             return super().extract(image)
 
-    def ordered_segment(*args: object, **kwargs: object) -> SegmentResult:
+    def ordered_segment(*_args: object, **_kwargs: object) -> SegmentResult:
         order.append("segment")
-        return real_segment(*args, **kwargs)  # type: ignore[arg-type]
+        return full_frame_segment(PHOTO.read_bytes())
 
     monkeypatch.setattr(pipeline, "segment", ordered_segment)
     JobWorker(
@@ -473,3 +502,31 @@ def test_attributes_are_extracted_before_segmentation_so_rectify_gets_the_catego
     ).run_pending()
 
     assert order[:2] == ["attributes", "segment"], order
+
+
+# ------------------------------------------------- 4. the segmenter itself, where it can run
+
+
+def test_the_fully_real_pipeline_also_runs(
+    wired: tuple[SqliteRepository, LocalStorage, TestClient],
+) -> None:
+    """No stage replaced at all — including `segment()` — when this machine has the weights.
+
+    CI does not carry u2net's 176 MB, so this skips there with the real reason. It is kept because
+    the stubbed-mask tests above prove the *wiring* deterministically, while only this one proves
+    the stages actually compose on a real photograph.
+    """
+    repository, storage, client = wired
+    _item_id, job_id = enqueue_and_upload(client)
+
+    # Through the worker, not `run_full_pipeline`: the queued->running->done transition belongs to
+    # the worker, and asserting `done` after a direct call would be asserting something the
+    # pipeline never claimed to do.
+    assert worker_for(repository, storage, extractor=FakeExtractor()).run_pending() == 1
+
+    done = repository.get_job(job_id, user_id=USER)
+    assert done is not None
+    detail = done.error_detail or ""
+    if done.state is JobState.FAILED and "SegmentBackendUnavailable" in detail:
+        pytest.skip(f"segmentation weights absent on this machine: {detail[:120]}")
+    assert done.state is JobState.DONE, done.error_detail
