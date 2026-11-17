@@ -188,6 +188,10 @@ class JobRecord:
     claimed_by: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    #: Last stage boundary a live worker reported. NULL means this row predates heartbeats, or
+    #: the worker never wrote one — both are treated as STALE by the sweeper, so an old `running`
+    #: row is rescued rather than stranded forever.
+    heartbeat_at: datetime | None = None
     # Provenance of the *work* that produced this job's output (E5 / pipeline wiring). Defaults
     # keep every existing construction site valid: rows created before a stage runs carry the
     # schema defaults (`provider='stub'`, NULL model, NULL cost). `cost_micros=None` means
@@ -346,6 +350,12 @@ class Repository(Protocol):
 
     def peek_next_queued_job(self) -> JobRecord | None: ...
 
+    def list_stale_running_jobs(self, cutoff: datetime) -> list[JobRecord]: ...
+
+    def touch_job_heartbeat(
+        self, job_id: UUID, *, user_id: UUID, now: datetime
+    ) -> None: ...
+
     def has_finished_job(self, item_id: UUID) -> bool: ...
 
     def list_jobs_by_state(self, state: JobState) -> list[JobRecord]: ...
@@ -451,6 +461,9 @@ create table if not exists jobs (
     progress     real not null default 0,
     error_detail text,
     claimed_by   text,
+    -- mirrors infra/migrations/0001_init.sql:154. NULL is meaningful: a job claimed before
+    -- heartbeats existed has no mark and MUST be treated as stale by the sweeper.
+    heartbeat_at text,
     -- cost auditability, mirroring infra/migrations/0001_init.sql: a stub self-reports 'stub',
     -- and cost_micros NULL means UNMEASURED (never 0)
     provider      text not null default 'stub',
@@ -733,6 +746,20 @@ class SqliteRepository:
             self._migrate_event_item_column()
             self._conn.executescript(_SCHEMA)
             self._migrate_asset_columns()
+            self._migrate_job_heartbeat_column()
+
+    def _migrate_job_heartbeat_column(self) -> None:
+        """Add `heartbeat_at` to a `jobs` table created before this feature.
+
+        The task brief assumed both backends already had the column. That was true of
+        `infra/migrations/0001_init.sql` (and the Postgres side works as-is), but **not** of this
+        in-code SQLite mirror — without this, every `select * from jobs` failed with
+        "No item with that key: heartbeat_at" on the default, offline backend. No `infra/`
+        migration is touched: this is the SQLite schema, which lives in this file.
+        """
+        columns = {row["name"] for row in self._query("pragma table_info(jobs)")}
+        if "heartbeat_at" not in columns:
+            self._execute("alter table jobs add column heartbeat_at text")
 
     def _migrate_asset_columns(self) -> None:
         """Add `byte_size`/`meta` to an `assets` table created before E5-T4.
@@ -1086,6 +1113,7 @@ class SqliteRepository:
             updated_at=from_wire(row["updated_at"]) or utcnow(),
             started_at=from_wire(row["started_at"]),
             finished_at=from_wire(row["finished_at"]),
+            heartbeat_at=from_wire(row["heartbeat_at"]),
             provider=row["provider"],
             model_version=row["model_version"],
             cost_micros=row["cost_micros"],
@@ -1122,6 +1150,30 @@ class SqliteRepository:
             "select * from jobs where state = ? order by created_at, id", (state.value,)
         )
         return [self._job_from_row(row) for row in rows]
+
+    def list_stale_running_jobs(self, cutoff: datetime) -> list[JobRecord]:
+        """`running` rows whose heartbeat is NULL or older than `cutoff`.
+
+        NULL is deliberately STALE, not "unknown": before this feature no worker wrote a heartbeat,
+        so every `running` row from an older build must be rescued. Treating NULL as fresh would
+        strand exactly the jobs this method exists to save.
+        """
+        rows = self._query(
+            "select * from jobs where state = ? and "
+            "(heartbeat_at is null or heartbeat_at < ?) "
+            "order by created_at, id",
+            (JobState.RUNNING.value, to_wire(cutoff)),
+        )
+        return [self._job_from_row(row) for row in rows]
+
+    def touch_job_heartbeat(
+        self, job_id: UUID, *, user_id: UUID, now: datetime
+    ) -> None:
+        """Write one liveness mark. Callers hold the surrounding transaction."""
+        self._execute(
+            "update jobs set heartbeat_at = ? where id = ? and user_id = ?",
+            (to_wire(now), str(job_id), str(user_id)),
+        )
 
     def has_finished_job(self, item_id: UUID) -> bool:
         """True once any job for this item reached `done`.
@@ -1726,6 +1778,7 @@ class PostgresRepository:
             updated_at=_coerce_dt(row["updated_at"]) or utcnow(),
             started_at=_coerce_dt(row["started_at"]),
             finished_at=_coerce_dt(row["finished_at"]),
+            heartbeat_at=_coerce_dt(row["heartbeat_at"]),
             provider=row["provider"],
             model_version=row["model_version"],
             cost_micros=row["cost_micros"],
@@ -1760,6 +1813,30 @@ class PostgresRepository:
             "select * from jobs where state = %s order by created_at, id", (state.value,)
         )
         return [self._job_from_row(row) for row in rows]
+
+    def list_stale_running_jobs(self, cutoff: datetime) -> list[JobRecord]:
+        """Postgres twin: the predicate matches `jobs_running_heartbeat_idx` (0001_init.sql:464).
+
+        `is null or heartbeat_at < cutoff` uses the partial index on `state='running'`; no function
+        is applied to the column, so the index remains usable. NULL is stale for the same reason
+        as in SQLite: rows claimed before heartbeats existed still need rescuing.
+        """
+        rows = self._query(
+            "select * from jobs where state = %s and "
+            "(heartbeat_at is null or heartbeat_at < %s) "
+            "order by created_at, id",
+            (JobState.RUNNING.value, cutoff),
+        )
+        return [self._job_from_row(row) for row in rows]
+
+    def touch_job_heartbeat(
+        self, job_id: UUID, *, user_id: UUID, now: datetime
+    ) -> None:
+        """Write one liveness mark. Callers hold the surrounding transaction."""
+        self._execute(
+            "update jobs set heartbeat_at = %s where id = %s and user_id = %s",
+            (now, str(job_id), str(user_id)),
+        )
 
     def has_finished_job(self, item_id: UUID) -> bool:
         rows = self._query(

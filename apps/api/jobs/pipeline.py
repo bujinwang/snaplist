@@ -38,7 +38,7 @@ from typing import Any
 
 from apps.api.jobs.errors import JobFailure
 from apps.api.jobs.writeback import AssetWrite, write_back
-from apps.api.repository import JobRecord, Repository
+from apps.api.repository import JobRecord, Repository, utcnow
 from apps.api.schemas import ItemAttributes, ReasonCode
 from apps.api.storage import MissingObject, Storage, StorageError
 from packages.vision.asset_pack import alpha_for_canvas, cutout_png
@@ -190,6 +190,17 @@ def _stage_meta(meta: object, stage: str, seconds: float | None) -> dict[str, An
     }
 
 
+def _beat(repository: Repository, job: JobRecord) -> None:
+    """One liveness mark at a stage boundary.
+
+    No background thread: this build's failure model is "the process died" or "a stage hung", and
+    both stop the marks. Stage boundaries are frequent enough (the slowest stage here is a few
+    seconds) that the sweeper's 300s default cannot mistake a live worker for a dead one — while a
+    hung stage is detected without a thread sharing this SQLite connection.
+    """
+    repository.touch_job_heartbeat(job.id, user_id=job.user_id, now=utcnow())
+
+
 def run_full_pipeline(
     job: JobRecord,
     repository: Repository,
@@ -234,6 +245,7 @@ def run_full_pipeline(
         attributes: ItemAttributes = extractor.extract(photo)
     except Exception as exc:  # noqa: BLE001 - mapped or re-raised by `_failure`
         raise _failure(exc, stage="attributes") from exc
+    _beat(repository, job)  # attributes
 
     # 5-6. Segment, then turn the mask into an alpha.
     try:
@@ -241,20 +253,24 @@ def run_full_pipeline(
         seg = segment(photo, runtime.backend)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="segment", decode_stage=True) from exc
+    _beat(repository, job)  # segment
     try:
         mt = matte(photo, seg.mask_png)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="matte", decode_stage=True) from exc
+    _beat(repository, job)  # matte
 
     # 7-8. Rectify to the category's canvas, then bring the alpha onto that canvas.
     try:
         rect = rectify(photo, mt.alpha_png, attributes.category.value)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="rectify") from exc
+    _beat(repository, job)  # rectify
     try:
         alpha_flat = alpha_for_canvas(mt.alpha_png, rect.flat_png)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="alpha_for_canvas") from exc
+    _beat(repository, job)  # alpha_for_canvas
 
     # 9. CLASSICAL, explicitly. `prettify`'s default is PASS_THROUGH, so omitting `mode` would
     # silently ship the un-cleaned flat-lay while the report claimed cleanup ran. SDXL is never
@@ -263,6 +279,7 @@ def run_full_pipeline(
         pt = prettify(rect.flat_png, alpha_flat, mode=PrettifyMode.CLASSICAL)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="prettify") from exc
+    _beat(repository, job)  # prettify
 
     # 10. The cutout is the original photo through the matte — the asset that shows what was
     # removed, and the only place the mask survives.
@@ -270,8 +287,12 @@ def run_full_pipeline(
         cutout = cutout_png(photo, mt.alpha_png)
     except Exception as exc:  # noqa: BLE001
         raise _failure(exc, stage="cutout") from exc
+    _beat(repository, job)  # cutout
 
     # 11. Two assets, both at position 0. No mask: its information is the cutout's alpha channel.
+    # A beat on each side of the write: an asset write can hang on a slow backend, and "we got as
+    # far as starting write_back" is a different liveness state from "write_back completed".
+    _beat(repository, job)  # before write_back
     try:
         write_back(
             repository,
@@ -295,6 +316,7 @@ def run_full_pipeline(
         )
     except (StorageError, ValueError) as exc:
         raise _failure(exc, stage="write_back") from exc
+    _beat(repository, job)  # after write_back
 
     # 12. Attributes last: the seller-visible order is unchanged by step 4 being early.
     repository.update_item_attributes(item.id, user_id=job.user_id, attributes=attributes)

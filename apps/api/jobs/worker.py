@@ -45,7 +45,8 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import timedelta
 
 from apps.api.jobs.errors import JobFailure
 from apps.api.jobs.state_machine import (
@@ -54,7 +55,7 @@ from apps.api.jobs.state_machine import (
     fail,
     retry_or_fail,
 )
-from apps.api.repository import JobRecord, Repository, build_repository
+from apps.api.repository import JobRecord, Repository, build_repository, utcnow
 from apps.api.schemas import JobKind, JobState, ReasonCode
 from apps.api.settings import get_settings
 from apps.api.storage import build_storage
@@ -107,6 +108,11 @@ DEFAULT_HANDLERS: dict[JobKind, Handler] = {kind: default_handler for kind in Jo
 
 _ERROR_DETAIL_LIMIT = 500
 
+#: A `running` job with no stage-boundary heartbeat in this many seconds is presumed abandoned.
+#: Five minutes is long enough that a slow stage is not mistaken for a dead worker; tests pass a
+#: small value through `JobWorker(stale_after_seconds=...)`.
+HEARTBEAT_STALE_SECONDS = 300
+
 
 def _detail(exc: BaseException) -> str:
     text = f"{type(exc).__name__}: {exc}" if not isinstance(exc, PipelineUnavailable) else str(exc)
@@ -130,8 +136,10 @@ class JobWorker:
         *,
         handlers: Mapping[JobKind, Handler] | None = None,
         claimed_by: str = "snaplist-worker",
+        stale_after_seconds: float = HEARTBEAT_STALE_SECONDS,
     ) -> None:
         self.repository = repository
+        self.stale_after_seconds = stale_after_seconds
         self.handlers: dict[JobKind, Handler] = dict(DEFAULT_HANDLERS)
         if handlers:
             self.handlers.update(handlers)
@@ -149,12 +157,19 @@ class JobWorker:
             job = self.repository.peek_next_queued_job()
             if job is None:
                 return None
-            return apply_transition(
+            running = apply_transition(
                 self.repository,
                 job,
                 to_state=JobState.RUNNING,
                 claimed_by=self.claimed_by,
             )
+            # The first heartbeat goes in the SAME transaction as the transition. If it were a
+            # separate write, a crash in the gap would leave a `running` row with a NULL heartbeat
+            # — which the sweeper must treat as stale, but which would also mean a worker that
+            # died before doing any work costs a retry. Same transaction, no gap.
+            now = utcnow()
+            self.repository.touch_job_heartbeat(running.id, user_id=running.user_id, now=now)
+            return replace(running, heartbeat_at=now)
 
     # -- run ----------------------------------------------------------------------------
     def run_once(self) -> bool:
@@ -174,6 +189,11 @@ class JobWorker:
             `internal` as "maybe" retryable — unknown is treated as transient until
             proven otherwise, and the budget bounds the damage).
         """
+        # Any live worker can bury a dead one's job. Sweeping FIRST matters: if a job was left
+        # `running` by a process that died, it must be back in `queued` before this worker decides
+        # what to claim. Sweeping after the claim would leave it for the next round and could let
+        # this worker take a fresh queued job while the stale one sits there (see test #4).
+        self.sweep_stale_jobs()
         job = self.claim_next()
         if job is None:
             return False
@@ -218,23 +238,32 @@ class JobWorker:
         return processed
 
     # -- crash recovery -------------------------------------------------------------------
-    def recover_interrupted(self) -> int:
-        """Re-queue jobs found in `running` at process start. Returns how many.
+    def sweep_stale_jobs(self) -> int:
+        """Re-queue `running` jobs whose heartbeat is stale or NULL. Returns how many.
 
-        A job in `running` at startup was claimed by a worker that died before it could
-        finish or fail. CONTRACTS §3: lost heartbeat == retryable failure, attempts += 1.
-        If the machine refuses the requeue (budget spent), the job is failed terminally —
-        stuck-forever is not a state this worker is allowed to leave behind.
+        Freshness, not identity: `claimed_by` defaults to the same string in every worker, so it
+        cannot say who is alive. A stage boundary that stopped arriving can. This means a worker
+        that is still working normally is NEVER touched here — the old `recover_interrupted`
+        grabbed every `running` row on startup, so a restart of worker A could steal a job worker B
+        was in the middle of.
+
+        CONTRACTS §3: lost heartbeat == retryable failure, attempts += 1. If the budget is spent,
+        the job is failed terminally with the single refund that `fail` owns — stuck-forever is not
+        a state this worker is allowed to leave behind.
         """
+        cutoff = utcnow() - timedelta(seconds=self.stale_after_seconds)
         recovered = 0
         with self.repository.transaction():
-            for job in self.repository.list_jobs_by_state(JobState.RUNNING):
+            for job in self.repository.list_stale_running_jobs(cutoff):
                 try:
                     apply_transition(
                         self.repository,
                         job,
                         to_state=JobState.QUEUED,
-                        error_detail="worker restart: the job was claimed when the process died",
+                        error_detail=(
+                            f"stale heartbeat: no stage boundary in "
+                            f"{self.stale_after_seconds:g}s"
+                        ),
                     )
                 except IllegalJobTransition:
                     fail(
@@ -242,12 +271,20 @@ class JobWorker:
                         job,
                         reason_code=ReasonCode.INTERNAL,
                         error_detail=(
-                            "worker died after the retry budget was spent; "
+                            "stale heartbeat after the retry budget was spent; "
                             "terminal failure instead of running forever"
                         ),
                     )
                 recovered += 1
         return recovered
+
+    def recover_interrupted(self) -> int:
+        """Startup wrapper around `sweep_stale_jobs` (kept for the existing callers/tests).
+
+        It no longer "re-queue every running job": that would let a restarted worker A steal a
+        job worker B is actively executing. Only stale or never-written heartbeats qualify.
+        """
+        return self.sweep_stale_jobs()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
