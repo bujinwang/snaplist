@@ -8,6 +8,16 @@ Everything below was executed on this machine, in this working tree. Outputs are
 exercised against a real uvicorn process with real `curl`. The vision pipeline is still stubs, and
 three routes are still 501 on purpose — see §2.
 
+> **Superseded in part (2026-11-14, PR #40).** "The vision pipeline is still stubs" above is a
+> statement about the 2026-10-28 run, not about the code now. FULL jobs are wired to the real
+> pipeline: `python -m apps.api.jobs.worker` claims them, runs segment → matte → rectify →
+> prettify(CLASSICAL) → attributes, and writes `cutout` + `prettified` plus the attribute record;
+> `apps/api/tests/test_pipeline_e2e.py` drives that end to end over HTTP against a real fixture
+> photo. What has NOT changed is the honesty about numbers: E4/VLM extraction accuracy, the FASHN
+> on-model path and `$/item` are still **UNMEASURED** — the wiring exists, the measurements do not.
+> The pasted transcripts below (§D, §G in particular) are verbatim output from that date and are
+> left as they were.
+
 > Concurrency note: 54 of the node tests are mine; the other 2 come from the growth role adding an
 > `export_delivered` analytics event to `packages/shared/src/analytics.ts` + its test while I was
 > working. The numbers above were re-run after that landed, and the whole suite is green together.

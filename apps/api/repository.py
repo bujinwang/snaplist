@@ -668,8 +668,20 @@ def _validated_provenance(
 
     `cost_micros=None` is preserved as `None` (UNMEASURED). It is never coerced to 0: a free job
     and an unmeasured job are different claims.
+
+    `stub` is refused here, and only here. `create_job` writes `stub` when a job is enqueued, and
+    that is the honest label for "no pipeline has run yet". `set_job_provenance` is called by a
+    handler that has just finished, so recording `stub` from there would overwrite an honest
+    "nothing ran" with a claim that nothing ran *while something did* — the row would stop being
+    able to distinguish the two states it exists to distinguish.
     """
     trimmed_provider = provider.strip()
+    if trimmed_provider == STUB_PROVIDER:
+        raise ValueError(
+            f"provider must not be {STUB_PROVIDER!r}: create_job writes that to mean 'no pipeline "
+            "has run yet', and set_job_provenance is called after one has. Name the stages that "
+            "actually ran, e.g. 'u2net|classical|attrs-v1'."
+        )
     if not 2 <= len(trimmed_provider) <= 64:
         raise ValueError(
             f"provider must be 2-64 characters after trimming, got {len(trimmed_provider)}: "

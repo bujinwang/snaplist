@@ -17,10 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class CreateItemRequest(BaseModel):
     """Optional metadata for `POST /v1/items`.
 
-    The bytes themselves are **not** uploaded here: direct upload needs a signed Supabase
-    Storage URL, which is E5-T4 and currently 501. What this slice accepts is the description
-    of the photo the client has already queued locally, which is enough to create the item and
-    the job row deterministically.
+    The bytes themselves are **not** uploaded here: create returns a signed `upload_url` and the
+    client PUTs the photo to it in a second request (E5-T4). This slice accepts the description
+    of the photo, which is enough to create the item and the job row deterministically — and the
+    job only becomes claimable once those bytes land.
 
     `source_sha256` is the dedupe key E3-T4 will use; accepting it now means the column and
     the client contract do not change when dedupe lands.

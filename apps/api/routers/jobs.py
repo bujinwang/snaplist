@@ -40,9 +40,9 @@ def get_job(
 ) -> Job:
     """`queued` is a real answer, not a placeholder.
 
-    Nothing claims queued jobs in this build (there is no worker yet — E5-T3), so a fresh job
-    stays `queued` and its item's asset URLs stay `null`. That is the honest state; a fake
-    `done` would hand the client URLs that do not exist.
+    A worker exists (`python -m apps.api.jobs.worker`) and runs FULL jobs through the vision
+    pipeline, but nothing claims a job inside the API process, so a fresh job is `queued` until
+    that process runs. A fake `done` would hand the client asset URLs that do not exist.
     """
     repository: Repository = web.repository_of(request)
     record = repository.get_job(_as_uuid(job_id), user_id=caller.user_id)

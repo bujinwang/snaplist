@@ -209,7 +209,7 @@ def test_cost_micros_none_is_preserved_as_null_not_zero(repository: Repository) 
     """UNMEASURED and free are different claims, and the column must be able to say both."""
     job = make_job(repository)
     updated = repository.set_job_provenance(
-        job.id, user_id=job.user_id, provider="stub", model_version="n/a", cost_micros=None
+        job.id, user_id=job.user_id, provider="u2net", model_version="n/a", cost_micros=None
     )
     assert updated.cost_micros is None
     assert updated.cost_micros != 0
@@ -227,6 +227,9 @@ def test_cost_micros_none_is_preserved_as_null_not_zero(repository: Repository) 
         ("ok", "m", -1, "cost_micros must be >= 0"),
         ("ok", "m", True, "cost_micros must be an int"),
         ("ok", "m", 1.5, "cost_micros must be an int"),
+        # `stub` is legal at create_job and illegal here — see test_stub_is_refused_by_provenance.
+        ("stub", "m", None, "must not be 'stub'"),
+        ("  stub  ", "m", None, "must not be 'stub'"),
     ],
 )
 def test_provenance_validation_refuses_rather_than_truncating(
@@ -267,6 +270,35 @@ def test_provenance_rejects_a_job_that_does_not_belong_to_the_user(
             model_version="v1",
             cost_micros=0,
         )
+
+
+def test_stub_is_refused_by_provenance_but_still_written_at_create(
+    repository: Repository,
+) -> None:
+    """The two halves of the `stub` rule, asserted together so neither can drift alone.
+
+    `create_job` writing `stub` is the honest "no pipeline has run yet". `set_job_provenance`
+    writing it would say the same thing about a job whose handler just finished — which is a
+    contradiction, and would erase the very distinction the column exists for. If somebody moves
+    this gate onto `create_job`, the first assertion fails; if they remove it from provenance, the
+    second does.
+    """
+    job = make_job(repository)
+    assert job.provider == "stub", "create_job must still label a fresh job 'stub'"
+
+    with pytest.raises(ValueError) as caught:
+        repository.set_job_provenance(
+            job.id, user_id=job.user_id, provider="stub", model_version="v1", cost_micros=0
+        )
+    message = str(caught.value)
+    assert "must not be 'stub'" in message, message
+    assert "no pipeline has run yet" in message, "the reason must be in the error, not just a code"
+
+    # The job row is untouched: a refused write does not half-apply.
+    after = repository.get_job(job.id, user_id=job.user_id)
+    assert after is not None
+    assert after.provider == "stub"
+    assert after.model_version is None
 
 
 # ------------------------------------------------------------------------ A4: asset metadata
