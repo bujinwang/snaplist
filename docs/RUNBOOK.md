@@ -188,6 +188,42 @@ quoted from a local measured report, not invented, and `$/item` remains `UNMEASU
 | `VLM_API_KEY` | E3-T2, E3-T3 | **no** on a clean checkout (the key is still required); it **was** unblocked on this machine on 2026-11-08 (40 real provider calls ran), but as of 2026-11-14 there is no `.env` here and the collected artifact is gone — re-run `collect_attrs` to restore it |
 | Apple Developer account | E6-T1 Apple sign-in, `expo export` to a device | partly — email magic link works without it |
 
+## 7b. Local smoke run without credentials
+
+`apps/api/tests/test_worker_cli.py` runs the real production entry point in a subprocess. The same
+thing can be done by hand in a scratch directory; it needs **no Supabase, no Stripe, no
+`VLM_API_KEY` and no downloaded models**, because the attribute provider is a named stub and the
+segmentation stage is replaced by a deterministic mask in the test's child process.
+
+The point is to prove the *wiring* — settings → storage → handler injection → terminal job row →
+stored assets. It is **not** an accuracy run:
+
+* `SNAPLIST_ATTRS_PROVIDER=stub` means no VLM was called;
+* `provider='u2net|classical|stub'` and `model_version='stub:not-a-model'` are written into the job
+  row on purpose, so anyone reading the row can see it was a fake run;
+* the segmentation stage is a full-frame mask, so the resulting cutout/prettified bytes describe a
+  silhouette, not a measured segmentation.
+
+Real extraction accuracy still needs `VLM_API_KEY` and `python -m evals.tools.collect_attrs`.
+Quoting the smoke run's asset sizes or job state as evidence about accuracy would be wrong.
+
+```sh
+TMP=$(mktemp -d)
+SNAPLIST_ATTRS_PROVIDER=stub SNAPLIST_STORAGE_BACKEND=local \
+SNAPLIST_STORAGE_DIR="$TMP/storage" \
+.venv/bin/python -m apps.api.jobs.worker --database "$TMP/db.sqlite" --limit 1
+```
+
+The automated version seeds the item, the source object and the job first (see the test file),
+then asserts `processed 1 job(s)`, `state=done`, `reason_code=None`, the two stub markers above, a
+heartbeat, and three asset rows (`source@0`, `cutout@0`, `prettified@0`) whose
+`meta.sha256` equals the digest of the bytes actually read back.
+
+There is a second assertion that matters just as much: with `SNAPLIST_STORAGE_BACKEND=supabase`
+and no Supabase credentials, the CLI prints `refusing to start: no storage backend is configured…`
+and exits **2** without claiming a job. A worker that cannot store assets must not turn every job
+into a failed-and-refunded row.
+
 ## 7a. Running the Postgres half of the api suite
 
 `make test` is deliberately offline and database-free: `apps/api/tests/conftest.py` parametrizes the
