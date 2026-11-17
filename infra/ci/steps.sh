@@ -230,12 +230,23 @@ main() {
   fi
   case "$action" in
     all) run_all ;;
-    toolchain_probe|contract_gate|install|lint_py|lint_ts|test_js|test_py|evals|evals_report|gates_report|dirty_check)
-      "step_${action}"
-      ;;
     *)
-      printf 'unknown step: %s\n' "$action" >&2
-      return 2
+      # The list of valid steps is STEP_ORDER, and ONLY STEP_ORDER. This used to be a second
+      # hardcoded alternation of the same names, which is why adding `setup_pg` to the order and
+      # the function table still produced "unknown step: setup_pg" in CI: the two lists had already
+      # drifted. Derived, so the next step cannot hit that.
+      local known=0 step
+      for step in "${STEP_ORDER[@]}"; do
+        if [ "$step" = "$action" ]; then
+          known=1
+          break
+        fi
+      done
+      if [ "$known" -ne 1 ]; then
+        printf 'unknown step: %s\n' "$action" >&2
+        return 2
+      fi
+      "step_${action}"
       ;;
   esac
 }
