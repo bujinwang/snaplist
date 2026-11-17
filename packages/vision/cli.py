@@ -51,6 +51,7 @@ import numpy as np
 from PIL import Image
 
 from packages.vision import StageNotImplemented
+from packages.vision.asset_pack import alpha_for_canvas, cutout_png
 from packages.vision.attrs import (
     AttributeExtractionFailed,
     AttributesUnavailable,
@@ -121,26 +122,6 @@ def _coverage(mask_png: bytes) -> float:
     return round(float((arr >= 128).mean()), 4)
 
 
-def _alpha_on_flat_canvas(alpha_png: bytes, flat_png: bytes) -> bytes:
-    """Resample the alpha onto the flat-lay canvas when the two disagree.
-
-    `rectify()` warps the alpha internally but returns only the flat-lay, so the alpha this
-    CLI holds is still in *photo* coordinates. Prettify refuses a shape mismatch on purpose
-    (a silently rescaled mask is a silently rescaled wrinkle mask), so the resize happens
-    here, visibly, and is a no-op once rectify returns its own alpha.
-    """
-    with Image.open(io.BytesIO(flat_png)) as opened:
-        flat_size = opened.size
-    with Image.open(io.BytesIO(alpha_png)) as opened:
-        channel = opened.convert("L")
-        if channel.size == flat_size:
-            return alpha_png
-        resized = channel.resize(flat_size, Image.BILINEAR)
-    buffer = io.BytesIO()
-    resized.save(buffer, format="PNG", optimize=False)
-    return buffer.getvalue()
-
-
 def _fmt_seconds(meta_stage: str, backend: object, seconds: float | None) -> str:
     """One line per backend, so the report can attribute the wall clock to a stage."""
     shown = "UNMEASURED" if seconds is None else f"{seconds:.3f}s"
@@ -172,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mt = matte(photo, seg.mask_png)
     rect = rectify(photo, mt.alpha_png, args.category)
-    alpha_for_flat = _alpha_on_flat_canvas(mt.alpha_png, rect.flat_png)
+    alpha_for_flat = alpha_for_canvas(mt.alpha_png, rect.flat_png)
 
     sdxl_tuning = {
         "steps": args.sdxl_steps,
@@ -200,12 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     elapsed = time.perf_counter() - started
 
-    # cutout = original photo composited onto the matte alpha
-    with Image.open(io.BytesIO(photo)) as rgb:
-        base = rgb.convert("RGB")
-    with Image.open(io.BytesIO(mt.alpha_png)) as alpha:
-        base.putalpha(alpha.convert("L"))
-    base.save(dst / "cutout.png")
+    # cutout = original photo composited onto the matte alpha (shared with the pipeline)
+    (dst / "cutout.png").write_bytes(cutout_png(photo, mt.alpha_png))
 
     # prettified = rectified flat-lay through the selected prettify mode
     (dst / "prettified.png").write_bytes(pt.prettified_png)

@@ -51,6 +51,14 @@ from apps.api.schemas import (
     ReasonCode,
 )
 
+# ---------------------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------------------
+#: What a job's `provider` says until a real stage records its own provenance. It is written by
+#: `create_job` and must never be invented elsewhere: a row that says 'stub' is honestly reporting
+#: that no pipeline produced it.
+STUB_PROVIDER = "stub"
+
 
 # ---------------------------------------------------------------------------------------
 # Time helpers — one format, everywhere.
@@ -180,6 +188,13 @@ class JobRecord:
     claimed_by: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # Provenance of the *work* that produced this job's output (E5 / pipeline wiring). Defaults
+    # keep every existing construction site valid: rows created before a stage runs carry the
+    # schema defaults (`provider='stub'`, NULL model, NULL cost). `cost_micros=None` means
+    # UNMEASURED — never 0, which would claim a free job.
+    provider: str | None = None
+    model_version: str | None = None
+    cost_micros: int | None = None
 
     def to_job(self) -> Job:
         return Job(
@@ -318,6 +333,16 @@ class Repository(Protocol):
     def get_job(self, job_id: UUID, *, user_id: UUID) -> JobRecord | None: ...
 
     def update_job(self, job: JobRecord) -> JobRecord: ...
+
+    def set_job_provenance(
+        self,
+        job_id: UUID,
+        *,
+        user_id: UUID,
+        provider: str,
+        model_version: str,
+        cost_micros: int | None,
+    ) -> JobRecord: ...
 
     def peek_next_queued_job(self) -> JobRecord | None: ...
 
@@ -626,6 +651,43 @@ create index if not exists events_item_event_received
 _PAYWALL_VARIANTS: tuple[str, ...] = ("a", "b", "c")
 
 
+def _validated_provenance(
+    provider: str,
+    model_version: str,
+    cost_micros: int | None,
+) -> tuple[str, str, int | None]:
+    """Trim and check the three provenance values, or raise `ValueError` naming the problem.
+
+    The bounds are not invented here: `infra/migrations/0001_init.sql` has
+    `check (length(btrim(provider)) between 2 and 64)` and
+    `check (cost_micros is null or cost_micros >= 0)`, so a value that fails these checks would
+    have been refused by Postgres with a constraint name instead of a sentence. Validating in one
+    place keeps SQLite (which has the same CHECKs, but reports them as `IntegrityError`) and
+    Postgres behaving identically — and refuses to truncate, because a silently shortened provider
+    is a wrong attribution that looks like a right one.
+
+    `cost_micros=None` is preserved as `None` (UNMEASURED). It is never coerced to 0: a free job
+    and an unmeasured job are different claims.
+    """
+    trimmed_provider = provider.strip()
+    if not 2 <= len(trimmed_provider) <= 64:
+        raise ValueError(
+            f"provider must be 2-64 characters after trimming, got {len(trimmed_provider)}: "
+            f"{provider!r}"
+        )
+    trimmed_model = model_version.strip()
+    if not trimmed_model:
+        raise ValueError(f"model_version must be non-empty, got {model_version!r}")
+    if cost_micros is not None:
+        # `bool` is an `int` in Python; True would silently become a 1-micro job.
+        if isinstance(cost_micros, bool) or not isinstance(cost_micros, int):
+            kind = type(cost_micros).__name__
+            raise ValueError(f"cost_micros must be an int or None, got {kind}")
+        if cost_micros < 0:
+            raise ValueError(f"cost_micros must be >= 0 or None, got {cost_micros}")
+    return trimmed_provider, trimmed_model, cost_micros
+
+
 def _paywall_variant_for(user_id: UUID) -> str:
     """Deterministic, stable variant for a user id (no randomness, no client input).
 
@@ -908,6 +970,9 @@ class SqliteRepository:
             progress=0.0,
             created_at=now,
             updated_at=now,
+            # Must match what the INSERT below writes, or the returned record disagrees with the
+            # row it just created and a re-read looks like a change.
+            provider=STUB_PROVIDER,
         )
         self._execute(
             "insert into jobs (id, item_id, user_id, kind, state, attempts, progress, "
@@ -922,7 +987,7 @@ class SqliteRepository:
                 0.0,
                 # Cost auditability: this build has no pipeline, so every job says so out loud.
                 # A missing/stale 'stub' is what makes a real run identifiable later.
-                "stub",
+                STUB_PROVIDER,
                 to_wire(now),
                 to_wire(now),
             ),
@@ -957,6 +1022,41 @@ class SqliteRepository:
         )
         return job
 
+    def set_job_provenance(
+        self,
+        job_id: UUID,
+        *,
+        user_id: UUID,
+        provider: str,
+        model_version: str,
+        cost_micros: int | None,
+    ) -> JobRecord:
+        """Record which provider/model produced this job's output, and what it cost.
+
+        Scoped by `user_id` like every other write on this table, so a job id from another account
+        is simply not found rather than silently updated. `cost_micros=None` is written as NULL —
+        UNMEASURED is a real state and must not decay into a 0 that claims a free job.
+        """
+        checked_provider, checked_model, checked_cost = _validated_provenance(
+            provider, model_version, cost_micros
+        )
+        self._execute(
+            "update jobs set provider = ?, model_version = ?, cost_micros = ?, updated_at = ? "
+            "where id = ? and user_id = ?",
+            (
+                checked_provider,
+                checked_model,
+                checked_cost,
+                to_wire(utcnow()),
+                str(job_id),
+                str(user_id),
+            ),
+        )
+        job = self.get_job(job_id, user_id=user_id)
+        if job is None:
+            raise LookupError(f"job {job_id} not found for user {user_id}")
+        return job
+
     @staticmethod
     def _job_from_row(row: sqlite3.Row) -> JobRecord:
         return JobRecord(
@@ -974,6 +1074,9 @@ class SqliteRepository:
             updated_at=from_wire(row["updated_at"]) or utcnow(),
             started_at=from_wire(row["started_at"]),
             finished_at=from_wire(row["finished_at"]),
+            provider=row["provider"],
+            model_version=row["model_version"],
+            cost_micros=row["cost_micros"],
         )
 
     def peek_next_queued_job(self) -> JobRecord | None:
@@ -1511,6 +1614,9 @@ class PostgresRepository:
             progress=0.0,
             created_at=now,
             updated_at=now,
+            # Must match what the INSERT below writes, or the returned record disagrees with the
+            # row it just created and a re-read looks like a change.
+            provider=STUB_PROVIDER,
         )
         self._execute(
             "insert into jobs (id, item_id, user_id, kind, state, attempts, progress, "
@@ -1523,7 +1629,7 @@ class PostgresRepository:
                 JobState.QUEUED.value,
                 0,
                 0.0,
-                "stub",
+                STUB_PROVIDER,
                 now,
                 now,
             ),
@@ -1557,6 +1663,40 @@ class PostgresRepository:
         )
         return job
 
+    def set_job_provenance(
+        self,
+        job_id: UUID,
+        *,
+        user_id: UUID,
+        provider: str,
+        model_version: str,
+        cost_micros: int | None,
+    ) -> JobRecord:
+        """Postgres twin of `SqliteRepository.set_job_provenance` — same checks, same meaning.
+
+        The validation runs before the statement so the caller gets a sentence rather than a
+        constraint-violation error naming an index, and so both backends reject the same inputs
+        with the same message.
+        """
+        checked_provider, checked_model, checked_cost = _validated_provenance(
+            provider, model_version, cost_micros
+        )
+        self._execute(
+            "update jobs set provider = %s, model_version = %s, cost_micros = %s, "
+            "updated_at = now() where id = %s and user_id = %s",
+            (
+                checked_provider,
+                checked_model,
+                checked_cost,
+                str(job_id),
+                str(user_id),
+            ),
+        )
+        job = self.get_job(job_id, user_id=user_id)
+        if job is None:
+            raise LookupError(f"job {job_id} not found for user {user_id}")
+        return job
+
     @staticmethod
     def _job_from_row(row: dict) -> JobRecord:
         return JobRecord(
@@ -1574,6 +1714,9 @@ class PostgresRepository:
             updated_at=_coerce_dt(row["updated_at"]) or utcnow(),
             started_at=_coerce_dt(row["started_at"]),
             finished_at=_coerce_dt(row["finished_at"]),
+            provider=row["provider"],
+            model_version=row["model_version"],
+            cost_micros=row["cost_micros"],
         )
 
     def peek_next_queued_job(self) -> JobRecord | None:

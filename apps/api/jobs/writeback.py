@@ -71,6 +71,11 @@ class AssetWrite:
     content_type: str = "image/png"
     position: int = 0
     expected_sha256: str | None = None
+    #: Extra facts the *producer* wants recorded with the asset — which backend ran, how long it
+    #: took, which model version. Merged UNDER the measured keys (see `write_back`): a caller may
+    #: describe its own work, but it may not restate the digest or content type, because those are
+    #: facts about the bytes and the store is the only thing entitled to assert them.
+    meta: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +214,11 @@ def write_back(
             position=asset.position,
             byte_size=len(asset.data),
             meta={
+                # Caller-provided facts first (backend, seconds, model version...), then the three
+                # measured keys overwrite them. Order matters: a stage that passes
+                # `{"sha256": "FORGED"}` records the real digest, so the stored metadata can never
+                # disagree with the bytes it describes.
+                **(asset.meta or {}),
                 META_SHA256: digest,
                 META_CONTENT_TYPE: asset.content_type,
                 META_WRITER: WRITER_NAME,
