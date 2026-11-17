@@ -324,9 +324,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Only FULL is wired here. VTON and EXPORT keep `default_handler`, which fails them
     # terminally until their own tickets land — that is not this ticket's claim to make.
     # Imported locally so `python -m apps.api.jobs.worker --help` does not pay for numpy/PIL.
-    from apps.api.jobs.pipeline import build_full_handler  # noqa: PLC0415
+    from apps.api.jobs.pipeline import (  # noqa: PLC0415
+        build_full_handler,
+        build_prettify_handler,
+    )
 
-    handlers: dict[JobKind, Handler] = {JobKind.FULL: build_full_handler(storage=storage)}
+    handlers: dict[JobKind, Handler] = {
+        JobKind.FULL: build_full_handler(storage=storage),
+        JobKind.PRETTIFY: build_prettify_handler(storage=storage),
+        # VTON and EXPORT keep `default_handler` until their own tickets land.
+    }
     try:
         worker = JobWorker(repository, claimed_by=args.claimed_by, handlers=handlers)
         recovered = worker.recover_interrupted()

@@ -324,14 +324,81 @@ def delete_item(
 
 @router.post(
     "/items/{item_id}/rerender",
-    responses={501: {"model": ErrorResponse}},
-    summary="Re-run prettify for one item (blocked: no worker)",
+    responses={402: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    summary="Re-run prettify for one item (new queued job)",
 )
-def rerender_item(item_id: str, caller: Caller = Depends(current_caller)) -> JSONResponse:
-    """E5-T3 + E2-T2: needs a worker that runs `packages/vision/prettify.py`, still a stub."""
-    raise errors.not_implemented(
-        "POST /v1/items/{item_id}/rerender needs the job worker (E5-T3) and "
-        "packages.vision.prettify (E2-T2), neither of which is implemented."
+def rerender_item(
+    item_id: str,
+    request: Request,
+    caller: Caller = Depends(current_caller),
+) -> JSONResponse:
+    """Enqueue a fresh PRETTIFY job for an item the caller owns.
+
+    CONTRACTS §3 already answers the two questions this route could have dithered over: this
+    endpoint is in the same `queued ← POST /v1/items, /rerender` line, so it spends exactly one
+    quota unit atomically with the job creation; and `done/failed` are terminal, so a re-render
+    creates a NEW job row rather than reopening the old one.
+
+    Category is read from the attributes a previous FULL job stored, so no VLM key is involved —
+    that is what makes re-rendering possible offline. The handler refuses a job on an item with no
+    attributes and refunds it, rather than guessing a category.
+
+    Idempotency is scoped to the item in the endpoint string: the same key may be reused for a
+    different item, but replaying it for this item returns the same job and never spends twice.
+    """
+    repository: Repository = web.repository_of(request)
+    parsed_id = _as_uuid(item_id)
+    idempotency_key = _idempotency_key(request.headers.get("idempotency-key"))
+    endpoint = f"POST /v1/items/{parsed_id}/rerender"
+    limits = usage.limits_from_settings(web.settings_of(request))
+
+    replay_of: tuple[UUID, UUID] | None = None
+    job_id: UUID
+    try:
+        with repository.transaction():
+            record = repository.get_item(parsed_id, user_id=caller.user_id)
+            if record is None:
+                # Also covers a soft-deleted item: get_item excludes deleted rows by default.
+                raise errors.not_found(f"No item {item_id} for this account.")
+            if idempotency_key is not None:
+                replay_of = repository.get_idempotent_item(
+                    idempotency_key, user_id=caller.user_id, endpoint=endpoint
+                )
+            if replay_of is not None:
+                job_id = replay_of[1]
+            else:
+                job = repository.create_job(
+                    item_id=record.id, user_id=caller.user_id, kind=JobKind.PRETTIFY
+                )
+                usage.spend_one(
+                    repository,
+                    caller.user_id,
+                    job_id=job.id,
+                    item_id=record.id,
+                    limits=limits,
+                )
+                if idempotency_key is not None:
+                    repository.store_idempotent_item(
+                        idempotency_key,
+                        user_id=caller.user_id,
+                        endpoint=endpoint,
+                        item_id=record.id,
+                        job_id=job.id,
+                    )
+                job_id = job.id
+    except usage.QuotaExceeded as exc:
+        raise quota_error(exc) from exc
+
+    # The state is read, not assumed: an idempotent replay may point at a job that has since
+    # finished, and claiming it was still `queued` would be a lie in the response.
+    queued = repository.get_job(job_id, user_id=caller.user_id)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "item_id": str(parsed_id),
+            "job_id": str(job_id),
+            "state": queued.state.value if queued is not None else None,
+        },
     )
 
 
