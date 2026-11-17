@@ -19,6 +19,7 @@ enqueue order the router performs.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -26,7 +27,7 @@ import pytest
 from apps.api import usage
 from apps.api.jobs.state_machine import apply_transition
 from apps.api.jobs.worker import JobWorker, TransientJobError
-from apps.api.repository import JobRecord, SqliteRepository
+from apps.api.repository import JobRecord, SqliteRepository, utcnow
 from apps.api.schemas import JobKind, JobState, ReasonCode
 
 USER_A = UUID("11111111-1111-4111-8111-111111111111")
@@ -244,10 +245,19 @@ def test_successful_handler_marks_done_with_assets_written(
 def test_interrupted_job_is_recovered_then_completes(
     repository: SqliteRepository, worker: JobWorker
 ) -> None:
-    """Crash simulation: claim the job, never finish it, restart the worker."""
+    """Crash simulation: claim the job, stop beating, restart the worker.
+
+    `claim_next` now writes a heartbeat in the same transaction, so a crash *at that instant*
+    leaves a fresh mark and no other worker should steal it — that is the multi-worker fix. A
+    believable crash simulation therefore has to let the heartbeat go stale, which is what a real
+    dead process does while the next worker starts up.
+    """
     job = make_job(repository)
     claimed = worker.claim_next()
     assert claimed is not None and claimed.state is JobState.RUNNING
+    repository.touch_job_heartbeat(
+        claimed.id, user_id=claimed.user_id, now=utcnow() - timedelta(seconds=3600)
+    )
     del claimed  # ...and the process "dies" here.
 
     restarted = JobWorker(repository, claimed_by="restarted-worker")
