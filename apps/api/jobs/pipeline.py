@@ -172,9 +172,11 @@ def _failure(
 def _provider_label(seg_backend: object, extractor_name: str) -> str:
     """`<segment backend>|classical|<extractor>` — which code produced this asset pack.
 
-    `stub` must never appear here: the repository rejects it outright, because a job row that says
-    `stub` is claiming no pipeline ran, and one did. Length is checked by the repository (2..64);
-    the segment backend is the long part and it is a fixed vocabulary, so this stays well inside.
+    `stub` must never appear here, and that is now enforced rather than asserted:
+    `Repository.set_job_provenance` raises `ValueError` for it (see `_validated_provenance`),
+    because `create_job` writes `stub` to mean "no pipeline has run yet" and this value is written
+    by a handler that just ran. Length is checked by the same method (2..64 after trimming); the
+    segment backend is the long part and it is a fixed vocabulary, so this stays well inside.
     """
     return f"{seg_backend}|{PrettifyMode.CLASSICAL.value}|{extractor_name}"
 
