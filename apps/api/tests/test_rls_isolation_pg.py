@@ -30,11 +30,20 @@ from apps.api.repository import PostgresRepository
 PG_URL = os.environ.get("SNAPLIST_TEST_PG")
 pytestmark = pytest.mark.skipif(not PG_URL, reason="SNAPLIST_TEST_PG not set")
 
-# `psycopg` is only present when the optional `pg` dependency group is installed, and the whole
-# module is skipped without SNAPLIST_TEST_PG anyway — so import it lazily to keep collection working
-# on a lean checkout (CI / `make test`) that has no psycopg.
+# `psycopg` only exists when the optional `pg` dependency group is installed, and the module is
+# skipped without SNAPLIST_TEST_PG anyway — so import lazily to keep collection working on a lean
+# checkout (CI / `make test`) that has no psycopg.
+#
+# `importorskip`, not a bare import: "the variable is set but the driver is missing" used to be an
+# ImportError at collection, which aborts the *entire* pytest run — 1200 tests hidden behind one
+# missing wheel. Skipping this module with a reason is the honest outcome; it cannot hide the
+# problem either, because CI fails the job when no test in the report ends with `[postgres]`
+# (see infra/ci/assert_pg_parametrization.py).
 if PG_URL:
-    import psycopg
+    psycopg = pytest.importorskip(
+        "psycopg",
+        reason="SNAPLIST_TEST_PG is set but psycopg is not installed (uv sync --group pg)",
+    )
     from psycopg import sql as psql
 
 SELLER_A = uuid.UUID("11111111-1111-4111-8111-111111111111")

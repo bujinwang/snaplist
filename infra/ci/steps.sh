@@ -67,8 +67,12 @@ step_contract_gate() {
 }
 
 step_install() {
-  _emit install 'uv sync --frozen && pnpm install --frozen-lockfile'
-  uv sync --frozen && pnpm install --frozen-lockfile
+  # `--group pg` because `test_py` sets SNAPLIST_TEST_PG: the api suite then parametrizes over the
+  # Postgres backend and `apps/api/tests/test_rls_isolation_pg.py` imports psycopg, so a lean
+  # install would turn a set variable into a collection error. The group is pinned in uv.lock, so
+  # `--frozen` still holds and nothing drifts.
+  _emit install 'uv sync --frozen --group pg && pnpm install --frozen-lockfile'
+  uv sync --frozen --group pg && pnpm install --frozen-lockfile
 }
 
 step_lint_py() {
