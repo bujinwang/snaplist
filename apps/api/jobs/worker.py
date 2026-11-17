@@ -47,6 +47,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from apps.api.jobs.errors import JobFailure
 from apps.api.jobs.state_machine import (
     IllegalJobTransition,
     apply_transition,
@@ -157,7 +158,15 @@ class JobWorker:
     def run_once(self) -> bool:
         """Claim and execute one job. Returns False when the queue was empty.
 
-        The exception mapping is the whole policy of this worker:
+        The exception mapping is the whole policy of this worker, and it has three branches in
+        this order:
+
+          * `JobFailure` -> a stage that knows why it failed. Its `reason_code` reaches the job
+            row as-is and its `retryable` flag decides requeue-vs-terminal, so a deterministic
+            cause ("no garment in this photo") is not retried three times and a transient one
+            ("provider 503") is. `stage`/`detail` become `error_detail`. This branch must stay
+            first: `JobFailure` is a `RuntimeError`, so the generic branch below would otherwise
+            swallow it as an unknown internal error and lose the reason.
           * PipelineUnavailable / StageNotImplemented -> terminal now (deterministic);
           * anything else -> retryable, the attempts budget decides (CONTRACTS §4 lists
             `internal` as "maybe" retryable — unknown is treated as transient until
@@ -169,6 +178,14 @@ class JobWorker:
         handler = self.handlers[job.kind]
         try:
             handler(job, self.repository)
+        except JobFailure as exc:
+            retry_or_fail(
+                self.repository,
+                job,
+                reason_code=exc.reason_code,
+                retryable=exc.retryable,
+                error_detail=_detail(exc),
+            )
         except (PipelineUnavailable, StageNotImplemented) as exc:
             retry_or_fail(
                 self.repository,
