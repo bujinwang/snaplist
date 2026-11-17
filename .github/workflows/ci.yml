@@ -23,6 +23,23 @@ jobs:
   ci:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The Postgres backend is only ever exercised when SNAPLIST_TEST_PG is set (see the comment in
+    # apps/api/tests/conftest.py), so without this service the api suite silently tests one backend
+    # and reports success. PG15, because that is what Supabase production runs; the migrations are
+    # also verified on 14 locally, but CI should be the version closest to the thing we deploy on.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: snaplist
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       # actions/checkout v4.2.2 — SHA 由主理人 2026-11-05 git ls-remote 解析
       - name: checkout
@@ -75,6 +92,14 @@ jobs:
         run: bash infra/ci/steps.sh lint_ts
       - name: test_js
         run: bash infra/ci/steps.sh test_js
+      # The runner image is not guaranteed to carry the client, and `pg_setup.sh` needs `psql`
+      # (not psycopg) to build the database. Installing it is idempotent and takes seconds.
+      - name: postgres client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: setup_pg
+        run: bash infra/ci/steps.sh setup_pg
+      # Exports SNAPLIST_TEST_PG, runs pytest with --junitxml, then asserts the report actually
+      # contains [postgres] cases. A dead service must fail here, not quietly test sqlite only.
       - name: test_py
         run: bash infra/ci/steps.sh test_py
       # steps.sh preserves the telemetry gate's real rc and emits a

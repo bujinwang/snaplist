@@ -40,6 +40,7 @@ readonly STEP_ORDER=(
   lint_py
   lint_ts
   test_js
+  setup_pg
   test_py
   evals
   evals_report
@@ -85,9 +86,25 @@ step_test_js() {
   pnpm -w test
 }
 
+step_setup_pg() {
+  _emit setup_pg 'infra/ci/pg_setup.sh (drop+create, shim, 4 migrations, ON_ERROR_STOP=1)'
+  bash infra/ci/pg_setup.sh
+}
+
 step_test_py() {
-  _emit test_py '.venv/bin/python -m pytest'
-  .venv/bin/python -m pytest
+  local junit rc=0
+  # SNAPLIST_TEST_PG is what makes conftest parametrize the api suite over BOTH backends. Without
+  # it pytest runs the sqlite half only and still exits 0 — a green job that never executed the
+  # Postgres code. `assert_pg_parametrization.py` reads the report afterwards and fails the step if
+  # the postgres half is missing, so "the service was down" cannot masquerade as coverage.
+  export SNAPLIST_TEST_PG="${SNAPLIST_TEST_PG:-postgresql://postgres:snaplist@127.0.0.1:5432/snaplist_pgtest}"
+  junit="$(mktemp "${TMPDIR:-/tmp}/snaplist-junit.XXXXXX")" || return 1
+  _emit test_py ".venv/bin/python -m pytest --junitxml=<tmp> (SNAPLIST_TEST_PG=${SNAPLIST_TEST_PG})"
+  .venv/bin/python -m pytest --junitxml="$junit" || rc=$?
+  # The parametrization check runs even when pytest failed: "the PG half never ran" is a different
+  # failure from "a test failed", and the log should say which one happened.
+  .venv/bin/python infra/ci/assert_pg_parametrization.py "$junit" || rc=$?
+  return "$rc"
 }
 
 step_evals() {

@@ -12,7 +12,7 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install test lint fmt evals evals-strict evals-report evals-vision \
+.PHONY: help install test test-pg lint fmt evals evals-strict evals-report evals-vision \
         golden golden-provisional masks-provisional seg-iou seg-iou-golden golden-proposals \
         fetch-models fetch-sdxl \
         install-sdxl dev dev-web dev-mobile contract clean
@@ -64,6 +64,24 @@ install-sdxl:
 test:
 	$(PNPM) -w test
 	$(PY) -m pytest
+
+# The Postgres half of the api suite, locally: rebuild the scratch database from the migrations,
+# then run the api tests with SNAPLIST_TEST_PG set so `conftest.repository` parametrizes over BOTH
+# backends. Requires `psql` and a running Postgres; requires psycopg (`uv pip install
+# "psycopg[binary]==3.3.8"`, the version uv.lock pins in the optional `pg` group).
+# `make test` deliberately does NOT do this: it must stay offline, fast and database-free.
+PGDATABASE ?= snaplist_pgtest
+PGUSER ?= postgres
+PGHOST ?= 127.0.0.1
+PGPORT ?= 5432
+SNAPLIST_TEST_PG ?= postgresql://$(PGUSER)@$(PGHOST):$(PGPORT)/$(PGDATABASE)
+
+test-pg:
+	@$(PY) -c "import psycopg" 2>/dev/null || { \
+	  echo "psycopg is not installed: uv pip install --python $(PY) \"psycopg[binary]==3.3.8\"" >&2; exit 2; }
+	@PGDATABASE=$(PGDATABASE) PGUSER=$(PGUSER) PGHOST=$(PGHOST) PGPORT=$(PGPORT) bash infra/ci/pg_setup.sh
+	@SNAPLIST_TEST_PG="$(SNAPLIST_TEST_PG)" $(PY) -m pytest apps/api/tests --junitxml=/tmp/snaplist-test-pg.xml
+	@$(PY) infra/ci/assert_pg_parametrization.py /tmp/snaplist-test-pg.xml
 
 lint:
 	$(PY) -m ruff check .

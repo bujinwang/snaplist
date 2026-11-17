@@ -1735,10 +1735,16 @@ class PostgresRepository:
         """Oldest queued job whose item has its source bytes, without claiming it.
 
         Mirrors `SqliteRepository.peek_next_queued_job`: the claim (queued->running) is the
-        caller's transaction + the state machine, not this method. The Postgres form uses the
-        production claim query form — `for update skip locked` (see `0001_init.sql` §10) — inside
-        its own transaction, so the lock is released when this method returns (single-worker local
-        build, same as SQLite's `begin immediate`).
+        caller's transaction + the state machine, not this method. The query is the production
+        claim form — `for update skip locked` (see `0001_init.sql` §10).
+
+        **The row lock lives as long as the caller's OUTERMOST transaction.** psycopg's nested
+        `transaction()` is a SAVEPOINT, and `release savepoint` does not release row locks — so
+        calling this method on its own only keeps the lock until its own transaction commits,
+        which is useless for a claim. `JobWorker.claim_next` wraps peek and the queued->running
+        transition in one `repository.transaction()`, and that is the reason it does: the lock
+        must outlive this method or two workers can both see the same job. An earlier version of
+        this comment claimed the lock was released on return, which was simply wrong.
         """
         with self.transaction():
             rows = self._query(
