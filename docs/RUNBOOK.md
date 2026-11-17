@@ -188,6 +188,37 @@ quoted from a local measured report, not invented, and `$/item` remains `UNMEASU
 | `VLM_API_KEY` | E3-T2, E3-T3 | **no** on a clean checkout (the key is still required); it **was** unblocked on this machine on 2026-11-08 (40 real provider calls ran), but as of 2026-11-14 there is no `.env` here and the collected artifact is gone — re-run `collect_attrs` to restore it |
 | Apple Developer account | E6-T1 Apple sign-in, `expo export` to a device | partly — email magic link works without it |
 
+## 7a. Running the Postgres half of the api suite
+
+`make test` is deliberately offline and database-free: `apps/api/tests/conftest.py` parametrizes the
+`repository` fixture over `["sqlite"]` and adds `"postgres"` only when `SNAPLIST_TEST_PG` is set. So
+on a default checkout **the Postgres code is never executed** — that is by design for a laptop, and
+it is a trap anywhere the result is read as coverage.
+
+To run both backends (`make test-pg` does all of this):
+
+```sh
+# 1. the driver, at the version uv.lock pins in the optional `pg` group
+uv pip install --python .venv/bin/python "psycopg[binary]==3.3.8"
+
+# 2. rebuild the scratch database from the migrations (needs psql + a running Postgres)
+bash infra/ci/pg_setup.sh            # drops and recreates snaplist_pgtest
+
+# 3. the api suite, both backends
+make test-pg
+```
+
+Prerequisites, stated plainly: a reachable Postgres (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`
+override the defaults `127.0.0.1:5432`, `postgres`), a `psql` client on `PATH`, and the `psycopg`
+driver. `infra/ci/pg_setup.sh` is destructive on purpose — it drops the database it is about to
+build, so a half-applied schema from an earlier run cannot pass as a good one.
+
+**A skip is not a pass.** `make test-pg` finishes by reading its JUnit report and failing if no test
+id ends in `[postgres]` (see `infra/ci/assert_pg_parametrization.py`). CI runs the same guard, which
+is why a stopped service or a typo in the URL fails the job instead of quietly testing SQLite twice.
+If you see `total=… sqlite=… postgres=0`, the database was not reached — read the error above it,
+do not read the green ticks.
+
 ## 8. Reporting rules that go with this file
 
 - A credential you were given but did not verify is `UNVERIFIED`. Say so.

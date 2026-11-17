@@ -40,6 +40,7 @@ readonly STEP_ORDER=(
   lint_py
   lint_ts
   test_js
+  setup_pg
   test_py
   evals
   evals_report
@@ -66,8 +67,12 @@ step_contract_gate() {
 }
 
 step_install() {
-  _emit install 'uv sync --frozen && pnpm install --frozen-lockfile'
-  uv sync --frozen && pnpm install --frozen-lockfile
+  # `--group pg` because `test_py` sets SNAPLIST_TEST_PG: the api suite then parametrizes over the
+  # Postgres backend and `apps/api/tests/test_rls_isolation_pg.py` imports psycopg, so a lean
+  # install would turn a set variable into a collection error. The group is pinned in uv.lock, so
+  # `--frozen` still holds and nothing drifts.
+  _emit install 'uv sync --frozen --group pg && pnpm install --frozen-lockfile'
+  uv sync --frozen --group pg && pnpm install --frozen-lockfile
 }
 
 step_lint_py() {
@@ -85,9 +90,25 @@ step_test_js() {
   pnpm -w test
 }
 
+step_setup_pg() {
+  _emit setup_pg 'infra/ci/pg_setup.sh (drop+create, shim, 4 migrations, ON_ERROR_STOP=1)'
+  bash infra/ci/pg_setup.sh
+}
+
 step_test_py() {
-  _emit test_py '.venv/bin/python -m pytest'
-  .venv/bin/python -m pytest
+  local junit rc=0
+  # SNAPLIST_TEST_PG is what makes conftest parametrize the api suite over BOTH backends. Without
+  # it pytest runs the sqlite half only and still exits 0 — a green job that never executed the
+  # Postgres code. `assert_pg_parametrization.py` reads the report afterwards and fails the step if
+  # the postgres half is missing, so "the service was down" cannot masquerade as coverage.
+  export SNAPLIST_TEST_PG="${SNAPLIST_TEST_PG:-postgresql://postgres:snaplist@127.0.0.1:5432/snaplist_pgtest}"
+  junit="$(mktemp "${TMPDIR:-/tmp}/snaplist-junit.XXXXXX")" || return 1
+  _emit test_py ".venv/bin/python -m pytest --junitxml=<tmp> (SNAPLIST_TEST_PG=${SNAPLIST_TEST_PG})"
+  .venv/bin/python -m pytest --junitxml="$junit" || rc=$?
+  # The parametrization check runs even when pytest failed: "the PG half never ran" is a different
+  # failure from "a test failed", and the log should say which one happened.
+  .venv/bin/python infra/ci/assert_pg_parametrization.py "$junit" || rc=$?
+  return "$rc"
 }
 
 step_evals() {
@@ -213,12 +234,23 @@ main() {
   fi
   case "$action" in
     all) run_all ;;
-    toolchain_probe|contract_gate|install|lint_py|lint_ts|test_js|test_py|evals|evals_report|gates_report|dirty_check)
-      "step_${action}"
-      ;;
     *)
-      printf 'unknown step: %s\n' "$action" >&2
-      return 2
+      # The list of valid steps is STEP_ORDER, and ONLY STEP_ORDER. This used to be a second
+      # hardcoded alternation of the same names, which is why adding `setup_pg` to the order and
+      # the function table still produced "unknown step: setup_pg" in CI: the two lists had already
+      # drifted. Derived, so the next step cannot hit that.
+      local known=0 step
+      for step in "${STEP_ORDER[@]}"; do
+        if [ "$step" = "$action" ]; then
+          known=1
+          break
+        fi
+      done
+      if [ "$known" -ne 1 ]; then
+        printf 'unknown step: %s\n' "$action" >&2
+        return 2
+      fi
+      "step_${action}"
       ;;
   esac
 }
