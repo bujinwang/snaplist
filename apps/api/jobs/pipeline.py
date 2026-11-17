@@ -333,6 +333,133 @@ def run_full_pipeline(
     )
 
 
+def run_prettify_pipeline(
+    job: JobRecord,
+    repository: Repository,
+    storage: Storage,
+    *,
+    probe_fn: Callable[[], RuntimeInfo] = probe,
+) -> None:
+    """Re-run only the beautification stages for an item that already has attributes.
+
+    This is the rerender path. It deliberately does NOT call a VLM: `CreateItemRequest` carries no
+    category, but a completed FULL job stored one on the item, and that is the only source a
+    rerender needs. Consequently this job can run with no `VLM_API_KEY` at all — which is the whole
+    reason the endpoint can be honest about being available offline.
+
+    An item with no attributes (a FULL job that failed, or an item whose attributes were never
+    written) is a deterministic failure: guessing `"other"` here would warp a dress's 3:4 or a
+    shoe's 4:3 onto the 4:5 canvas, which is the exact bug the FULL job's ordering fixed.
+    """
+    item = repository.get_item(job.item_id, user_id=job.user_id)
+    if item is None:
+        raise JobFailure(
+            reason_code=ReasonCode.INTERNAL,
+            retryable=False,
+            stage="load_item",
+            detail=f"item {job.item_id} not found for user {job.user_id}",
+        )
+    source_key = item.path_for("source", 0)
+    if source_key is None:
+        raise JobFailure(
+            reason_code=ReasonCode.INTERNAL,
+            retryable=False,
+            stage="load_item",
+            detail=f"item {item.id} has no source asset at position 0",
+        )
+    try:
+        photo = storage.read(source_key)
+    except StorageError as exc:
+        raise _failure(exc, stage="load_photo") from exc
+
+    attributes = item.attributes
+    if attributes is None:
+        raise JobFailure(
+            reason_code=ReasonCode.INTERNAL,
+            retryable=False,
+            stage="load_attributes",
+            detail=(
+                "this item has no attributes — run a full job first. A rerender reads the "
+                "category from the stored attributes and never calls a VLM, so it cannot guess one."
+            ),
+        )
+    _beat(repository, job)  # attributes are the input, not a stage we re-run
+
+    try:
+        runtime = probe_fn()
+        seg = segment(photo, runtime.backend)
+    except Exception as exc:  # noqa: BLE001 - mapped or re-raised by `_failure`
+        raise _failure(exc, stage="segment", decode_stage=True) from exc
+    _beat(repository, job)  # segment
+    try:
+        mt = matte(photo, seg.mask_png)
+    except Exception as exc:  # noqa: BLE001
+        raise _failure(exc, stage="matte", decode_stage=True) from exc
+    _beat(repository, job)  # matte
+    try:
+        rect = rectify(photo, mt.alpha_png, attributes.category.value)
+    except Exception as exc:  # noqa: BLE001
+        raise _failure(exc, stage="rectify") from exc
+    _beat(repository, job)  # rectify
+    try:
+        alpha_flat = alpha_for_canvas(mt.alpha_png, rect.flat_png)
+    except Exception as exc:  # noqa: BLE001
+        raise _failure(exc, stage="alpha_for_canvas") from exc
+    _beat(repository, job)  # alpha_for_canvas
+    try:
+        pt = prettify(rect.flat_png, alpha_flat, mode=PrettifyMode.CLASSICAL)
+    except Exception as exc:  # noqa: BLE001
+        raise _failure(exc, stage="prettify") from exc
+    _beat(repository, job)  # prettify
+
+    # ONE asset. `cutout` and the matte belong to the FULL job; a rerender changes only the
+    # beautified flat-lay. `write_back` upserts on (item, kind, position), so replaying this job
+    # replaces the old bytes and cannot leave a duplicate row behind.
+    _beat(repository, job)  # before write_back
+    try:
+        write_back(
+            repository,
+            storage,
+            item_id=item.id,
+            user_id=job.user_id,
+            assets=[
+                AssetWrite(
+                    kind="prettified",
+                    data=pt.prettified_png,
+                    content_type="image/png",
+                    meta=_stage_meta(pt.meta, "prettify", getattr(pt.meta, "seconds", None)),
+                )
+            ],
+        )
+    except (StorageError, ValueError) as exc:
+        raise _failure(exc, stage="write_back") from exc
+    _beat(repository, job)  # after write_back
+
+    # No extractor ran, so the provider says so rather than borrowing a VLM name. The model
+    # version is the one that produced the attributes we just READ — that is an honest fact about
+    # the input, and it is what a reader would need to reproduce this render.
+    repository.set_job_provenance(
+        job.id,
+        user_id=job.user_id,
+        provider=f"{seg.meta.backend}|{PrettifyMode.CLASSICAL.value}|from-item-attributes",
+        model_version=attributes.model_version,
+        cost_micros=None,
+    )
+
+
+def build_prettify_handler(
+    *,
+    storage: Storage,
+    probe_fn: Callable[[], RuntimeInfo] = probe,
+) -> Handler:
+    """Bind storage to the rerender pipeline, producing the worker's `Handler` shape."""
+
+    def handler(job: JobRecord, repository: Repository) -> None:
+        run_prettify_pipeline(job, repository, storage, probe_fn=probe_fn)
+
+    return handler
+
+
 def build_full_handler(
     *,
     storage: Storage,

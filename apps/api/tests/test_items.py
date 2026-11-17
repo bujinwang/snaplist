@@ -231,10 +231,12 @@ def test_provider_backed_routes_refuse_without_faking_success(
     client: TestClient, headers_a: dict[str, str]
 ) -> None:
     ids = create_item(client, headers_a)
-    # rerender is a pure provider-block today: 501, no fake 202.
+    # rerender no longer needs a provider: it reads the category from stored attributes and
+    # enqueues a real PRETTIFY job. 202 is the honest answer; a fake `done` would not be.
     rerender = client.post(f"/v1/items/{ids['item_id']}/rerender", headers=headers_a)
-    assert rerender.status_code == 501, (rerender.status_code, rerender.text)
-    assert rerender.json()["error"]["code"] == "not_implemented"
+    assert rerender.status_code == 202, (rerender.status_code, rerender.text)
+    assert rerender.json()["state"] == "queued"
+    assert rerender.json()["job_id"]
     # on-model is Pro-only: a Free seller is gated with 402 (distinguishable from the item-quota
     # 402 by error.details.reason == "plan_required"), not silently 501'd into a provider error.
     on_model = client.post(f"/v1/items/{ids['item_id']}/on-model", headers=headers_a)
