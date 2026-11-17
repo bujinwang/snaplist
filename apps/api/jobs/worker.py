@@ -56,6 +56,8 @@ from apps.api.jobs.state_machine import (
 )
 from apps.api.repository import JobRecord, Repository, build_repository
 from apps.api.schemas import JobKind, JobState, ReasonCode
+from apps.api.settings import get_settings
+from apps.api.storage import build_storage
 from packages.vision import StageNotImplemented
 
 Handler = Callable[[JobRecord, Repository], None]
@@ -267,8 +269,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repository = build_repository(args.database)
+    storage = build_storage(get_settings())
+    if not storage.configured:
+        # A worker with no storage backend can only fail every job it claims — and each failure
+        # refunds, so the queue drains into terminal rows that look like the pipeline's fault.
+        # Refusing to start is the honest behaviour: nothing is claimed, nothing is refunded, and
+        # the operator reads one sentence instead of a hundred post-mortems.
+        print(
+            "refusing to start: no storage backend is configured, so every claimed job would fail "
+            "before any stage ran. Set SNAPLIST_STORAGE_BACKEND=local (or the Supabase "
+            f"credentials) and retry. Backend state: {storage.describe()}",
+            file=sys.stderr,
+        )
+        repository.close()
+        return 2
+
+    # Only FULL is wired here. VTON and EXPORT keep `default_handler`, which fails them
+    # terminally until their own tickets land — that is not this ticket's claim to make.
+    # Imported locally so `python -m apps.api.jobs.worker --help` does not pay for numpy/PIL.
+    from apps.api.jobs.pipeline import build_full_handler  # noqa: PLC0415
+
+    handlers: dict[JobKind, Handler] = {JobKind.FULL: build_full_handler(storage=storage)}
     try:
-        worker = JobWorker(repository, claimed_by=args.claimed_by)
+        worker = JobWorker(repository, claimed_by=args.claimed_by, handlers=handlers)
         recovered = worker.recover_interrupted()
         processed = worker.run_pending(limit=args.limit)
         print(f"recovered {recovered} interrupted job(s); processed {processed} job(s)")
