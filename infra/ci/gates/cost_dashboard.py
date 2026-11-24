@@ -8,13 +8,14 @@ default, no `--assume`, and no fallback constant. If `cost.md` does not exist, t
 renders — with every cell `UNMEASURED` — because the honest shape of "nobody has ever paid for
 a render" is a table full of holes, not a plausible-looking estimate.
 
-**`evals/reports/cost.md` does not exist in this checkout**, and the reason is not laziness:
-no pipeline stage has ever run against a paid provider (E4 on-model is a stub, `FASHN_API_KEY`
-and `MODAL_TOKEN` are absent — see `packages/vision/BLOCKED.md`), and there are no production
-`usage_events` to derive a per-item cost from. E1/E2/E3 run locally on `onnxruntime` and
-classical CV, which produces wall-clock seconds, not a billed `$/item`. Therefore the
-`<= $0.03/item` verdict is **UNREACHABLE — not passing**, and the string `PASS` is only ever
-printed once every stage in the total has a measured number behind it.
+**`evals/reports/cost.md` is produced by `python -m evals.cost_report`**, which reads a SQLite
+snapshot read-only. With no measured provider run the file still exists, but every cost cell is
+`UNMEASURED`: no pipeline stage has run against a paid provider (E4 on-model is a stub,
+`FASHN_API_KEY` and `MODAL_TOKEN` are absent — see `packages/vision/BLOCKED.md`). E1/E2/E3 run
+locally on `onnxruntime` and classical CV, which produces wall-clock seconds, not a billed
+`$/item`. Therefore the `<= $0.03/item` verdict is **UNREACHABLE — not passing**, and the
+string `PASS` is only ever printed once every stage in the total has a measured number behind it.
+The absent-file branch below is kept for checkouts that have not run the producer yet.
 
 Exit codes (three, and the third is why this is not a decorative report):
 

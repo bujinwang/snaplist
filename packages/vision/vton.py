@@ -9,7 +9,9 @@ What this file owns
 * `VtonResult` / `VtonOutcome` — the render result and the pipeline-facing outcome.
 * `VtonAdapter` — the provider interface every adapter satisfies.
 * `get_adapter(name)` — resolves a provider by name or, with `name=None`, by environment:
-  `FASHN_API_KEY` set -> fashn; `MODAL_TOKEN` set -> catvton; neither -> stub.
+  `FASHN_API_KEY` set -> fashn; `MODAL_TOKEN` set -> catvton; neither -> stub. A third provider,
+  `google_banana`, is registered for side-by-side evaluation but is NEVER auto-selected: it is
+  reachable only by an explicit `get_adapter("google_banana")` call (ADR-001 §8 is unchanged).
 * `try_on(...)` — the orchestration the API job pipeline (E5-T3 worker) calls: pick an
   adapter, render, run the quality gate, and return a `VtonOutcome`.
 
@@ -54,16 +56,21 @@ MODAL_TOKEN_ENV = "MODAL_TOKEN"
 # name -> "module:Class" inside `packages/vision/vton_adapters`. Resolution is lazy: importing
 # this module pulls in no provider SDK, so `make test` and `import packages.vision.vton` work
 # on a clean checkout with zero credentials and zero network.
+_GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+
 _REGISTRY: dict[str, str] = {
     "stub": "packages.vision.vton_adapters.stub:StubVtonAdapter",
     "fashn": "packages.vision.vton_adapters.fashn:FashnVtonAdapter",
     "catvton": "packages.vision.vton_adapters.catvton:CatVtonAdapter",
+    # Parallel evaluation provider. Explicit name only; see `get_adapter()` below.
+    "google_banana": "packages.vision.vton_adapters.google_banana:GoogleBananaVtonAdapter",
 }
 # A named provider that needs a credential we do not have must refuse loudly instead of
 # silently downgrading to the stub.
 _PROVIDER_REQUIRES_KEY: dict[str, str] = {
     "fashn": FASHN_API_KEY_ENV,
     "catvton": MODAL_TOKEN_ENV,
+    "google_banana": _GEMINI_API_KEY_ENV,
 }
 
 
@@ -144,8 +151,10 @@ def get_adapter(name: str | None = None) -> VtonAdapter:
     """Resolve the vton adapter. Named so config, not imports, chooses the provider.
 
     `name=None` selects by environment (FASHN_API_KEY -> fashn, MODAL_TOKEN -> catvton,
-    else stub). A named provider whose credential is absent raises `StageNotImplemented`
-    naming the missing key — there is deliberately no silent downgrade to the stub.
+    else stub). `GEMINI_API_KEY` is deliberately NOT part of automatic selection: setting it
+    must not move a production job off the ADR-001 §8 primary/fallback path. Ask for
+    `google_banana` explicitly to evaluate it. A named provider whose credential is absent
+    raises `StageNotImplemented` naming the missing key — no silent downgrade to the stub.
     """
     if name is None:
         if os.environ.get(FASHN_API_KEY_ENV):

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -35,6 +35,8 @@ from evals.telemetry.model import (
 from evals.telemetry.spec import (
     ACTIVATION_MIN_ITEMS,
     ACTIVATION_MIN_SELLERS,
+    BURST_EXPORT_COUNT,
+    BURST_WINDOW_MINUTES,
     EXCLUDED_RATE_MAX,
     FAILURE_MIX_CODES,
     GATE_SPECS,
@@ -384,6 +386,62 @@ def activation(data: SourceData, start: str, end: str) -> tuple[int, float | Non
     return denominator, numerator / denominator, f"{numerator / denominator:.4f}"
 
 
+def export_burst(data: SourceData, start: str, end: str) -> tuple[int, float | None, str]:
+    """Report-only `session_export_burst_60m` from the real `export_delivered` events.
+
+    Unit is the **session** (`events.session_id`), not the seller: CONTRACTS.md §7 defines the
+    workload as "3 exports / 60 minutes" per session. Distinct `item_id`s are counted inside a
+    sliding inclusive window so a duplicated delivery event for the same item cannot manufacture
+    a burst. Sessions with at least one delivered export form the denominator; those with at
+    least `BURST_EXPORT_COUNT` in any 60-minute window form the numerator. No session →
+    UNMEASURED, never 0.
+    """
+    per_session: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
+    for event in data.events:
+        if (
+            event.event != _DELIVER_EVENT
+            or event.item_id is None
+            or not in_window(event.received_at, start, end)
+        ):
+            continue
+        try:
+            when = datetime.strptime(event.received_at, RECEIVED_AT_FORMAT).replace(tzinfo=UTC)
+        except ValueError:
+            # A malformed timestamp is not a burst and is not silently rounded into one.
+            continue
+        per_session[event.session_id].append((when, event.item_id))
+
+    denominator = len(per_session)
+    if denominator == 0:
+        return 0, None, "UNMEASURED (n=0 sessions with a delivered export)"
+
+    window = timedelta(minutes=BURST_WINDOW_MINUTES)
+    bursting = 0
+    for rows in per_session.values():
+        ordered = sorted(rows, key=lambda row: (row[0], row[1]))
+        counts: Counter[str] = Counter()
+        left = 0
+        for when, item_id in ordered:
+            counts[item_id] += 1
+            while when - ordered[left][0] > window:
+                old_item = ordered[left][1]
+                counts[old_item] -= 1
+                if counts[old_item] == 0:
+                    del counts[old_item]
+                left += 1
+            if len(counts) >= BURST_EXPORT_COUNT:
+                bursting += 1
+                break
+
+    ratio = bursting / denominator
+    return (
+        denominator,
+        ratio,
+        f"{ratio:.4f} (n={denominator} sessions with >=1 delivery; "
+        f"{bursting} with >=3 distinct items in 60m)",
+    )
+
+
 def population(data: SourceData, start: str, end: str) -> tuple[int, int]:
     """Header cross-unit count: items and sellers actually observed in the window."""
     items = {
@@ -425,13 +483,14 @@ def report_only_lines(
     fields_p50 = f"{nearest_rank(p50_values, 0.50):g}" if p50_values else "-"
 
     activation_n, _, activation_text = activation(data, start, end)
+    burst_n, _, burst_text = export_burst(data, start, end)
     completeness = completeness_of(metrics)
     completeness_text = f"{completeness:.4f}" if completeness is not None else "-"
 
     return (
         f"fields_p50={fields_p50} (report only)",
         f"activation_7d={activation_text}, n={activation_n} sellers (reported, not gated)",
-        "export_burst_60m=UNMEASURED (no producer in CONTRACTS.md §7; QA proxy only)",
+        f"export_burst_60m={burst_text}, n={burst_n} sessions (reported, not gated)",
         f"completeness={completeness_text} (mirror of excluded_rate; printed, never judged)",
     )
 
