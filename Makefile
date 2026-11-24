@@ -13,8 +13,9 @@ PNPM ?= $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 .DEFAULT_GOAL := help
 
 .PHONY: help install test test-pg lint fmt evals evals-strict evals-report evals-vision \
-        golden golden-provisional masks-provisional seg-iou seg-iou-golden golden-proposals \
-        fetch-models fetch-sdxl \
+        cost-report onboarding-latency onboarding-latency-device retention retention-execute \
+        golden golden-provisional masks-provisional seg-iou seg-iou-golden \
+        golden-proposals fetch-models fetch-sdxl \
         install-sdxl dev dev-web dev-mobile contract clean
 
 MODEL_DIR ?= $(if $(SNAPLIST_MODEL_DIR),$(SNAPLIST_MODEL_DIR),$(HOME)/.cache/snaplist/models)
@@ -32,6 +33,10 @@ help:
 	@echo "  make evals-strict  E0-T5 telemetry release gate: --gate, never allows inconclusive"
 	@echo "  make evals-report  telemetry report only, always exit 0 (no gate)"
 	@echo "  make evals-vision  the E0-T2 vision harness (evals.run --suite vision)"
+	@echo "  make cost-report   generate evals/reports/cost.md from a read-only SNAPLIST_DB snapshot"
+	@echo "  make onboarding-latency  print the A1/A2 report (UNMEASURED until real samples exist)"
+	@echo "  make retention     dry-run cleanup of soft-deleted, already-exported assets"
+	@echo "  make retention-execute  execute that cleanup (explicit, auditable)"
 	@echo "  make golden     validate golden-set file/count structure; exit 0 only when those checks pass (mask provenance NOT verified)"
 	@echo "  make golden-provisional  structure check of the web-sourced stand-in set"
 	@echo "  make masks-provisional   regenerate its masks (background-colour arithmetic)"
@@ -181,6 +186,30 @@ evals-report:
 # Invoked directly by the E0-T2 / E1-T4 / E2-T3 / E3-T3 acceptance commands.
 evals-vision:
 	$(PY) -m evals.run --suite vision
+
+# Produce the E0-T4 dashboard's only input. Reads SNAPLIST_DB read-only; an unset DB produces
+# an all-UNMEASURED report rather than a fabricated zero. `make cost-report SNAPLIST_DB=...`
+# points it at a real snapshot.
+cost-report:
+	$(PY) -m evals.cost_report
+
+# A1/A2 latency assumptions. Without SNAPLIST_DB and a device JSON sample every row stays
+# UNMEASURED; `make onboarding-latency-device GATE_LATENCIES=/path/gate.json` supplies A2.
+onboarding-latency:
+	$(PY) -m evals.onboarding_latency --dry-run
+
+onboarding-latency-device:
+	@test -n "$(GATE_LATENCIES)" || (echo "GATE_LATENCIES=/path/to/gate.json is required" >&2; exit 1)
+	$(PY) -m evals.onboarding_latency --gate-latencies "$(GATE_LATENCIES)"
+
+# Lifecycle cleanup is DRY-RUN by default. Only soft-deleted items with a delivered export
+# older than RETENTION_DAYS are eligible; live listings are never touched.
+RETENTION_DAYS ?= 30
+retention:
+	$(PY) -m apps.api.retention --retention-days $(RETENTION_DAYS)
+
+retention-execute:
+	$(PY) -m apps.api.retention --retention-days $(RETENTION_DAYS) --execute
 
 dev:
 	$(PY) -m uvicorn apps.api.main:app --reload --port 8000

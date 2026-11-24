@@ -233,6 +233,22 @@ class UsageEventRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RetentionCandidate:
+    """One asset row eligible for lifecycle cleanup.
+
+    Eligibility is deliberately narrow: the item must be soft-deleted **and** have a delivered
+    export older than the cutoff. Live listings never lose their images to a retention job.
+    """
+
+    item_id: UUID
+    user_id: UUID
+    kind: str
+    position: int
+    storage_path: str
+    byte_size: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class EventRecord:
     """One row of `public.events` — the analytics funnel, not the quota ledger.
 
@@ -331,6 +347,14 @@ class Repository(Protocol):
         byte_size: int | None = None,
         meta: Mapping[str, Any] | None = None,
     ) -> None: ...
+
+    def assets_for_retention(
+        self, *, cutoff: datetime, limit: int | None = None
+    ) -> list[RetentionCandidate]: ...
+
+    def delete_asset(
+        self, item_id: UUID, *, user_id: UUID, kind: str, position: int = 0
+    ) -> bool: ...
 
     def create_job(self, *, item_id: UUID, user_id: UUID, kind: JobKind) -> JobRecord: ...
 
@@ -981,6 +1005,51 @@ class SqliteRepository:
                 to_wire(utcnow()),
             ),
         )
+
+    def assets_for_retention(
+        self, *, cutoff: datetime, limit: int | None = None
+    ) -> list[RetentionCandidate]:
+        """Soft-deleted items whose export was delivered before `cutoff`.
+
+        Both timestamps are compared in the same wire format SQLite stores, so text ordering is
+        chronological. A live item never appears here, and neither does a deleted item whose
+        export never reached the seller.
+        """
+        sql = (
+            "select a.item_id, a.user_id, a.kind, a.position, a.storage_path, a.byte_size "
+            "from assets a join items i on i.id = a.item_id "
+            "where i.deleted_at is not null and i.deleted_at <= ? "
+            "and exists (select 1 from events e where e.event = 'export_delivered' "
+            "and e.item_id = a.item_id and e.received_at <= ?) "
+            "order by i.deleted_at, a.item_id, a.kind, a.position"
+        )
+        params: list[object] = [to_wire(cutoff), to_wire(cutoff)]
+        if limit is not None:
+            sql += " limit ?"
+            params.append(limit)
+        rows = self._query(sql, params)
+        return [
+            RetentionCandidate(
+                item_id=UUID(row["item_id"]),
+                user_id=UUID(row["user_id"]),
+                kind=row["kind"],
+                position=int(row["position"]),
+                storage_path=row["storage_path"],
+                byte_size=(int(row["byte_size"]) if row["byte_size"] is not None else None),
+            )
+            for row in rows
+        ]
+
+    def delete_asset(
+        self, item_id: UUID, *, user_id: UUID, kind: str, position: int = 0
+    ) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "delete from assets where item_id = ? and user_id = ? and kind = ? "
+                "and position = ?",
+                (str(item_id), str(user_id), kind, position),
+            )
+            return cursor.rowcount > 0
 
     @staticmethod
     def _item_from_row(row: sqlite3.Row) -> ItemRecord:
@@ -1650,6 +1719,44 @@ class PostgresRepository:
                 self._Json(payload),
             ),
         )
+
+    def assets_for_retention(
+        self, *, cutoff: datetime, limit: int | None = None
+    ) -> list[RetentionCandidate]:
+        sql = (
+            "select a.item_id, a.user_id, a.kind, a.position, a.storage_path, a.byte_size "
+            "from assets a join items i on i.id = a.item_id "
+            "where i.deleted_at is not null and i.deleted_at <= %s "
+            "and exists (select 1 from events e where e.event = 'export_delivered' "
+            "and e.item_id = a.item_id and e.received_at <= %s) "
+            "order by i.deleted_at, a.item_id, a.kind, a.position"
+        )
+        params: list[object] = [cutoff, cutoff]
+        if limit is not None:
+            sql += " limit %s"
+            params.append(limit)
+        rows = self._query(sql, params)
+        return [
+            RetentionCandidate(
+                item_id=UUID(str(row["item_id"])),
+                user_id=UUID(str(row["user_id"])),
+                kind=row["kind"],
+                position=int(row["position"]),
+                storage_path=row["storage_path"],
+                byte_size=(int(row["byte_size"]) if row["byte_size"] is not None else None),
+            )
+            for row in rows
+        ]
+
+    def delete_asset(
+        self, item_id: UUID, *, user_id: UUID, kind: str, position: int = 0
+    ) -> bool:
+        affected = self._execute(
+            "delete from assets where item_id = %s and user_id = %s and kind = %s "
+            "and position = %s",
+            (str(item_id), str(user_id), kind, position),
+        )
+        return affected == 1
 
     @staticmethod
     def _item_from_row(row: dict) -> ItemRecord:

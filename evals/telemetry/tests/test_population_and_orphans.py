@@ -154,14 +154,15 @@ def test_activation_uses_export_delivered_not_export_clicked(tmp_path: Path) -> 
     assert "PASS=8" in result.stdout, "delivery is NOT a prerequisite for tool time"
 
 
-def test_export_burst_60m_is_unmeasured_with_a_reason(tmp_path: Path) -> None:
+def test_export_burst_60m_is_measured_from_export_delivered_events(tmp_path: Path) -> None:
     db, path = _db(tmp_path, "burst")
     fx.populate_baseline(db)
     fx.close(db)
     result = fx.run_cli(path, "--since", "7d", "--gate")
-    assert "export_burst_60m=UNMEASURED (no producer in CONTRACTS.md §7; QA proxy only)" in (
-        result.stdout
-    )
+    assert (
+        "export_burst_60m=1.0000 (n=1 sessions with >=1 delivery; "
+        "1 with >=3 distinct items in 60m), n=1 sessions (reported, not gated)"
+    ) in result.stdout
 
 
 def test_seller_key_is_the_uuid_suffix_for_anon_and_usr(tmp_path: Path) -> None:

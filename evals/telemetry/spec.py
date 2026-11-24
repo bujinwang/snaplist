@@ -33,6 +33,11 @@ RECEIVED_AT_FORMAT: str = "%Y-%m-%dT%H:%M:%S.%fZ"
 ACTIVATION_MIN_SELLERS: int = 20
 ACTIVATION_MIN_ITEMS: int = 3
 
+# `session_export_burst_60m` (CONTRACTS.md §7): 3 delivered exports inside one 60-minute window.
+# Report-only, like activation; these literals describe the metric, they are not gate thresholds.
+BURST_WINDOW_MINUTES: int = 60
+BURST_EXPORT_COUNT: int = 3
+
 # -----------------------------------------------------------------------------------------
 # (b) Gate table. `n` counts items for every gated row; activation counts sellers and is
 # reported, never gated (PLAN:281-293, HANDOFF-product §12.2(b):721-727 / (g):792-798).

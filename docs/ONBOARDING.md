@@ -12,8 +12,8 @@ prettified* before she is asked for anything — no card, no email, no account, 
 
 | # | Assumption | Status | If it's wrong |
 |---|---|---|---|
-| A1 | Median job latency (upload → prettified image on screen) **≤ 20s**, p90 **≤ 35s** | **UNMEASURED** — no pipeline exists yet to time | If p90 > 35s the 90-second script **breaks at 0:42** and must switch to the "put your phone down" path (§3.2). The script is a latency contract, not just copy. |
-| A2 | The quality gate rejects unusable frames client-side in **< 800ms** | **UNMEASURED** | A slow gate feels like a bug; a false reject at first use is fatal. Gate must be tuned for false-negatives (let a bad photo through) over false-positives (block a good one). |
+| A1 | Median job latency (upload → prettified image on screen) **≤ 20s**, p90 **≤ 35s** | **UNMEASURED** — `make onboarding-latency` reports the `prettify_approved.prettify_latency_ms` proxy; keep reading it as UNMEASURED until ≥30 real approved frames exist. No client-side end-to-end timer is wired yet | If p90 > 35s the 90-second script **breaks at 0:42** and must switch to the "put your phone down" path (§3.2). The script is a latency contract, not just copy. |
+| A2 | The quality gate rejects unusable frames client-side in **< 800ms** | **UNMEASURED** — no gate implementation and no `gate_duration_ms` in `EVENTS_VERSION 1.4.0`; `make onboarding-latency-device GATE_LATENCIES=...` is the device-harness seam | A slow gate feels like a bug; a false reject at first use is fatal. Gate must be tuned for false-negatives (let a bad photo through) over false-positives (block a good one). |
 | A3 | A first-time seller can frame a flat-lay from an overlay with no tutorial | **UNMEASURED** — needs ≥5 usability sessions | Falls back to the 3-frame illustrated guide at 0:20. |
 | A4 | Anonymous sessions are possible and merge cleanly into a Supabase account at export | **requires architect decision** — see §6 | If not, the signup wall moves to 0:04 and expected activation drops for reasons we will not be able to separate from product quality. |
 

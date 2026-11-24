@@ -10,6 +10,7 @@ signal, not the logic.
 |---|---|---|
 | FASHN VTON v1.5 (`fashn`) | `FASHN_API_KEY` | No API key in this build. |
 | CatVTON on Modal (`catvton`) | `MODAL_TOKEN` (+ `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` to deploy) | No token, and the Modal function in `infra/modal_vton.py` is a **stub** — CatVTON inference is not wired up. |
+| Google Nano Banana 2.1 (`google_banana`, parallel evaluation only) | `GEMINI_API_KEY` | No key. Explicit-name provider only: it never auto-selects, so ADR-001 §8 (FASHN primary, CatVTON fallback) stays intact. Its `confidence` is also `None` (UNMEASURED), so even with a key the gate rejects until the golden-set confidence measurement exists. |
 
 With neither env var set, `get_adapter()` (no name) returns `StubVtonAdapter`, whose
 `render()` returns `provider="stub"`, an **empty** `on_model_png`, and detection flags all

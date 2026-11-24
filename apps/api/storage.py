@@ -331,6 +331,10 @@ class Storage(Protocol):
 
     def exists(self, key: str) -> bool: ...
 
+    def delete(self, key: str) -> bool:
+        """Remove one object; True when it existed, False when it was already gone."""
+        ...
+
 
 # ---------------------------------------------------------------------------------------
 # LocalStorage — filesystem + HMAC. The backend that makes a zero-credential run possible.
@@ -716,6 +720,22 @@ class SupabaseStorage:
         response = self._send("HEAD", f"/storage/v1/object/{self.bucket}/{key}")
         return response.status_code < 400
 
+    def delete(self, key: str) -> bool:
+        """Delete one object through the service-role Storage REST API.
+
+        404 is the idempotent case (already gone) and returns False; any other refusal is a
+        `StorageError` so the retention sweep keeps the asset row and can retry later.
+        """
+        validate_key(key)
+        response = self._send(
+            "DELETE", f"/storage/v1/object/{self.bucket}/{key}"
+        )
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            raise StorageError(f"Supabase refused the delete ({response.status_code}).")
+        return True
+
 
 # ---------------------------------------------------------------------------------------
 # UnavailableStorage — the null object for "no bucket is configured".
@@ -777,6 +797,12 @@ class UnavailableStorage:
     def exists(self, key: str) -> bool:
         del key
         return False
+
+    def delete(self, key: str) -> bool:
+        del key
+        raise StorageUnavailable(
+            f"Object storage is not configured: {self.missing_credential} is empty."
+        )
 
 
 # ---------------------------------------------------------------------------------------

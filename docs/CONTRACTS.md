@@ -424,7 +424,7 @@ advertising id. `field_names[]` carries field *names* only and is regex-restrict
 | constant | metric name | means | where enforced |
 |---|---|---|---|
 | 3 exports / 7 days | `activation_items_exported_7d` | activation — **counted from `export_delivered`** | analytics (E0-T5 reports it) |
-| 3 exports / 60 minutes | `session_export_burst_60m` | QA proxy for real workload | analytics only |
+| 3 exports / 60 minutes | `session_export_burst_60m` | derived from real `export_delivered` events: 3 distinct `item_id`s in one session within a sliding inclusive 60-minute window; reported, never gated | analytics only |
 | 3 items / month, free plan | `free_tier_item_limit` | billing allowance | `apps/api/settings.py` — authoritative; clients read it from `GET /v1/usage`, never from a hardcoded constant |
 
 **v2 placeholder — "listed on the marketplace" is a third state, not an eighth event.** Delivering
